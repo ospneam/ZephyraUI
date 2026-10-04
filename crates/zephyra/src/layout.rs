@@ -15,7 +15,7 @@
 //! 一次间接调用与一次 `dyn` 胖指针解引用消失。代价是无法在运行时混排不同布局
 //! 容器——而这本来也不需要（一个容器的子项布局由它自己决定）。
 
-use crate::core::{Rect, Size, Thickness};
+use crate::core::{Point, Rect, Size, Thickness};
 
 /// 布局约束。
 ///
@@ -131,6 +131,177 @@ pub enum AlignItems {
     Center,
     /// 末端边对齐。
     End,
+}
+
+/// 堆叠方向。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Direction {
+    /// 水平排列（对应 WinUI `StackPanel` 的 Orientation=Horizontal）。
+    Horizontal,
+    /// 垂直排列。
+    Vertical,
+}
+
+/// 主轴对齐。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MainAxisAlign {
+    /// 从起始边排布。
+    #[default]
+    Start,
+    /// 居中。
+    Center,
+    /// 末端对齐。
+    End,
+    /// 首尾对齐（剩余空间均摊到间隔里）。
+    SpaceBetween,
+}
+
+/// 一维堆叠布局（WinUI `StackPanel` / CSS flex）。
+///
+/// 子项在交叉轴上如何摆由**排列时**的 `cross_align` 决定，而不是这里声明——
+/// 这正是 `align-items` 与逐项 `align-self` 的区别。工具栏里"图标按钮贴顶、
+/// 组容器撑满高度"就依赖这个区分。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Stack {
+    /// 排列方向。
+    pub direction: Direction,
+    /// 主轴上相邻子项之间的固定间距。
+    pub spacing: f32,
+    /// 整组在主轴上的摆放。
+    pub main_align: MainAxisAlign,
+}
+
+impl Default for Stack {
+    fn default() -> Self {
+        Self {
+            direction: Direction::Horizontal,
+            spacing: 0.0,
+            main_align: MainAxisAlign::Start,
+        }
+    }
+}
+
+impl Stack {
+    /// 主轴尺寸 = 各子项之和 + 间距 × (n−1)。
+    ///
+    /// 空容器返回 0 而不是 `spacing`：否则调用方无从区分"没有子项"与
+    /// "有一个不可见子项"。
+    pub fn main_size(&self, sizes: &[Size]) -> f32 {
+        if sizes.is_empty() {
+            return 0.0;
+        }
+        let total: f32 = sizes
+            .iter()
+            .map(|s| match self.direction {
+                Direction::Horizontal => s.width,
+                Direction::Vertical => s.height,
+            })
+            .sum();
+        total + self.spacing * (sizes.len() as f32 - 1.0)
+    }
+
+    /// 内容总尺寸：主轴取累加，交叉轴取最大值。
+    pub fn content_size(&self, sizes: &[Size]) -> Size {
+        let main = self.main_size(sizes);
+        let cross = sizes
+            .iter()
+            .map(|s| match self.direction {
+                Direction::Horizontal => s.height,
+                Direction::Vertical => s.width,
+            })
+            .fold(0.0f32, f32::max);
+        match self.direction {
+            Direction::Horizontal => Size::new(main, cross),
+            Direction::Vertical => Size::new(cross, main),
+        }
+    }
+
+    /// 各子项在主轴上的起点（相对本容器起点）。
+    pub fn main_offsets(&self, sizes: &[Size], available_main: f32) -> Vec<f32> {
+        let n = sizes.len();
+        if n == 0 {
+            return Vec::new();
+        }
+        let content = self.main_size(sizes);
+        let (start, gap) = match self.main_align {
+            MainAxisAlign::Start => (0.0, self.spacing),
+            MainAxisAlign::Center => ((available_main - content) * 0.5, self.spacing),
+            MainAxisAlign::End => (available_main - content, self.spacing),
+            // 单项时 SpaceBetween 不应留下任何空隙，否则"唯一一项"会被推到末尾。
+            MainAxisAlign::SpaceBetween if n == 1 => (0.0, self.spacing),
+            MainAxisAlign::SpaceBetween => {
+                let slack = (available_main - content).max(0.0);
+                (0.0, self.spacing + slack / (n as f32 - 1.0))
+            }
+        };
+        let mut offsets = Vec::with_capacity(n);
+        let mut cursor = start;
+        for s in sizes {
+            offsets.push(cursor);
+            cursor += match self.direction {
+                Direction::Horizontal => s.width,
+                Direction::Vertical => s.height,
+            } + gap;
+        }
+        offsets
+    }
+
+    /// 把主轴偏移落成每个子项的矩形。
+    ///
+    /// `cross_align` 决定子项在交叉轴上的位置与伸展；[`AlignItems::Stretch`] 时
+    /// 子项撑满交叉轴（工具栏的"组容器撑满高度"靠它）。
+    pub fn arrange(
+        &self,
+        origin: Point,
+        available: Size,
+        sizes: &[Size],
+        cross_align: AlignItems,
+    ) -> Vec<Rect> {
+        let available_main = match self.direction {
+            Direction::Horizontal => available.width,
+            Direction::Vertical => available.height,
+        };
+        let available_cross = match self.direction {
+            Direction::Horizontal => available.height,
+            Direction::Vertical => available.width,
+        };
+        let offsets = self.main_offsets(sizes, available_main);
+        sizes
+            .iter()
+            .zip(offsets)
+            .map(|(size, offset_main)| {
+                let (cross_pos, cross_extent) = match (self.direction, cross_align) {
+                    (Direction::Horizontal, AlignItems::Stretch) => (origin.y, available_cross),
+                    (Direction::Horizontal, AlignItems::Start) => (origin.y, size.height),
+                    (Direction::Horizontal, AlignItems::Center) => {
+                        (origin.y + (available_cross - size.height) * 0.5, size.height)
+                    }
+                    (Direction::Horizontal, AlignItems::End) => {
+                        (origin.y + available_cross - size.height, size.height)
+                    }
+                    (Direction::Vertical, AlignItems::Stretch) => (origin.x, available_cross),
+                    (Direction::Vertical, AlignItems::Start) => (origin.x, size.width),
+                    (Direction::Vertical, AlignItems::Center) => {
+                        (origin.x + (available_cross - size.width) * 0.5, size.width)
+                    }
+                    (Direction::Vertical, AlignItems::End) => {
+                        (origin.x + available_cross - size.width, size.width)
+                    }
+                };
+                match self.direction {
+                    Direction::Horizontal => {
+                        Rect::new(origin.x + offset_main, cross_pos, size.width, cross_extent)
+                    }
+                    Direction::Vertical => Rect::new(
+                        cross_pos,
+                        origin.y + offset_main,
+                        cross_extent,
+                        size.height,
+                    ),
+                }
+            })
+            .collect()
+    }
 }
 
 /// 在给定空间内按对齐方式摆放一个已测量的盒子，返回它的最终矩形。

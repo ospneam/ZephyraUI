@@ -102,8 +102,21 @@ pub enum PropertyValue {
     Bool(bool),
     /// UTF-8 字符串。
     Str(Arc<str>),
+    /// `'static` 字符串常量。
+    ///
+    /// 与 [`PropertyValue::Str`] 分开是因为后者持 `Arc`（运行时构造），无法作为
+    /// `const` 默认值。属性定义里的"空串"占位只能用这个。
+    StaticStr(&'static str),
     /// 颜色。
     Color(crate::core::Color),
+    /// 布局方向（`layout::Direction`）。
+    Direction(crate::layout::Direction),
+    /// 交叉轴对齐（`layout::AlignItems`）。
+    CrossAlign(crate::layout::AlignItems),
+    /// 主轴对齐（`layout::MainAxisAlign`）。
+    MainAlign(crate::layout::MainAxisAlign),
+    /// 合成层（`paint::Layer`）。
+    Layer(crate::paint::Layer),
     /// **资源键引用**：存键而非字面值，主题切换时只需重解析这些键。
     ///
     /// 这是 `ThemeResource` 能做到「切主题不遍历控件树」的关键。
@@ -137,6 +150,31 @@ impl PropertyValue {
         PropertyValue::Color(v)
     }
 
+    /// 构造 `'static` 字符串属性值（`const` 可用）。
+    pub const fn static_str(v: &'static str) -> Self {
+        PropertyValue::StaticStr(v)
+    }
+
+    /// 构造布局方向属性值（`const` 可用）。
+    pub const fn direction(v: crate::layout::Direction) -> Self {
+        PropertyValue::Direction(v)
+    }
+
+    /// 构造交叉轴对齐属性值（`const` 可用）。
+    pub const fn cross_align(v: crate::layout::AlignItems) -> Self {
+        PropertyValue::CrossAlign(v)
+    }
+
+    /// 构造主轴对齐属性值（`const` 可用）。
+    pub const fn main_align(v: crate::layout::MainAxisAlign) -> Self {
+        PropertyValue::MainAlign(v)
+    }
+
+    /// 构造合成层属性值（`const` 可用）。
+    pub const fn layer(v: crate::paint::Layer) -> Self {
+        PropertyValue::Layer(v)
+    }
+
     /// 构造任意自定义属性值。
     pub fn custom<T: Any + Send + Sync + Clone + PartialEq + 'static>(value: T) -> Self {
         PropertyValue::Custom {
@@ -168,7 +206,12 @@ impl PropertyValue {
             PropertyValue::Int(v) => v,
             PropertyValue::Bool(v) => v,
             PropertyValue::Str(v) => v,
+            PropertyValue::StaticStr(v) => v,
             PropertyValue::Color(v) => v,
+            PropertyValue::Direction(v) => v,
+            PropertyValue::CrossAlign(v) => v,
+            PropertyValue::MainAlign(v) => v,
+            PropertyValue::Layer(v) => v,
             PropertyValue::Custom { inner, .. } => &**inner,
             PropertyValue::Resource(_) => return None,
         };
@@ -186,7 +229,12 @@ impl PartialEq for PropertyValue {
             (PropertyValue::Int(a), PropertyValue::Int(b)) => a == b,
             (PropertyValue::Bool(a), PropertyValue::Bool(b)) => a == b,
             (PropertyValue::Str(a), PropertyValue::Str(b)) => a == b,
+            (PropertyValue::StaticStr(a), PropertyValue::StaticStr(b)) => a == b,
             (PropertyValue::Color(a), PropertyValue::Color(b)) => a == b,
+            (PropertyValue::Direction(a), PropertyValue::Direction(b)) => a == b,
+            (PropertyValue::CrossAlign(a), PropertyValue::CrossAlign(b)) => a == b,
+            (PropertyValue::MainAlign(a), PropertyValue::MainAlign(b)) => a == b,
+            (PropertyValue::Layer(a), PropertyValue::Layer(b)) => a == b,
             (PropertyValue::Resource(a), PropertyValue::Resource(b)) => a == b,
             (
                 PropertyValue::Custom { inner: ai, eq },
@@ -208,7 +256,12 @@ impl std::fmt::Debug for PropertyValue {
             PropertyValue::Int(v) => write!(f, "{v}"),
             PropertyValue::Bool(v) => write!(f, "{v}"),
             PropertyValue::Str(v) => write!(f, "{v:?}"),
+            PropertyValue::StaticStr(v) => write!(f, "{v:?}"),
             PropertyValue::Color(v) => write!(f, "{v:?}"),
+            PropertyValue::Direction(v) => write!(f, "{v:?}"),
+            PropertyValue::CrossAlign(v) => write!(f, "{v:?}"),
+            PropertyValue::MainAlign(v) => write!(f, "{v:?}"),
+            PropertyValue::Layer(v) => write!(f, "{v:?}"),
             PropertyValue::Resource(k) => write!(f, "Resource({k})"),
             PropertyValue::Custom { .. } => write!(f, "Custom"),
         }
@@ -245,12 +298,26 @@ impl PropertyChange {
     /// 属性系统据此决定重排还是只重绘——把 `Background` 与 `Margin` 同等对待
     /// 会让改个颜色触发整棵子树重排，是 UI 卡顿最常见的来源。
     pub fn affects_layout(&self) -> bool {
-        self.key.name().starts_with("Layout.")
-            || matches!(
-                self.key.name(),
-                "Margin" | "Padding" | "Width" | "Height" | "Size"
-            )
+        name_affects_layout(self.key.name())
     }
+}
+
+/// 属性名是否属于「影响布局」的一类。
+///
+/// # 命名即契约
+///
+/// 判定看的是**属性名**而不是某个标志位。这样做的代价是要靠命名纪律；换来的是
+/// 属性定义保持 `const fn`（标志位得在构造时求值，而 `starts_with` 不是 const），
+/// 并且新增属性时"忘了声明它影响布局"表现为一个能立刻被测试抓到的漏判，而不是
+/// 一次静默的绘制错位。
+///
+/// 约定：`Layout.` 前缀的一律影响布局；其余逐个列举。
+pub fn name_affects_layout(name: &str) -> bool {
+    name.starts_with("Layout.")
+        || matches!(
+            name,
+            "Margin" | "Padding" | "Width" | "Height" | "Size" | "Collapsed"
+        )
 }
 
 /// 单个节点上的属性表。
@@ -261,6 +328,8 @@ impl PropertyChange {
 pub struct PropertyStore {
     local: HashMap<usize, PropertyValue>,
     styled: HashMap<usize, PropertyValue>,
+    /// id → 属性名。只在设置时写入，供 [`PropertyStore::affects_layout_by_id`] 判定。
+    names: HashMap<usize, &'static str>,
 }
 
 impl PropertyStore {
@@ -271,7 +340,9 @@ impl PropertyStore {
 
     /// 设置本地值（最高优先级）。
     pub fn set_local(&mut self, key: &PropertyKey, value: PropertyValue) -> Option<PropertyChange> {
-        let old = self.local.insert(key as *const _ as usize, value.clone());
+        let id = key as *const _ as usize;
+        self.names.insert(id, key.name);
+        let old = self.local.insert(id, value.clone());
         Some(PropertyChange {
             key: Arc::new(PropertyKey::new(key.name, key.default.clone())),
             old,
@@ -285,7 +356,9 @@ impl PropertyStore {
         key: &PropertyKey,
         value: PropertyValue,
     ) -> Option<PropertyChange> {
-        let old = self.styled.insert(key as *const _ as usize, value.clone());
+        let id = key as *const _ as usize;
+        self.names.insert(id, key.name);
+        let old = self.styled.insert(id, value.clone());
         Some(PropertyChange {
             key: Arc::new(PropertyKey::new(key.name, key.default.clone())),
             old,
@@ -309,15 +382,38 @@ impl PropertyStore {
     }
 
     /// 本地设置的全部条目，供 diff 对账。
-    pub fn iter_local(&self) -> impl Iterator<Item = (usize, &PropertyValue)> {
-        self.local.iter().map(|(k, v)| (*k, v))
+    ///
+    /// 一并给出属性名：判定"这次变化要不要重排"需要名字，而调用方只有 id。
+    pub fn iter_local(&self) -> impl Iterator<Item = (usize, &'static str, &PropertyValue)> {
+        self.local.iter().map(|(k, v)| {
+            (
+                *k,
+                self.names.get(k).copied().unwrap_or("Layout.Unknown"),
+                v,
+            )
+        })
     }
 
+    /// 按内部 id 读取本地值。
+    ///
+    /// 主题重解析需要它：先看"当前存的是资源键还是已解析的字面值"，才决定要不要
+    /// 替换。
+    pub fn local_value(&self, id: usize) -> Option<&PropertyValue> {
+        self.local.get(&id)
+    }
+
+    /// 该 id 对应的属性是否影响布局。
+    ///
+    /// 需要名字才能判定（见 [`name_affects_layout`]），而 diff 手上只有 id——
+    /// 它在遍历 `HashMap`，拿不到 `&PropertyKey`。所以写入时顺手把名字记下来。
+    /// 代价是每个键多存一个 `&'static str`（16 字节），换来 diff 循环里零额外查找。
     /// 按内部 id 写入本地值，返回**值是否真的变了**。
     ///
     /// diff 用返回值决定要不要标脏——「值没变就别标脏」是 UI 静止时零重建的
     /// 第一道闸门。
     pub fn set_local_by_id(&mut self, id: usize, value: PropertyValue) -> bool {
+        // 名字可能尚未登记（从旧结构反序列化、或先 set_local_by_id 后 set_local）。
+        // 缺登记时保守地视为影响布局：宁可多重排一次，也不要画出错位的画面。
         match self.local.get_mut(&id) {
             Some(existing) if *existing == value => false,
             Some(existing) => {

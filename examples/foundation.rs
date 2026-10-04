@@ -14,8 +14,9 @@
 use zephyra::core::Rect;
 use zephyra::paint::{Command, DisplayList, Layer, SortKey};
 use zephyra::property::{PropertyKey, PropertyValue};
+use zephyra::props;
 use zephyra::theme::{roles, Theme, ThemeVariant};
-use zephyra::tree::{diff, render, DiffStats, Dirty, Element, Node, NodeTag};
+use zephyra::tree::{diff, render, Context, DiffStats, Dirty, Element, Node, NodeTag};
 
 /// 内容前景色（语义名 → 主题角色）。
 const CONTENT: &PropertyKey = &PropertyKey::new("Content", PropertyValue::float(0.0));
@@ -28,6 +29,10 @@ const ACCENT_FILL: &PropertyKey =
 fn ui_element() -> Element {
     Element::new(NodeTag::Container)
         .with_key("root")
+        // 必须给根一个背景色。真实管线里"没有背景"意味着**不画任何东西**，所以一棵
+        // 全透明的树会产出空的 DisplayList——`tests::render_draws_nothing_when_no_node_has_a_background`
+        // 钉的就是这条。
+        .with(&props::BACKGROUND, PropertyValue::color(Theme::dark().surface))
         .with_children([
             Element::new(NodeTag::Text).with_key("title"),
             Element::new(NodeTag::Control).with_key("ok").with(
@@ -67,15 +72,23 @@ fn main() {
     // 新节点必然需要一次完整布局。
     assert_eq!(node.dirty(), Dirty::Structure);
 
-    // ---- 3. 节点 → DisplayList ----
+    // ---- 3. 布局 → DisplayList ----
+    //
+    // 分两步是刻意的：`render` 只读已摆好的矩形，几何计算全在 `layout` 里。
+    // 这样命中测试与绘制共用同一批矩形，不会出现"看得见但点不到"。
+    let bounds = Rect::new(0.0, 0.0, 800.0, 600.0);
+    let theme = Theme::dark();
+    let ctx = Context::new(&theme);
+    zephyra::tree::layout(&mut node, bounds, ctx);
+
     let mut list = DisplayList::new();
-    render(&node, Rect::new(0.0, 0.0, 800.0, 600.0), &mut list);
+    render(&node, ctx, &mut list);
     assert!(!list.is_empty(), "DisplayList 不应为空");
     assert_sorted_strictly(&list);
     assert!(list.has_layer(Layer::Content));
     // 顺序稳定：同样输入产出同样列表（纹理缓存命中率的前提）。
     let mut again = DisplayList::new();
-    render(&node, Rect::new(0.0, 0.0, 800.0, 600.0), &mut again);
+    render(&node, ctx, &mut again);
     assert_eq!(list, again, "同样输入必须产出逐字节相同的 DisplayList");
 
     // 圆角矩形是 draw-call 级别的图元，不需要 CPU 三角化。

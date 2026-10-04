@@ -276,3 +276,50 @@ impl ThemeContext {
         true
     }
 }
+
+/// 按资源键取值，无该键时返回 `None`。
+///
+/// 这是**唯一**的资源查找入口：颜色走 [`Theme::role`]，间距走
+/// [`Spacing::dip`]，其余一律"无此键"。
+pub fn resource_value(theme: &Theme, key: &str) -> Option<crate::property::PropertyValue> {
+    use crate::property::PropertyValue;
+    if let Some(color) = theme.role(key) {
+        return Some(PropertyValue::color(color));
+    }
+    let spacing = match key {
+        "spacing.none" => Some(Spacing::None),
+        "spacing.xxsmall" => Some(Spacing::XXSmall),
+        "spacing.xsmall" => Some(Spacing::XSmall),
+        "spacing.small" => Some(Spacing::Small),
+        "spacing.medium" => Some(Spacing::Medium),
+        "spacing.large" => Some(Spacing::Large),
+        "spacing.xlarge" => Some(Spacing::XLarge),
+        "spacing.xxlarge" => Some(Spacing::XXLarge),
+        _ => None,
+    }?;
+    Some(PropertyValue::float(spacing.dip()))
+}
+
+/// 解析一个属性值里的资源键，返回**拥有者**。
+///
+/// # 为什么是返回拥有者而不是写回属性表
+///
+/// 早先的实现是"遍历属性表，把 `Resource(k)` 就地替换成解析出的字面值"。那个做法
+/// 有一个致命后果：**第一次解析之后键就没了**。于是第二次换主题时
+/// `is_resource()` 全部为假，什么都不发生——切主题在视觉上成了空操作，而代码读起来
+/// 完全正常。
+///
+/// 保留键、读取时解析，才是"同一棵树换个主题就换配色"能成立的前提。代价是每次读属性
+/// 多一次字符串哈希（[`Theme::role`]）；换来的是切主题只需换一个 `&Theme` 引用，
+/// 不碰任何节点状态。
+///
+/// 解析失败**返回 `None` 而不是回退成黑色**：黑是一个合法的颜色，静默回退会让"角色名
+/// 拼错"变成一个看不出成因的视觉偏差。调用方据此显式决定降级策略。
+pub fn resolve_resource<'v>(
+    theme: &Theme,
+    value: &'v crate::property::PropertyValue,
+) -> Option<std::borrow::Cow<'v, crate::property::PropertyValue>> {
+    use std::borrow::Cow;
+    let key = value.resource_key()?;
+    resource_value(theme, key).map(Cow::Owned)
+}

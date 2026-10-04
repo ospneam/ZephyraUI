@@ -86,7 +86,7 @@ fn hit_rec(
     let id = node
         .key()
         .cloned()
-        .unwrap_or_else(|| crate::tree::ElementKey::Id(path.len() as u64));
+        .unwrap_or(crate::tree::ElementKey::Id(path.len() as u64));
     path.push(HitNode {
         id,
         rect,

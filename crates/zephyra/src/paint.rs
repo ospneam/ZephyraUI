@@ -23,7 +23,7 @@
 //! 另一种常见设计是给后端一个闭包列表（`Vec<Box<dyn Fn(&mut Renderer)>>`）。
 //! 那样无法跨线程、无法缓存、无法测试——DisplayList 用数据换来了这三样。
 
-use std::sync::Arc;
+use std::borrow::Cow;
 
 use crate::core::{Color, CornerRadius, Point, Rect};
 
@@ -107,12 +107,20 @@ pub enum Command {
 /// 核心刻意不定义纹理类型——`iced::widget::image::Handle` 与自建的 wgpu 纹理
 /// id 毫无共性。核心只搬运它，由宿主解释。
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct TextureRef(pub Arc<str>);
+pub struct TextureRef(pub Cow<'static, str>);
 
 impl TextureRef {
     /// 由宿主提供的稳定字符串 id 构造。
-    pub fn new(id: impl Into<Arc<str>>) -> Self {
+    ///
+    /// 接受 `&'static str`（零分配）与 `String` / `Arc<str>`（运行期构造）——
+    /// 资产句柄这类东西绝大多数是编译期已知的常量，没必要为它们分配。
+    pub fn new(id: impl Into<Cow<'static, str>>) -> Self {
         Self(id.into())
+    }
+
+    /// id 字符串。
+    pub fn as_str(&self) -> &str {
+        &self.0
     }
 }
 

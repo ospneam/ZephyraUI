@@ -483,7 +483,7 @@ fn texture_ref_is_opaque_to_the_core() {
 
 // ============================== tree ==============================
 
-use crate::tree::{diff, render, DiffStats, Dirty, Element, Node, NodeTag};
+use crate::tree::{diff, render, Dirty, Element, Node, NodeTag};
 
 fn sample() -> Element {
     Element::new(NodeTag::Container)
@@ -564,14 +564,46 @@ fn dirty_levels_merge_by_severity() {
 }
 
 #[test]
+fn render_draws_nothing_when_no_node_has_a_background() {
+    // 这条钉住"透明即不画"：**没有**背景色的节点不产出任何绘制命令。
+    //
+    // 之前的骨架实现对每个节点都无条件画一条 Quad，于是"什么都没有"的树也会
+    // 产出 4 条命令。真实管线必须让空树产出空列表——否则一层透明的容器就会
+    // 挡住它下面的一切，而这正是"画面全无"类 bug 的成因。
+    let mut node = Node::from_element(&sample());
+    crate::tree::layout(&mut node, Rect::new(0.0, 0.0, 800.0, 600.0), crate::tree::dark_context());
+
+    let mut list = DisplayList::new();
+    render(&node, crate::tree::dark_context(), &mut list);
+    assert!(
+        list.is_empty(),
+        "无背景的节点不应产出绘制命令，实得 {} 条",
+        list.len()
+    );
+}
+
+#[test]
 fn render_produces_a_sorted_stable_display_list() {
-    let node = Node::from_element(&sample());
+    // 必须给出背景色，否则按上一条断言就该是空的。
+    let element = Element::new(NodeTag::Container)
+        .with_key("root")
+        .with(
+            &crate::props::BACKGROUND,
+            PropertyValue::color(crate::core::Color::rgb(0.2, 0.2, 0.2)),
+        )
+        .with_children([
+            Element::new(NodeTag::Control).with_key("a"),
+            Element::new(NodeTag::Control).with_key("b"),
+        ]);
+    let mut node = Node::from_element(&element);
     let bounds = Rect::new(0.0, 0.0, 800.0, 600.0);
+    // render 只读已摆好的矩形，布局必须先行。
+    crate::tree::layout(&mut node, bounds, crate::tree::dark_context());
 
     let mut a = DisplayList::new();
-    render(&node, bounds, &mut a);
+    render(&node, crate::tree::dark_context(), &mut a);
     let mut b = DisplayList::new();
-    render(&node, bounds, &mut b);
+    render(&node, crate::tree::dark_context(), &mut b);
 
     assert!(!a.is_empty());
     assert_eq!(a, b, "同样输入必须产出逐字节相同的 DisplayList");
@@ -586,12 +618,13 @@ fn render_produces_a_sorted_stable_display_list() {
 
 #[test]
 fn render_reuses_the_supplied_list_buffer() {
-    let node = Node::from_element(&sample());
+    let mut node = Node::from_element(&sample());
     let bounds = Rect::new(0.0, 0.0, 100.0, 100.0);
+    crate::tree::layout(&mut node, bounds, crate::tree::dark_context());
     let mut list = DisplayList::new();
-    render(&node, bounds, &mut list);
+    render(&node, crate::tree::dark_context(), &mut list);
     let first = list.len();
-    render(&node, bounds, &mut list);
+    render(&node, crate::tree::dark_context(), &mut list);
     assert_eq!(list.len(), first, "复用缓冲不得让列表增长");
 }
 
@@ -619,7 +652,7 @@ fn text_measure_is_predictable_with_null_engine() {
     let shaped = engine.measure_block("abcde", &style, 1000.0);
     assert_eq!(shaped.size.width, 50.0);
     assert_eq!(shaped.lines.len(), 1);
-    assert_eq!(shaped.lines[0].is_last, true);
+    assert!(shaped.lines[0].is_last);
 }
 
 #[test]
@@ -689,3 +722,4 @@ fn rect_contains_uses_half_open_intervals() {
     assert!(!rect_contains(r, Point::new(5.0, 10.0)));
     assert!(!rect_contains(r, Point::new(-0.1, 5.0)));
 }
+
