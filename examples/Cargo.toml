@@ -1,0 +1,13 @@
+[package]
+name = "zephyra-foundation"
+description = "Executable acceptance criteria for the ZephyraUI core"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+zephyra = { path = "../crates/zephyra" }
+
+[[bin]]
+name = "foundation"
+path = "foundation.rs"

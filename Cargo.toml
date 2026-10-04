@@ -1,0 +1,17 @@
+[workspace]
+resolver = "2"
+members = ["crates/zephyra", "crates/zephyra-winit", "examples"]
+
+# zephyra-iced 暂不在本仓：它需要 iced，而 Viewstage 的 [patch.crates-io] 指向
+# Viewstage 仓内的 iced-fork。若把它放进本仓，单独 `cargo build` 会拉到上游
+# 未打补丁的 iced 而编译失败或行为不一致。
+#
+# 它当前位于 Viewstage-dev/crates/zephyra-iced，以 path 依赖引用本仓的
+# `crates/zephyra`。等 iced-fork 迁入本仓后，再把它加回 members 并移除
+# Viewstage 侧的副本。见 docs/migration-seam.md。
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+rust-version = "1.87"
