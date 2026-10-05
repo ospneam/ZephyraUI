@@ -1,6 +1,11 @@
 [workspace]
 resolver = "2"
-members = ["crates/zephyra", "crates/zephyra-winit", "examples"]
+members = ["crates/zephyra", "crates/zephyra-winit", "crates/zephyra-camera", "examples"]
+# `zephyra-camera` 进 members 但**不进** default-members：它是成员（可以被 `-p`
+# 选中、共享工作区的依赖解析），但不会被无差别的 `cargo build` / `cargo test`
+# 编译。这就是"选择编译"落在 Cargo 层面的形式——比在源码里 `#[cfg]` 一大块更细，
+# 因为连依赖解析都省掉了。
+default-members = ["crates/zephyra", "crates/zephyra-winit", "examples"]
 
 # zephyra-iced 暂不在本仓：它需要 iced，而 Viewstage 的 [patch.crates-io] 指向
 # Viewstage 仓内的 iced-fork。若把它放进本仓，单独 `cargo build` 会拉到上游

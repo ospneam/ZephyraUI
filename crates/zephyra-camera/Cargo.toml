@@ -1,0 +1,32 @@
+[package]
+name = "zephyra-camera"
+version = "0.1.0"
+edition = "2021"
+description = "Camera capture and pixel-format handling for zephyra applications"
+license = "MIT OR Apache-2.0"
+rust-version = "1.87"
+
+# 默认**什么都不开**。
+#
+# 这个 crate 会拉进 nokhwa（USB 摄像头采集）——不是每个应用都需要，且绝大多数 UI
+# 根本不碰摄像头。所以默认 feature 为空：`cargo build` 与 `cargo test` 不会碰
+# 任何设备代码。
+#
+# 选择性编译：
+#   cargo build -p zephyra-camera                  # 仅像素格式（零依赖）
+#   cargo build -p zephyra-camera --features capture
+#   cargo build -p zephyra-camera --all-features
+[features]
+default = []
+# 设备枚举与帧采集（nokhwa：UVC / DirectShow / Media Foundation）。
+capture = ["dep:nokhwa", "dep:log"]
+
+[dependencies]
+# 零依赖像素格式处理始终可用：NV12 平面切片、RGB→RGBA 降采样、拍照转换。
+# 任何要显示图像的界面都用得上它，所以它不该被 feature 关掉。
+# bytes 只是为了零拷贝地持有帧数据，本身无依赖。
+bytes = "1"
+
+# ---- 可选 ----
+nokhwa = { version = "0.10", features = ["input-msmf"], optional = true }
+log = { version = "0.4", optional = true }
