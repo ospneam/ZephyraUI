@@ -52,6 +52,7 @@
 
 pub mod core;
 pub mod hit;
+pub mod input;
 pub mod layout;
 pub mod paint;
 pub mod props;
@@ -63,6 +64,8 @@ pub mod tree;
 // 测试模块必须 gate 在 `cfg(test)` 下。不加的话它们会编进正式产物，而其中的
 // `#[test]` 函数在非测试构建里被剥掉，于是所有 `use` 变成"未使用"——
 // 一批纯属噪声、且会淹没真正警告的告警。
+#[cfg(test)]
+mod input_tests;
 #[cfg(test)]
 mod layout_tests;
 #[cfg(test)]

@@ -186,6 +186,19 @@ impl From<u64> for ElementKey {
     }
 }
 
+impl ElementKey {
+    /// 名字形式的 key（`Id` 形式返回 `None`）。
+    ///
+    /// 供测试与调试断言用。宿主做事件路由时应当比较整个 key（`PartialEq`）而不是名字——
+    /// 字符串比较在每次输入事件上都是不必要的开销。
+    pub fn as_name(&self) -> Option<&str> {
+        match self {
+            ElementKey::Name(n) => Some(n),
+            ElementKey::Id(_) => None,
+        }
+    }
+}
+
 /// 保留节点：树上每个元素对应的持久状态。
 pub struct Node {
     tag: NodeTag,
@@ -242,6 +255,14 @@ impl Node {
     /// 子节点。
     pub fn children(&self) -> &[Node] {
         &self.children
+    }
+
+    /// 可变子节点。
+    ///
+    /// 给宿主在布局后调整已存在的子树（改样式、折叠某项）。注意这绕过 diff——
+    /// 直接改动不会留下脏标记，所以调用方需要自己 [`Node::mark_dirty`]。
+    pub fn children_mut(&mut self) -> &mut Vec<Node> {
+        &mut self.children
     }
 
     /// 脏标记。
