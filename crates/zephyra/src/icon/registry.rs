@@ -76,6 +76,99 @@ impl IconSource {
 pub struct IconSet {
     entries: Vec<(&'static str, IconSource)>,
     parsed: OnceLock<HashMap<&'static str, Icon>>,
+    /// 三角化结果缓存。见 [`GeometryCache`]。
+    geometry: GeometryCache,
+}
+
+/// 三角化结果的缓存键。
+///
+/// # 为什么键里是**地址**而不是图标名
+///
+/// 与 [`IconSet::get`] 的 `'static` 约束同源：地址比字符串哈希便宜，而且
+/// `include_str!` 的地址天然稳定。同一段源码地址在进程内唯一 —— 于是"两个名字
+/// 指向同一图标资源"会自动共享缓存条目，而那本来就是同一份工作。
+#[derive(PartialEq, Eq, Hash)]
+struct GeometryKey {
+    /// 图标数据的地址（`'static`，见 [`IconSet`] 的类型文档）。
+    icon: usize,
+    /// 目标矩形的四个分量，各自的**位模式**。
+    ///
+    /// ⚠ 位模式而非数值：`Rect` 的分量参与映射，而 `20.0` 与
+    /// `20.0000001` 映射出的顶点**逐位不同**。按数值近似比较会让后者命中前者
+    /// 的缓存，于是图标差半个亚像素 —— 那在 1× 下看不见，在 2× 下看得见。
+    rect: [u32; 4],
+}
+
+/// 三角化结果缓存。
+///
+/// # 为什么需要它
+///
+/// 展平（曲线 → 折线）与三角化（多孔耳切）的结果**只**取决于（图标，目标矩形），
+/// 与时间无关 —— 而 [`crate::paint`] 每帧为每个图标节点重算一遍。
+///
+/// 实测（`demo --bench`，8 个图标节点）：**50 µs/个/帧**，占 `paint` 阶段
+/// （603 µs）的 66%，整帧的 39%。
+///
+/// # 我当初的判断错在哪
+///
+/// [`crate::paint::icon_command`] 的文档里写着"实测每帧成本只有几十微秒……远低于
+/// 缓存的复杂度与失效风险，所以现在不做"。那个"几十微秒"是**估**的，不是量的，
+/// 而它恰好就在"值不值得"的边界上 —— 于是决定被做错了。
+///
+/// 教训与本 crate 反复出现的同一条：**性能判断必须来自计时，不能来自估算**。
+/// 估算在边界附近出错时最贵，因为它是唯一一种看起来有依据的猜测。
+///
+/// # 为什么容量是 128
+///
+/// 键是「图标 × 目标矩形」的组合。稳态下活跃组合数 = 不同图标数 × 不同尺寸数，
+/// 一个典型界面是十几个图标 × 两三种尺寸 = 几十条。128 留了余量，而上界必须有：
+/// 一个让矩形连续变化的界面（拖拽缩放、动画）会无界增长，那比不缓存更糟。
+struct GeometryCache {
+    map: std::sync::Mutex<HashMap<GeometryKey, CachedMesh>>,
+}
+
+/// 缓存里的一条三角化结果。
+///
+/// # 为什么存 `Arc<[Vertex]>` 而不是 `Arc<TriMesh>`
+///
+/// 消费者（[`crate::paint::Command::Path`] 的 `vertices` 字段）只拿顶点，
+/// 三角形**计数**它自己按 `len() / 3` 算。而 `Arc<TriMesh>` → `Arc<[Vertex]>`
+/// 的转换要**重新分配并 memcpy 整个数组**（胖指针得重建）—— 于是"命中缓存"
+/// 反而成了最贵的那条路，与缓存的目的正好相反。
+///
+/// `triangles` 保留为诊断字段：它不参与渲染，但让"缓存里的东西与刚算出来的
+/// 不一致"这件事在测试里可断言（而不只是"画出来看起来一样"）。
+#[derive(Clone)]
+struct CachedMesh {
+    vertices: std::sync::Arc<[crate::paint::Vertex]>,
+    triangles: usize,
+}
+
+impl GeometryCache {
+    const CAPACITY: usize = 128;
+
+    fn new() -> Self {
+        Self {
+            map: std::sync::Mutex::new(HashMap::new()),
+        }
+    }
+
+    fn get(&self, key: &GeometryKey) -> Option<CachedMesh> {
+        self.map.lock().ok()?.get(key).cloned()
+    }
+
+    fn put(&self, key: GeometryKey, value: CachedMesh) {
+        let Ok(mut map) = self.map.lock() else {
+            return;
+        };
+        // 满了就整表清空：清空的最坏后果是"下一帧全部重算"，与没有缓存同价，
+        // 而 LRU 要在**每次命中**时改表 —— 为一个可能永不发生的场景付每帧成本
+        // 不划算（同 [`crate::text`] 里的排版缓存，理由一致）。
+        if map.len() >= Self::CAPACITY {
+            map.clear();
+        }
+        map.insert(key, value);
+    }
 }
 
 impl Default for IconSet {
@@ -85,11 +178,64 @@ impl Default for IconSet {
 }
 
 impl IconSet {
+    /// 三角化结果（带缓存）。
+    ///
+    /// [`crate::paint::icon_command`] 每帧为每个图标节点调它。同一个
+    /// （图标，目标矩形）组合的结果**逐次相同**，所以第二次起走缓存。
+    ///
+    /// 返回 `None` 表示"这个组合没缓存过" —— 调用方算完用 [`Self::cache_mesh`]
+    /// 存回。拆成两个方法而不是一个"给我或算它"，是因为算它需要展平容差与填充
+    /// 规则，而那两项是调用方的参数选择，不该藏在一个"方便"方法里。
+    pub(crate) fn cached_mesh(
+        &'static self,
+        icon: &'static Icon,
+        rect: crate::core::Rect,
+    ) -> Option<(std::sync::Arc<[crate::paint::Vertex]>, usize)> {
+        self.geometry
+            .get(&Self::geometry_key(icon, rect))
+            .map(|m| (m.vertices, m.triangles))
+    }
+
+    /// 存一条三角化结果，返回可直接放进命令里的 `Arc`。
+    pub(crate) fn cache_mesh(
+        &'static self,
+        icon: &'static Icon,
+        rect: crate::core::Rect,
+        mesh: crate::geom::TriMesh,
+    ) -> std::sync::Arc<[crate::paint::Vertex]> {
+        // `Vec` → `Arc<[T]>` 是**一次**分配加拷贝，之后每帧只加 refcount。
+        // 反过来（`Arc<[T]>` → `TriMesh`）就得多一次分配。
+        let vertices: std::sync::Arc<[crate::paint::Vertex]> = mesh.vertices.into();
+        self.geometry.put(
+            Self::geometry_key(icon, rect),
+            CachedMesh {
+                vertices: std::sync::Arc::clone(&vertices),
+                triangles: mesh.triangles,
+            },
+        );
+        vertices
+    }
+
+    /// 键的构造单独一处 —— 查找与存回必须用**同一个**键，两处分头写就是一条
+    /// "缓存永不命中"的静默故障（症状：性能回去了，功能全对，没有任何报错）。
+    fn geometry_key(icon: &'static Icon, rect: crate::core::Rect) -> GeometryKey {
+        GeometryKey {
+            icon: icon as *const Icon as usize,
+            rect: [
+                rect.x.to_bits(),
+                rect.y.to_bits(),
+                rect.width.to_bits(),
+                rect.height.to_bits(),
+            ],
+        }
+    }
+
     /// 空注册表。
     pub fn new() -> Self {
         Self {
             entries: Vec::new(),
             parsed: OnceLock::new(),
+            geometry: GeometryCache::new(),
         }
     }
 

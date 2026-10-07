@@ -258,8 +258,15 @@ fn layout_affecting_properties_are_classified() {
     );
     const LAYOUT_WIDTH: &PropertyKey = &PropertyKey::new("Layout.Width", PropertyValue::float(0.0));
 
+    // 直接借 `&'static` —— 与 [`crate::property::PropertyStore::set_local`] 一样。
+    //
+    // 原先这里写的是 `Arc::new(PropertyKey::new(key.name(), key.default_value().clone()))`
+    // —— 手动复刻了 `set_local` 里那次多余的复制，于是测试**自己**付了一次堆分配，
+    // 还把"必须复制"这件事固化成了断言的一部分。编译器给的可选修复
+    // （`&Arc::new(...)`，靠泄漏换取 `'static`）恰好是最坏的方向：它把一次多余的
+    // 分配变成一次永久泄漏。所以这里按新契约改，而不是照编译器建议改。
     let mk = |key: &'static PropertyKey| PropertyChange {
-        key: std::sync::Arc::new(PropertyKey::new(key.name(), key.default_value().clone())),
+        key,
         old: None,
         new: None,
     };
@@ -335,6 +342,8 @@ fn display_list_sorts_by_layer_then_z_then_order() {
         radius: CornerRadius { radius: 0.0 },
         fill: Color::rgb(0.0, 0.0, 0.0),
         stroke: None,
+        filter: crate::filter::FilterChain::none(),
+        blend: crate::filter::BlendMode::default(),
     };
     // 故意乱序插入。
     list.push(
@@ -390,6 +399,8 @@ fn display_list_sort_is_stable_for_equal_keys() {
         radius: CornerRadius { radius: 0.0 },
         fill: Color::rgb(0.0, 0.0, 0.0),
         stroke: None,
+        filter: crate::filter::FilterChain::none(),
+        blend: crate::filter::BlendMode::default(),
     };
     // 同样三个 key，插入顺序相同。
     for (list, widths) in [(&mut a, [1.0, 2.0, 3.0]), (&mut b, [1.0, 2.0, 3.0])] {
@@ -416,6 +427,8 @@ fn layers_are_reported_deduplicated_and_ordered() {
         radius: CornerRadius { radius: 0.0 },
         fill: Color::rgb(0.0, 0.0, 0.0),
         stroke: None,
+        filter: crate::filter::FilterChain::none(),
+        blend: crate::filter::BlendMode::default(),
     };
     for layer in [
         Layer::Popup,
@@ -449,6 +462,8 @@ fn clear_preserves_capacity_for_steady_state_reuse() {
         radius: CornerRadius { radius: 0.0 },
         fill: Color::rgb(0.0, 0.0, 0.0),
         stroke: None,
+        filter: crate::filter::FilterChain::none(),
+        blend: crate::filter::BlendMode::default(),
     };
     for i in 0..8 {
         list.push(
@@ -483,7 +498,11 @@ fn texture_ref_is_opaque_to_the_core() {
 
 // ============================== tree ==============================
 
-use crate::tree::{diff, render, Dirty, Element, Node, NodeTag};
+use crate::diff::diff;
+use crate::element::Element;
+use crate::id::NodeTag;
+use crate::node::{Dirty, Node};
+use crate::paint::render;
 
 fn sample() -> Element {
     Element::new(NodeTag::Container)
@@ -504,7 +523,7 @@ fn building_a_node_marks_it_structurally_dirty() {
 #[test]
 fn steady_state_diff_is_a_noop() {
     let mut node = Node::from_element(&sample());
-    crate::tree::clear_dirty(&mut node);
+    crate::node::clear_dirty(&mut node);
     let stats = diff(&mut node, &sample());
     assert!(
         stats.is_noop(),
@@ -516,7 +535,7 @@ fn steady_state_diff_is_a_noop() {
 #[test]
 fn adding_a_child_is_detected_as_layout_work() {
     let mut node = Node::from_element(&sample());
-    crate::tree::clear_dirty(&mut node);
+    crate::node::clear_dirty(&mut node);
 
     let wider = Element::new(NodeTag::Container)
         .with_key("root")
@@ -571,10 +590,10 @@ fn render_draws_nothing_when_no_node_has_a_background() {
     // 产出 4 条命令。真实管线必须让空树产出空列表——否则一层透明的容器就会
     // 挡住它下面的一切，而这正是"画面全无"类 bug 的成因。
     let mut node = Node::from_element(&sample());
-    crate::tree::layout(&mut node, Rect::new(0.0, 0.0, 800.0, 600.0), crate::tree::dark_context());
+    crate::layout::layout(&mut node, Rect::new(0.0, 0.0, 800.0, 600.0), crate::context::dark_context());
 
     let mut list = DisplayList::new();
-    render(&node, crate::tree::dark_context(), &mut list);
+    render(&node, crate::context::dark_context(), &mut list);
     assert!(
         list.is_empty(),
         "无背景的节点不应产出绘制命令，实得 {} 条",
@@ -598,12 +617,12 @@ fn render_produces_a_sorted_stable_display_list() {
     let mut node = Node::from_element(&element);
     let bounds = Rect::new(0.0, 0.0, 800.0, 600.0);
     // render 只读已摆好的矩形，布局必须先行。
-    crate::tree::layout(&mut node, bounds, crate::tree::dark_context());
+    crate::layout::layout(&mut node, bounds, crate::context::dark_context());
 
     let mut a = DisplayList::new();
-    render(&node, crate::tree::dark_context(), &mut a);
+    render(&node, crate::context::dark_context(), &mut a);
     let mut b = DisplayList::new();
-    render(&node, crate::tree::dark_context(), &mut b);
+    render(&node, crate::context::dark_context(), &mut b);
 
     assert!(!a.is_empty());
     assert_eq!(a, b, "同样输入必须产出逐字节相同的 DisplayList");
@@ -620,21 +639,318 @@ fn render_produces_a_sorted_stable_display_list() {
 fn render_reuses_the_supplied_list_buffer() {
     let mut node = Node::from_element(&sample());
     let bounds = Rect::new(0.0, 0.0, 100.0, 100.0);
-    crate::tree::layout(&mut node, bounds, crate::tree::dark_context());
+    crate::layout::layout(&mut node, bounds, crate::context::dark_context());
     let mut list = DisplayList::new();
-    render(&node, crate::tree::dark_context(), &mut list);
+    render(&node, crate::context::dark_context(), &mut list);
     let first = list.len();
-    render(&node, crate::tree::dark_context(), &mut list);
+    render(&node, crate::context::dark_context(), &mut list);
     assert_eq!(list.len(), first, "复用缓冲不得让列表增长");
 }
 
 #[test]
 fn clear_dirty_resets_every_node() {
     let mut node = Node::from_element(&sample());
-    crate::tree::clear_dirty(&mut node);
+    crate::node::clear_dirty(&mut node);
     assert_eq!(node.dirty(), Dirty::None);
     for child in node.children() {
         assert_eq!(child.dirty(), Dirty::None, "子节点的脏标记也必须清除");
+    }
+}
+
+// ============================== text → DisplayList ==============================
+
+/// 文本层的端到端：**声明 → 布局 → Command::Text**。
+///
+/// 这批断言补的是文本层最大的缺口 —— 之前 `Command::Text` 有定义、有 `GlyphQuad`
+/// 类型、有 `TextEngine` trait，但**零生产者**：`render_rec` 从不为它产出命令，
+/// 文本节点在屏幕上什么都不显示。
+///
+/// 用 `NullEngine` 而非真实字体：这里要断言的是"核心是否正确地接线了"，不是
+/// "字形是否好看"。uv 的正确性属于 base 层（要真实光栅化才能验）。
+mod text_pipeline {
+    use crate::core::{Rect, Size};
+    use crate::paint::{Command, DisplayList};
+    use crate::property::PropertyValue;
+    use crate::props;
+    use crate::text::{NullEngine, TextStyle};
+    use crate::theme::Theme;
+    use crate::context::Context;
+    use crate::element::Element;
+    use crate::id::NodeTag;
+    use crate::layout::layout;
+    use crate::node::Node;
+    use crate::paint::render;
+    use std::cell::RefCell;
+
+    /// 固定字宽的引擎，让测量结果可预测。
+    fn engine() -> RefCell<NullEngine> {
+        RefCell::new(NullEngine { char_width: 0.5 })
+    }
+
+    /// 一个文本节点。
+    fn text_node(text: &'static str, size: f32) -> Element {
+        Element::new(NodeTag::Text)
+            .with(&props::TEXT, PropertyValue::static_str(text))
+            .with(&props::TEXT_SIZE, PropertyValue::float(size))
+            .with(
+                &props::TEXT_COLOR,
+                PropertyValue::color(crate::core::Color::rgb(1.0, 0.0, 0.0)),
+            )
+    }
+
+    /// 走完 声明 → 布局 → 渲染，返回 DisplayList。
+    fn render_text(element: &Element, engine: &RefCell<NullEngine>, size: Size) -> DisplayList {
+        let theme = Theme::dark();
+        let ctx = Context::with_engine(&theme, engine);
+        let mut node = Node::from_element(element);
+        layout(&mut node, Rect::new(0.0, 0.0, size.width, size.height), ctx);
+        let mut list = DisplayList::new();
+        render(&node, ctx, &mut list);
+        list
+    }
+
+    fn text_commands(list: &DisplayList) -> Vec<(&str, usize)> {
+        list.iter()
+            .filter_map(|i| match &i.command {
+                Command::Text { atlas, glyphs, .. } => Some((atlas.as_str(), glyphs.len())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_text_node_produces_a_text_command() {
+        let engine = engine();
+        let list = render_text(&text_node("Hello", 20.0), &engine, Size::new(200.0, 100.0));
+
+        assert_eq!(
+            text_commands(&list),
+            vec![("null-atlas", 5)],
+            "5 个字符必须产出 5 个字形四边形"
+        );
+    }
+
+    #[test]
+    fn text_measured_size_drives_layout() {
+        let engine = engine();
+        // char_width 0.5 × size 20 = 每字符 10px；"Hello" = 50px 宽。
+        // 行高 = 1.2 × 20 = 24px。
+        let node = text_node("Hello", 20.0);
+        let theme = Theme::dark();
+        let ctx = Context::with_engine(&theme, &engine);
+        let mut n = Node::from_element(&node);
+        let size = crate::layout::measure(&mut n, crate::layout::Constraints::unbounded(), ctx);
+
+        assert!(
+            (size.width - 50.0).abs() < 1e-3,
+            "文本宽度应由整形结果决定，实得 {}",
+            size.width
+        );
+        assert!(
+            (size.height - 24.0).abs() < 1e-3,
+            "文本高度应等于行高，实得 {}",
+            size.height
+        );
+    }
+
+    #[test]
+    fn text_grows_the_container_it_lives_in() {
+        let engine = engine();
+        // 把文本放进容器里，容器的尺寸必须被文本撑开 —— 否则文本会被压成零高。
+        let host = Element::new(NodeTag::Container).with_children([text_node("Hi", 20.0)]);
+        let theme = Theme::dark();
+        let ctx = Context::with_engine(&theme, &engine);
+        let mut n = Node::from_element(&host);
+        let size = crate::layout::measure(&mut n, crate::layout::Constraints::unbounded(), ctx);
+
+        assert!(
+            size.height >= 24.0,
+            "容器必须被文本内容撑开，实得高度 {}",
+            size.height
+        );
+    }
+
+    #[test]
+    fn a_long_line_wraps_within_max_width() {
+        let engine = engine();
+        let mut e = text_node("Hello world", 20.0);
+        e = e.with(&props::TEXT_MAX_WIDTH, PropertyValue::float(60.0));
+        let list = render_text(&e, &engine, Size::new(200.0, 100.0));
+
+        // 一个文本节点 = **一条** `Command::Text`，内含所有行的字形 —— 这是合批
+        // 设计（一条命令一个图集、一个颜色）。所以断行不能靠命令条数验证，要看
+        // 字形的 y 位置有几个不同值。
+        let cmds = text_commands(&list);
+        assert_eq!(
+            cmds.len(),
+            1,
+            "一个文本节点应只产出一条 Text 命令（合批），实得 {cmds:?}"
+        );
+        assert_eq!(cmds[0].1, 11, "11 个字符应有 11 个字形");
+
+        let glyphs: Vec<Rect> = list
+            .iter()
+            .filter_map(|i| match &i.command {
+                Command::Text { glyphs, .. } => Some(glyphs.iter().map(|g| g.dst).collect::<Vec<_>>()),
+                _ => None,
+            })
+            .flatten()
+            .collect();
+
+        let distinct_rows: std::collections::BTreeSet<u32> = glyphs
+            .iter()
+            .map(|r| r.y.to_bits())
+            .collect();
+        assert_eq!(
+            distinct_rows.len(),
+            2,
+            "60px 宽 / 每字符 10px = 每行 6 字符，11 字符应断成 2 行"
+        );
+
+        // 第一行 6 个、第二行 5 个，且第一行不得超出 max_width。
+        let row1: Vec<&Rect> = glyphs
+            .iter()
+            .filter(|r| r.y == glyphs.iter().map(|g| g.y).fold(f32::MAX, f32::min))
+            .collect();
+        assert_eq!(row1.len(), 6, "第一行应有 6 个字形");
+        let row1_right = row1.iter().map(|r| r.x + r.width).fold(0.0f32, f32::max);
+        assert!(
+            row1_right <= 60.0 + 1e-3,
+            "第一行不得超出 max_width=60，实得 {row1_right}"
+        );
+    }
+
+    #[test]
+    fn text_color_comes_from_the_property() {
+        let engine = engine();
+        let list = render_text(&text_node("X", 20.0), &engine, Size::new(100.0, 50.0));
+        let found = list
+            .iter()
+            .find_map(|i| match &i.command {
+                Command::Text { color, .. } => Some(*color),
+                _ => None,
+            })
+            .expect("应有 Text 命令");
+        assert_eq!(found.r, 1.0, "文本色应取 TEXT_COLOR");
+        assert_eq!(found.g, 0.0);
+    }
+
+    #[test]
+    fn empty_text_produces_nothing() {
+        let engine = engine();
+        let list = render_text(&text_node("", 20.0), &engine, Size::new(100.0, 50.0));
+        assert!(
+            text_commands(&list).is_empty(),
+            "空文本不该产出命令 —— 否则每个空标签都进 DisplayList"
+        );
+    }
+
+    #[test]
+    fn without_an_engine_text_nodes_are_inert() {
+        // Context::new 不带引擎：文本节点既不产出命令，也不贡献尺寸。
+        // 这让"没有字体的进程"仍能跑通整条流水线。
+        let theme = Theme::dark();
+        let ctx = Context::new(&theme);
+        let mut node = Node::from_element(&text_node("Hello", 20.0));
+        let size = crate::layout::measure(&mut node, crate::layout::Constraints::unbounded(), ctx);
+        assert_eq!(size, Size::new(0.0, 0.0), "无引擎时文本应为零尺寸");
+
+        let mut list = DisplayList::new();
+        render(&node, ctx, &mut list);
+        assert!(text_commands(&list).is_empty());
+    }
+
+    #[test]
+    fn changing_only_text_color_marks_paint_dirty_not_layout() {
+        // 这是本框架最核心的性能承诺：改颜色不该触发重排。
+        let engine = engine();
+        let theme = Theme::dark();
+        let ctx = Context::with_engine(&theme, &engine);
+        let red = Element::new(NodeTag::Text)
+            .with(&props::TEXT, PropertyValue::static_str("Hi"))
+            .with(
+                &props::TEXT_COLOR,
+                PropertyValue::color(crate::core::Color::rgb(1.0, 0.0, 0.0)),
+            );
+        let mut node = Node::from_element(&red);
+        layout(&mut node, Rect::new(0.0, 0.0, 200.0, 100.0), ctx);
+        crate::node::clear_dirty(&mut node);
+
+        let blue = Element::new(NodeTag::Text)
+            .with(&props::TEXT, PropertyValue::static_str("Hi"))
+            .with(
+                &props::TEXT_COLOR,
+                PropertyValue::color(crate::core::Color::rgb(0.0, 0.0, 1.0)),
+            );
+        let stats = crate::diff::diff(&mut node, &blue);
+
+        assert!(!stats.is_noop(), "颜色变了应被检出");
+        assert!(
+            !stats.needs_layout(),
+            "只改颜色不得要求重排 —— 否则改一次主题就重排整棵树：{stats:?}"
+        );
+    }
+
+    #[test]
+    fn steady_state_text_is_a_noop() {
+        let engine = engine();
+        let theme = Theme::dark();
+        let ctx = Context::with_engine(&theme, &engine);
+        let mut node = Node::from_element(&text_node("Stable", 16.0));
+        layout(&mut node, Rect::new(0.0, 0.0, 200.0, 100.0), ctx);
+        crate::node::clear_dirty(&mut node);
+
+        let stats = crate::diff::diff(&mut node, &text_node("Stable", 16.0));
+        assert!(
+            stats.is_noop(),
+            "文本未变时 diff 必须是 no-op（否则每帧都在重排文本）：{stats:?}"
+        );
+    }
+
+    #[test]
+    fn text_style_line_height_is_respected() {
+        let engine = engine();
+        let theme = Theme::dark();
+        let ctx = Context::with_engine(&theme, &engine);
+
+        // 行高倍数直接乘在字号上。注意默认值是 **1.2**（不是 1.0），所以这里断言
+        // 确切值而不是"翻倍" —— 后者只在默认是 1.0 时成立，写成比例会掩盖默认值
+        // 被改动这件事。
+        let mut default_node = Node::from_element(&text_node("X", 10.0));
+        let default_h = crate::layout::measure(
+            &mut default_node,
+            crate::layout::Constraints::unbounded(),
+            ctx,
+        )
+        .height;
+        assert!(
+            (default_h - 12.0).abs() < 1e-3,
+            "默认行高 1.2 × 字号 10 = 12，实得 {default_h}"
+        );
+
+        let loose_element =
+            text_node("X", 10.0).with(&props::TEXT_LINE_HEIGHT, PropertyValue::float(2.0));
+        let mut loose_node = Node::from_element(&loose_element);
+        let loose_h = crate::layout::measure(
+            &mut loose_node,
+            crate::layout::Constraints::unbounded(),
+            ctx,
+        )
+        .height;
+        assert!(
+            (loose_h - 20.0).abs() < 1e-3,
+            "行高 2.0 × 字号 10 = 20，实得 {loose_h}"
+        );
+    }
+
+    #[test]
+    fn the_default_text_style_is_usable() {
+        // 宿主若不覆写任何东西，也不该拿到荒谬的默认值。
+        let style = TextStyle::default();
+        assert_eq!(style.size, 14.0);
+        assert_eq!(style.scale, 1.0);
+        assert!(style.line_height.is_none());
+        assert_eq!(style.effective_size(), 14.0);
     }
 }
 
@@ -723,3 +1039,242 @@ fn rect_contains_uses_half_open_intervals() {
     assert!(!rect_contains(r, Point::new(-0.1, 5.0)));
 }
 
+
+// ============================== 效果契约 ==============================
+
+/// 效果从 `props` 一路走到 `Command` 的端到端契约。
+///
+/// 拆开测的意义在于：每一段单独都对，但接错了照样整条链断掉 —— 而症状是
+/// "设了 blur 但没反应"，没有任何报错。
+mod effect_contract {
+    use crate::context::Context;
+    use crate::core::{Color, Point, Rect, Size};
+    use crate::element::Element;
+    use crate::filter::{BlendMode, Filter, FilterChain};
+    use crate::id::NodeTag;
+    use crate::layout::layout;
+    use crate::node::Node;
+    use crate::paint::{render, Command, DisplayList};
+    use crate::property::PropertyValue;
+    use crate::theme::Theme;
+    use std::cell::RefCell;
+
+    fn engine() -> RefCell<crate::text::NullEngine> {
+        RefCell::new(crate::text::NullEngine { char_width: 0.5 })
+    }
+
+    /// 走完 声明 → 布局 → 渲染。
+    fn render_of(element: &Element) -> DisplayList {
+        let theme = Theme::dark();
+        let engine = engine();
+        let ctx = Context::with_engine(&theme, &engine);
+        let mut node = Node::from_element(element);
+        layout(
+            &mut node,
+            Rect::new(0.0, 0.0, 200.0, 100.0),
+            ctx,
+        );
+        let mut list = DisplayList::new();
+        render(&node, ctx, &mut list);
+        list
+    }
+
+    fn blurred_rect(sigma: f32) -> Element {
+        Element::new(NodeTag::Container)
+            .with_key("root")
+            .with(
+                &crate::props::BACKGROUND,
+                PropertyValue::color(Color::rgb(1.0, 0.0, 0.0)),
+            )
+            .with(
+                &crate::props::FILTER,
+                PropertyValue::filter(FilterChain::single(Filter::Blur {
+                    sigma_x: sigma,
+                    sigma_y: sigma,
+                })),
+            )
+    }
+
+    /// `props::FILTER` 真的进了 `Command::Quad`。
+    #[test]
+    fn filter_从属性走到命令() {
+        let list = render_of(&blurred_rect(2.0));
+        let filters: Vec<FilterChain> = list
+            .iter()
+            .filter_map(|i| match &i.command {
+                Command::Quad { filter, .. } => Some(filter.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(filters.len(), 1, "只有根节点一条 Quad");
+        assert!(!filters[0].is_identity(), "blur 必须传下去");
+        assert_eq!(filters[0].outsets().left, 6.0, "σ=2 ⇒ 3σ = 6");
+    }
+
+    /// 不设滤镜时是空链 —— 这是零回归的前提（否则每条命令都要开 RT）。
+    #[test]
+    fn 未设滤镜时命令带空链() {
+        let list = render_of(
+            &Element::new(NodeTag::Container).with(
+                &crate::props::BACKGROUND,
+                PropertyValue::color(Color::rgb(1.0, 0.0, 0.0)),
+            ),
+        );
+        for i in list.iter() {
+            if let Command::Quad { filter, .. } = &i.command {
+                assert!(filter.is_identity());
+            }
+        }
+        assert!(
+            list.offscreen_requirements().is_empty(),
+            "空链不该产生任何离屏需求"
+        );
+    }
+
+    /// `props::BLEND_MODE` 真的进了 `Command`，且被 `has_non_default_blend` 报出。
+    #[test]
+    fn blend_mode_从属性走到命令() {
+        let list = render_of(
+            &Element::new(NodeTag::Container)
+                .with(
+                    &crate::props::BACKGROUND,
+                    PropertyValue::color(Color::rgb(1.0, 0.0, 0.0)),
+                )
+                .with(
+                    &crate::props::BLEND_MODE,
+                    PropertyValue::blend_mode(BlendMode::Multiply),
+                ),
+        );
+        assert!(list.has_non_default_blend());
+        let has = list.iter().any(|i| {
+            matches!(&i.command, Command::Quad { blend, .. } if *blend == BlendMode::Multiply)
+        });
+        assert!(has, "混合模式必须传下去");
+    }
+
+    /// 默认不报非默认混合（`Clear` 之外的所有比较都要走到）。
+    #[test]
+    fn 默认混合模式不被报出() {
+        let list = render_of(&blurred_rect(2.0));
+        assert!(
+            !list.has_non_default_blend(),
+            "只设了 blur，不该报混合模式"
+        );
+    }
+
+    /// 离屏需求能回答"要多大RT"，且与 fx 层的规划一致。
+    ///
+    /// 两条路径（core 的 `offscreen_requirements` 与 fx 的 `plan_offscreens`）
+    /// 算的是同一个问题，所以必须给出相同答案 —— 不一致就说明有一处漂移。
+    #[test]
+    fn 离屏需求与几何外扩一致() {
+        let list = render_of(&blurred_rect(2.0));
+        let reqs = list.offscreen_requirements();
+        assert_eq!(reqs.len(), 1);
+        let r = &reqs[0];
+        // 根节点矩形是整个 200×100；blur σ=2 ⇒ 四边各扩 6。
+        assert_eq!(r.content, Rect::new(0.0, 0.0, 200.0, 100.0));
+        assert_eq!(r.bounds, Rect::new(-6.0, -6.0, 212.0, 112.0));
+        // 局部原点：内容原点在 RT 内的坐标 = 内容原点 − bounds 原点 = (−6, −6)。
+        //
+        // ⚠ 方向容易搞反：RT 向外扩了，所以屏幕原点在 RT 里是**负**的。宿主
+        // 用 `bounds.x/y` 做基准去减，而不是拿它当平移量直接加。
+        assert_eq!(r.filter.origin_in(r.content), Point::new(-6.0, -6.0));
+        assert_eq!(
+            r.content.x - r.bounds.x,
+            -r.filter.origin_in(r.content).x,
+            "origin_in 与 bounds 必须自洽：origin 就是 −(bounds 原点)"
+        );
+    }
+
+    /// 滤镜**不继承**：父节点设了 blur，子节点不该跟着糊。
+    ///
+    /// 这与 `Opacity` 的继承语义相反 —— 半透明叠加天然正确，模糊叠加完全不成立。
+    #[test]
+    fn 滤镜不沿父子链继承() {
+        let child = Element::new(NodeTag::Control)
+            .with_key("child")
+            .with(
+                &crate::props::BACKGROUND,
+                PropertyValue::color(Color::rgb(0.0, 1.0, 0.0)),
+            );
+        let list = render_of(&blurred_rect(2.0).with_children([child]));
+        let blurred = list
+            .iter()
+            .filter(|i| matches!(&i.command, Command::Quad { filter, .. } if !filter.is_identity()))
+            .count();
+        assert_eq!(
+            blurred, 1,
+            "只有父节点那条 Quad 带滤镜；子节点必须干净，否则整棵子树被糊"
+        );
+    }
+
+    /// 文本命令也带滤镜（`text_command` 的占位值被 `render_rec` 正确覆盖）。
+    #[test]
+    fn 文本命令也携带滤镜() {
+        let e = Element::new(NodeTag::Text)
+            .with_key("t")
+            .with(
+                &crate::props::TEXT,
+                PropertyValue::static_str("ab"),
+            )
+            .with(
+                &crate::props::FILTER,
+                PropertyValue::filter(FilterChain::single(Filter::Blur {
+                    sigma_x: 1.0,
+                    sigma_y: 1.0,
+                })),
+            );
+        let list = render_of(&e);
+        let found = list
+            .iter()
+            .any(|i| matches!(&i.command, Command::Text { filter, .. } if !filter.is_identity()));
+        assert!(
+            found,
+            "文本命令的滤镜占位值必须被 render_rec 覆盖成真实值，\
+             否则 text_command 里的空链会静默吞掉效果"
+        );
+    }
+
+    /// 属性相等判定覆盖新变体 —— diff 靠它判断"效果真的变了"。
+    ///
+    /// 这条若漏了，表现是"改了 blur 那一帧有反应、之后再也不更新"，而
+    /// 单元测试全绿。
+    #[test]
+    fn 属性相等能区分不同滤镜() {
+        let a = PropertyValue::filter(FilterChain::single(Filter::Blur {
+            sigma_x: 1.0,
+            sigma_y: 1.0,
+        }));
+        let b = PropertyValue::filter(FilterChain::single(Filter::Blur {
+            sigma_x: 2.0,
+            sigma_y: 1.0,
+        }));
+        assert_ne!(a, b, "σ 不同就是不同效果");
+        assert_eq!(a, a.clone(), "同值必须相等（diff 判 no-op 的依据）");
+        assert_ne!(
+            PropertyValue::blend_mode(BlendMode::Src),
+            PropertyValue::blend_mode(BlendMode::Dst)
+        );
+    }
+
+    /// `Debug` 输出能看出滤镜项数 —— 属性 diff 失败时的诊断依据。
+    #[test]
+    fn 滤镜属性有可读调试输出() {
+        let v = PropertyValue::filter(FilterChain::single(Filter::Blur {
+            sigma_x: 1.0,
+            sigma_y: 1.0,
+        }));
+        assert!(
+            format!("{v:?}").contains("1 项"),
+            "实际 {:?}",
+            format!("{v:?}")
+        );
+    }
+
+    /// 尺寸类断言用得到，确认测试里的常量与框架一致。
+    #[test]
+    fn 布局尺寸常量自洽() {
+        assert_eq!(Size::new(200.0, 100.0).width, 200.0);
+    }
+}

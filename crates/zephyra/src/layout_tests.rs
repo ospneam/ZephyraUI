@@ -1,20 +1,26 @@
 //! 属性驱动的布局与绘制——即"声明 → 布局 → DisplayList"这条主链路的测试。
 //!
-//! 这批测试补的是骨架阶段留下的最大缺口：当时 `tree::render` 是一个桩，对每个
+//! 这批测试补的是骨架阶段留下的最大缺口：当时 `paint::render` 是一个桩，对每个
 //! 节点无条件画同一条硬编码 Quad，于是"属性系统 / 主题 / 绘制"三个模块各自存在
 //! 却从未接在一起。这里第一次让它们串起来跑，并断言串起来之后的可见行为。
 
-use crate::core::{Color, Rect};
+use crate::core::{Color, Rect, UvRect};
 use crate::layout::{AlignItems, Direction, MainAxisAlign};
 use crate::paint::{Command, Layer};
 use crate::property::PropertyValue;
 use crate::props;
 use crate::theme::{roles, Theme};
-use crate::tree::{diff, layout, render, Context, Element, Node, NodeTag};
+use crate::context::Context;
+use crate::diff::diff;
+use crate::element::Element;
+use crate::id::NodeTag;
+use crate::layout::layout;
+use crate::node::Node;
+use crate::paint::render;
 
 /// 这批测试大多只关心几何与绘制，用深色主题即可；需要对比主题的用例自建 `Context`。
 fn ctx() -> Context<'static> {
-    crate::tree::dark_context()
+    crate::context::dark_context()
 }
 
 // ============================== 辅助 ==============================
@@ -68,6 +74,27 @@ fn quad_rects(node: &Node) -> Vec<Rect> {
             _ => None,
         })
         .collect()
+}
+
+/// 图像节点的 `src`。`None` = 整张纹理。
+fn image_src(node: &Node) -> Vec<Option<UvRect>> {
+    commands(node)
+        .into_iter()
+        .filter_map(|c| match c {
+            Command::Image { src, .. } => Some(src),
+            _ => None,
+        })
+        .collect()
+}
+
+/// 带一张纹理的图像节点。`src = None` 表示"用默认（整张）"。
+fn image(src: Option<UvRect>) -> Element {
+    let mut e = Element::new(NodeTag::Image)
+        .with(&props::IMAGE_TEXTURE, PropertyValue::static_str("atlas.png"));
+    if let Some(uv) = src {
+        e = e.with(&props::IMAGE_SRC, PropertyValue::uv_rect(uv));
+    }
+    e
 }
 
 // ============================== 布局 ==============================
@@ -484,9 +511,9 @@ fn changing_a_paint_property_does_not_force_relayout() {
     // 改背景色只该重绘。若它触发重排，改个颜色就会让整棵子树重新布局——
     // 这是 UI 卡顿最常见的单一原因。
     let mut node = Node::from_element(&quad(Color::rgb(0.2, 0.2, 0.2)));
-    crate::tree::clear_dirty(&mut node);
+    crate::node::clear_dirty(&mut node);
     layout(&mut node, Rect::new(0.0, 0.0, 100.0, 100.0), ctx());
-    crate::tree::clear_dirty(&mut node);
+    crate::node::clear_dirty(&mut node);
 
     let changed = Element::new(NodeTag::Container)
         .with(&props::BACKGROUND, PropertyValue::color(Color::rgb(0.9, 0.0, 0.0)));
@@ -506,9 +533,9 @@ fn changing_spacing_forces_relayout() {
         .with(&props::SPACING, PropertyValue::float(2.0))
         .with_children([sized(20.0, 20.0)(Element::new(NodeTag::Control)), sized(20.0, 20.0)(Element::new(NodeTag::Control))]);
     let mut node = Node::from_element(&before);
-    crate::tree::clear_dirty(&mut node);
+    crate::node::clear_dirty(&mut node);
     layout(&mut node, Rect::new(0.0, 0.0, 200.0, 100.0), ctx());
-    crate::tree::clear_dirty(&mut node);
+    crate::node::clear_dirty(&mut node);
 
     let after = Element::new(NodeTag::Container)
         .with(&props::DIRECTION, PropertyValue::direction(Direction::Horizontal))
@@ -537,6 +564,86 @@ fn layout_is_stable_across_repeated_calls() {
     let rects = |n: &Node| n.children().iter().map(|c| c.rect()).collect::<Vec<_>>();
     assert_eq!(rects(&a), rects(&b));
     assert_eq!(commands(&a), commands(&b));
+}
+
+// ============================== 图像 src 裁剪 ==============================
+
+#[test]
+fn an_image_without_src_uses_the_whole_texture() {
+    // `src: None` 是"没裁剪"的语义，而不是"零尺寸"——后者在采样器里表现为完全不显示。
+    let node = laid_out(&image(None), Rect::new(0.0, 0.0, 64.0, 64.0));
+    assert_eq!(
+        image_src(&node),
+        vec![None],
+        "默认应不裁剪，宿主据此可以跳过 uv 计算"
+    );
+}
+
+#[test]
+fn an_explicit_full_rect_also_reads_as_uncropped() {
+    // 显式写整张 uv 与不写必须落到同一个结果——否则"设与不设"会画出不同画面。
+    let node = laid_out(
+        &image(Some(UvRect::FULL)),
+        Rect::new(0.0, 0.0, 64.0, 64.0),
+    );
+    assert_eq!(image_src(&node), vec![None]);
+}
+
+#[test]
+fn a_sub_rect_reaches_the_command() {
+    // 图集右半边：核心只搬运这四个数字，不认识它对应哪张纹理。
+    let half = UvRect::new(0.5, 0.0, 0.5, 1.0);
+    let node = laid_out(&image(Some(half)), Rect::new(0.0, 0.0, 64.0, 64.0));
+    assert_eq!(image_src(&node), vec![Some(half)]);
+}
+
+#[test]
+fn an_out_of_range_src_is_dropped_rather_than_forwarded() {
+    // 越界 uv 的症状在采样器里才显现（取到相邻图块的像素），那时已离病因很远。
+    // 所以核心在**产生**命令时就退化成"整张"，宁可少裁一点也不产出错误采样。
+    for bad in [
+        UvRect::new(0.0, 0.0, 1.5, 1.0),  // 宽出界
+        UvRect::new(0.0, 0.0, 1.0, 2.0),  // 高出界
+        UvRect::new(0.8, 0.0, 0.5, 1.0),  // 右边越过 1.0
+        UvRect::new(-0.5, 0.0, 1.0, 1.0), // 左边为负
+    ] {
+        let node = laid_out(&image(Some(bad)), Rect::new(0.0, 0.0, 64.0, 64.0));
+        assert_eq!(
+            image_src(&node),
+            vec![None],
+            "越界 src {bad:?} 应退化成整张，而不是被原样转发"
+        );
+    }
+}
+
+#[test]
+fn a_zero_area_src_is_dropped() {
+    // 零尺寸 uv 没有可见像素。它的正确表现是"不裁剪"还是"不画"有歧义 ——
+    // 选前者，因为 `src` 为 `None` 时节点矩形与背景仍会被画出，语义连续。
+    let node = laid_out(
+        &image(Some(UvRect::new(0.5, 0.5, 0.0, 0.0))),
+        Rect::new(0.0, 0.0, 64.0, 64.0),
+    );
+    assert_eq!(image_src(&node), vec![None]);
+}
+
+#[test]
+fn src_does_not_affect_layout() {
+    // 裁剪只改变"取纹理的哪一块"，不改变节点多大。若它触发重排，改一个 uv 会让
+    // 整棵列表重排——正是这套属性系统要避免的那类卡顿。
+    let mut node = Node::from_element(&image(None));
+    crate::node::clear_dirty(&mut node);
+    layout(&mut node, Rect::new(0.0, 0.0, 64.0, 64.0), ctx());
+    crate::node::clear_dirty(&mut node);
+
+    let cropped = image(Some(UvRect::new(0.5, 0.0, 0.5, 1.0)));
+    let stats = diff(&mut node, &cropped);
+    assert!(stats.dirtied > 0, "src 变了应被检出为重绘");
+    assert!(
+        !stats.needs_layout(),
+        "改 src 不应要求重排，实得 needs_layout={}",
+        stats.needs_layout
+    );
 }
 
 // ============================== 嵌套 ==============================

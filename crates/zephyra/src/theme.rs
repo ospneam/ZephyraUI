@@ -26,7 +26,7 @@
 //!
 //! # 为什么切主题不用遍历控件树
 //!
-//! [`property::PropertyValue::resource`] 让属性存「资源键」而不是字面值，
+//! [`crate::property::PropertyValue::Resource`] 让属性存「资源键」而不是字面值，
 //! 主题切换时只需重解析这些键并重算受影响的子树（由 dirty 标记驱动），而不是
 //! 无条件重建整棵树。
 

@@ -13,12 +13,16 @@ use crate::input::router::{InputRouter, RoutedEvent, RoutedEvents};
 use crate::layout::Direction;
 use crate::property::PropertyValue;
 use crate::props;
-use crate::tree::{layout, Context, Element, Node, NodeTag};
+use crate::context::Context;
+use crate::element::Element;
+use crate::id::NodeTag;
+use crate::layout::layout;
+use crate::node::Node;
 
 // ============================== 辅助 ==============================
 
 fn ctx() -> Context<'static> {
-    crate::tree::dark_context()
+    crate::context::dark_context()
 }
 
 /// 一个可交互的矩形节点。
@@ -88,7 +92,7 @@ fn an_interactive_node_is_actually_reported_as_interactive() {
     let target = result
         .target()
         .expect("落在可交互按钮上时必须有 target");
-    assert_eq!(target.id, crate::tree::ElementKey::Name("a".into()));
+    assert_eq!(target.id, crate::id::ElementKey::Name("a".into()));
     assert!(target.interactive);
 }
 
@@ -97,10 +101,10 @@ fn a_container_is_on_the_path_but_is_not_the_target() {
     // 事件冒泡需要容器的矩形，但处理目标必须是按钮本身。
     let node = tree(&two_buttons());
     let result = hit_at(&node, 10.0, 10.0);
-    assert!(result.path.iter().any(|n| n.id == crate::tree::ElementKey::Name("root".into())));
+    assert!(result.path.iter().any(|n| n.id == crate::id::ElementKey::Name("root".into())));
     assert_eq!(
         result.target().map(|n| &n.id),
-        Some(&crate::tree::ElementKey::Name("a".into()))
+        Some(&crate::id::ElementKey::Name("a".into()))
     );
 }
 

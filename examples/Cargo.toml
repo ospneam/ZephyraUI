@@ -1,13 +1,61 @@
 [package]
 name = "zephyra-foundation"
-description = "Executable acceptance criteria for the ZephyraUI core"
+description = "Executable acceptance criteria for the ZephyraUI core, plus a windowed demo app"
 version = "0.1.0"
 edition = "2021"
 publish = false
 
 [dependencies]
 zephyra = { path = "../crates/zephyra" }
+# 后端无关的渲染层。`--dump-cpu` 那条路（`CpuHost`、图集、顶点流）**不需要任何 GPU
+# 后端**，而 `zephyra-winit` / `zephyra-winit-d3d12` 只是把这一层重新导出了一遍。
+#
+# 直接依赖它而不是走再导出：`--dump-cpu` 的意义就是「不开窗口也能验证整条链」，
+# 而一旦它依赖某个后端 crate，那条路就会跟着后端一起坏 —— 那正好是它要躲开的东西。
+zephyra-fx = { path = "../crates/zephyra-fx" }
+# 演示宿主：真开窗口 + GPU 渲染。
+#
+# # 只有一个后端会被编进来
+#
+# 由**特性开关**选择（`d3d12` / `d3d11`），而不是运行时切换 —— 两个都编进来时，
+# 画面一空就分不清是哪个后端的静默失效，而这两种要查的完全不同。
+#
+# 默认 `d3d12`：它的外壳与呈现链路已逐档验证（见 `zephyra-winit-d3d12/tests/`）。
+zephyra-winit-d3d12 = { path = "../crates/base/zephyra-winit-d3d12", optional = true }
+zephyra-winit = { path = "../crates/base/zephyra-winit", optional = true }
+# `Bootstrap` 自举宿主时要实现 `ApplicationHandler`，所以本 crate 直接依赖 winit ——
+# 而不是走 `zephyra_winit::winit` / `zephyra_winit_d3d12::winit` 的再导出。
+#
+# 走再导出看起来「少一个依赖」，但它让「本示例用的 winit 版本」取决于选中了哪个后端，
+# 而两个后端版本必须一致（`ApplicationHandler` 是同一个类型）。直接依赖把这件事变成
+# 显式的。
+winit = "0.30"
+#
+# 这里**不再**有 pollster：wgpu 的设备请求是 async 的，需要一个 block_on 才能塞进
+# 同步的 `main`；D3D11/D3D12 的设备与交换链本来就是同步 API，所以那个依赖消失了。
+
+[features]
+default = ["d3d12"]
+d3d12 = ["dep:zephyra-winit-d3d12"]
+d3d11 = ["dep:zephyra-winit"]
 
 [[bin]]
 name = "foundation"
 path = "foundation.rs"
+
+[[bin]]
+name = "demo"
+# 后端由**特性开关**选择，`--dump-cpu` 那条路不需要任何后端。
+#
+# `required-features` 只列了 `d3d12`：默认 feature 就是它，所以平时都能编。
+# 而选 `d3d11` 时用 `--no-default-features --features d3d11` —— 那种情况下
+# `demo.rs` 里的 `#[cfg]` import 会切到 D3D11 的 `HostWindow`，于是这个 bin 反而
+# 编不过。要同时编两个后端需要把 `required-features` 写成 `any`，那属于「先想清楚
+# 两条路同时存在意味着什么」那一步，不该由一个 `required-features` 顺手决定。
+required-features = ["d3d12"]
+path = "demo.rs"
+
+# hover / press 的端到端断言。不需要窗口也不需要 GPU —— 链路止于 DisplayList。
+[[test]]
+name = "demo_interaction"
+path = "demo_tests.rs"

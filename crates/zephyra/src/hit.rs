@@ -4,7 +4,7 @@
 //!
 //! 命中测试必须用**布局算出的矩形**，不能自己再推一遍——两套几何一旦漂移，
 //! 就会出现"看得见但点不到"这类极难查的 bug。所以本模块只负责**遍历与优先级**，
-//! 矩形一律取自 [`crate::tree::Node::rect`]。
+//! 矩形一律取自 [`crate::node::Node::rect`]。
 //!
 //! # 优先级：后来的在上面
 //!
@@ -27,7 +27,9 @@
 
 use crate::core::{Point, Rect};
 use crate::paint::Layer;
-use crate::tree::{Context, ElementKey, Node};
+use crate::context::Context;
+use crate::id::ElementKey;
+use crate::node::Node;
 
 /// 事件路径的最大深度。
 ///

@@ -1,19 +1,37 @@
 [workspace]
 resolver = "2"
-members = ["crates/zephyra", "crates/zephyra-winit", "crates/zephyra-camera", "examples"]
-# `zephyra-camera` 进 members 但**不进** default-members：它是成员（可以被 `-p`
-# 选中、共享工作区的依赖解析），但不会被无差别的 `cargo build` / `cargo test`
-# 编译。这就是"选择编译"落在 Cargo 层面的形式——比在源码里 `#[cfg]` 一大块更细，
-# 因为连依赖解析都省掉了。
-default-members = ["crates/zephyra", "crates/zephyra-winit", "examples"]
-
-# zephyra-iced 暂不在本仓：它需要 iced，而 Viewstage 的 [patch.crates-io] 指向
-# Viewstage 仓内的 iced-fork。若把它放进本仓，单独 `cargo build` 会拉到上游
-# 未打补丁的 iced 而编译失败或行为不一致。
+# `crates/` 分三层，依赖方向单向（上层不知道下层存在）：
 #
-# 它当前位于 Viewstage-dev/crates/zephyra-iced，以 path 依赖引用本仓的
-# `crates/zephyra`。等 iced-fork 迁入本仓后，再把它加回 members 并移除
-# Viewstage 侧的副本。见 docs/migration-seam.md。
+#   zephyra        通用层（零依赖）：画什么 —— property/tree/layout/paint/input/icon
+#      ↓ DisplayList（纯数据、可序列化、可断言）
+#   zephyra-fx     效果器层：怎么把描述变成像素 —— 顶点展开/字形图集/光栅/资源复用
+#      ↓ 顶点流 + 中立的资源需求
+#   base/          系统适配层：与操作系统直接打交道 —— D3D11 / D3D12 / DComp / 摄像头
+#
+# 效果器层与 base 并列而非放进 base，理由与 Skia 把 `src/effects` 放在与 `src/core`
+# 并列处相同：效果**描述**是纯数据、零系统依赖，而效果**执行**才需要 GPU。
+# 前者能进 core 与效果器层，后者必须留在 base。
+members = [
+    "crates/zephyra",
+    "crates/zephyra-fx",
+    "crates/base/zephyra-winit",
+    "crates/base/zephyra-winit-d3d12",
+    "crates/base/zephyra-camera",
+    "crates/base/zephyra-dcomp",
+    "examples",
+]
+# `zephyra-camera` 与 `zephyra-dcomp` 进 members 但**不进** default-members：它们是
+# 成员（可以被 `-p` 选中、共享工作区的依赖解析），但不会被无差别的 `cargo build` /
+# `cargo test` 编译。这就是"选择编译"落在 Cargo 层面的形式——比在源码里 `#[cfg]`
+# 一大块更细，因为连依赖解析都省掉了。
+#
+# `zephyra-dcomp` 排除的理由比 camera 更强一层：它需要 `unsafe`（COM / DXGI），
+# 放进 default-members 会让"无差别构建"这个动作本身开始编译 unsafe 代码。
+#
+# `zephyra-winit-d3d12` 同样不在 default-members，理由基本相同：它是 D3D12 后端，与
+# `zephyra-winit`（D3D11）是**两个独立 crate**，同一个二进制里只应有一个后端。
+# 无差别构建时两个都编，既慢，又让"这次改动影响了哪个后端"变得不清楚。用 `-p` 选。
+default-members = ["crates/zephyra", "crates/zephyra-fx", "crates/base/zephyra-winit", "examples"]
 
 [workspace.package]
 version = "0.1.0"

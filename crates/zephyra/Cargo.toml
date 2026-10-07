@@ -8,9 +8,9 @@ rust-version.workspace = true
 
 # 核心**零依赖**。
 #
-# 这不是洁癖，是本框架唯一不可让步的架构约束：宿主适配层（iced / winit+wgpu）
-# 必须在框架之外。若核心 import 了 iced 或 wgpu，那么 Viewstage 把渲染层收敛到
-# winit+wgpu 时就得连 fork 一起搬，框架无法独立版本化与发布。
+# 这不是洁癖，是本框架唯一不可让步的架构约束：宿主适配层（宿主 / winit+D3D11）
+# 必须在框架之外。若核心 import 了 宿主 或 D3D11，那么 Viewstage 把渲染层收敛到
+# winit+D3D11 时就得连 fork 一起搬，框架无法独立版本化与发布。
 #
 # `cargo tree -p zephyra` 的输出应当为空——这条约束应当可被 CI 检查。
 [dependencies]

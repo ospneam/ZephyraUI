@@ -11,7 +11,7 @@
 //! 新增图标：把 `.svg` 放进 `assets/icons/`，加一条 `include_str!` 常量，
 //! 再登记进 [`REGISTRY`]。
 //!
-//! [`REGISTRY`]: super::registry::REGISTRY
+//! [`REGISTRY`]: crate::icon::assets::REGISTRY
 
 use super::IconSource;
 

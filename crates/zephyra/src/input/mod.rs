@@ -4,8 +4,8 @@
 //!
 //! 手势识别是**框架**职责而非应用职责，原因有三：
 //!
-//! 1. **宿主无关。** 同一个"两指捏合"要同时服务于 iced 的 `Touch` 事件、未来的
-//!    winit `WindowEvent`、以及可能的手写 `WM_POINTER*` 钩子。识别算法若住在宿主侧，
+//! 1. **宿主无关。** 同一个"两指捏合"要同时服务于 winit 的 `WindowEvent::Touch`、
+//!    手写 `WM_POINTER*` 钩子、以及将来可能出现的别的宿主。识别算法若住在宿主侧，
 //!    每换一个宿主就要重写一遍，而重写就意味着重错。
 //! 2. **零分配是硬约束。** 笔画热路径上的每次堆分配都会让帧时间出现尖峰。所以指针表
 //!    是定长数组、识别输出是 `Copy` 值——这些在应用层写不出来，只有作为核心的一部分
@@ -15,7 +15,7 @@
 //!
 //! # 模块
 //!
-//! - [`pointer`]：事件词汇表 + 固定容量指针表
+//! - [`mod@pointer`]：事件词汇表 + 固定容量指针表
 //! - [`pinch`]：两指捏合（增量语义 + 平方域容差）
 //! - [`recognizer`]：单入口手势状态机
 //! - [`viewport`]：屏幕 ↔ 内容坐标变换（缩放钳位的唯一来源）
@@ -38,5 +38,5 @@ pub use momentum::Momentum;
 pub use pinch::PinchDelta;
 pub use pointer::{PointerEvent, PointerPhase, PointerSource};
 pub use recognizer::{Gesture, Recognizer};
-pub use router::{InputRouter, RoutedEvent};
+pub use router::{InputRouter, RoutedEvent, RoutedEvents};
 pub use viewport::Viewport;

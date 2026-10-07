@@ -24,7 +24,8 @@ use crate::core::Point;
 use crate::hit::{hit_test, HitResult, HitTestRequest};
 use crate::input::recognizer::{Gesture, Recognizer};
 use crate::input::pointer::{PointerEvent, PointerPhase};
-use crate::tree::{Context, ElementKey};
+use crate::context::Context;
+use crate::id::ElementKey;
 
 /// 单个输入事件最多产出的路由事件数。
 ///
@@ -193,11 +194,11 @@ impl InputRouter {
 
     /// 处理一个指针事件，产出路由结果。
     ///
-    /// `root` 必须是**已布局**的树——命中测试读 [`crate::tree::Node::rect`]，
+    /// `root` 必须是**已布局**的树——命中测试读 [`crate::node::Node::rect`]，
     /// 未布局时所有矩形都是零，命中测试会一律返回"没点到"。
     pub fn on_pointer(
         &mut self,
-        root: &crate::tree::Node,
+        root: &crate::node::Node,
         ev: PointerEvent,
         ctx: Context<'_>,
         out: &mut RoutedEvents,

@@ -17,7 +17,8 @@
 //! - [`assets`]：随框架分发的通用字形（`include_str!`，运行时零 IO）
 //!
 //! **栅格化不在这里。** tiny-skia 与宿主纹理句柄都是渲染栈的东西，放在核心会破坏
-//! "核心零依赖"这条不变量——而那正是迁移缝能被验证的前提。栅格化在 `zephyra-iced`。
+//! "核心零依赖"这条不变量——而那正是迁移缝能被验证的前提。栅格化在效果器层与
+//! base：前者做坐标展开，后者做纹理创建与上传。
 //!
 //! # 不做完整 XML 解析
 //!
@@ -122,4 +123,23 @@ impl Icon {
     pub fn is_empty(&self) -> bool {
         self.segments.is_empty() || self.paint.mode == PaintMode::None
     }
+}
+
+/// 内置图标集（`&'static`，全进程共享）。
+///
+/// # 为什么用 `&'static` 而不是让调用方自己持有
+///
+/// [`IconSet::get`] 返回 `&'static Icon` —— 解析结果被内部的 `OnceLock` 固化，
+/// 所以一份图标集只需要引用它，不必转移所有权。宿主把它挂进
+/// [`crate::context::Context`]（见 [`crate::context::Context::with_all`]），
+/// 渲染趟就能按名字查到几何。
+///
+/// # 内置的那一份
+///
+/// [`assets::REGISTRY`] 经 `with_builtin()` 展开。`static` 要求值是常量可构造的，
+/// 而 `IconSet::with_builtin` 每次调用会新开两个 `HashMap` —— 所以它由
+/// [`builtin`] 用 `OnceLock` 建一次就固定住。
+pub fn builtin() -> &'static IconSet {
+    static SET: std::sync::OnceLock<IconSet> = std::sync::OnceLock::new();
+    SET.get_or_init(IconSet::with_builtin)
 }

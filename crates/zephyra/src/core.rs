@@ -219,6 +219,95 @@ impl Rect {
     }
 }
 
+/// 纹理内的归一化矩形（uv）。
+///
+/// 刻意与 [`Rect`] 分成两个类型：两者字段完全相同，但**单位与坐标系不同** ——
+/// [`Rect`] 是 DIP 的屏幕矩形，原点是左上且 y 向下；`UvRect` 是 0..1 的纹理
+/// 比例，原点在左上但 y 方向取决于纹理上传时有没有翻转。
+///
+/// 合成一个类型等于把这两个坐标系混在一起，而混起来的代价是"忘了翻转"这种
+/// 静默错误：图形上下颠倒，除此之外没有任何异常。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct UvRect {
+    /// 左边界（0..1）。
+    pub x: f32,
+    /// 上边界（0..1）。**y 向下**，与 [`Rect`] 一致。
+    pub y: f32,
+    /// 宽度（0..1）。
+    pub width: f32,
+    /// 高度（0..1）。
+    pub height: f32,
+}
+
+impl UvRect {
+    /// 整张纹理。
+    pub const FULL: UvRect = UvRect {
+        x: 0.0,
+        y: 0.0,
+        width: 1.0,
+        height: 1.0,
+    };
+
+    /// 构造 uv 矩形。
+    pub const fn new(x: f32, y: f32, width: f32, height: f32) -> Self {
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
+    }
+
+    /// 右边界（0..1）。
+    pub fn right(&self) -> f32 {
+        self.x + self.width
+    }
+
+    /// 下边界（0..1）。
+    pub fn bottom(&self) -> f32 {
+        self.y + self.height
+    }
+
+    /// 四边都在 `0..1` 内且面积为正。
+    ///
+    /// 这三个条件缺一不可：只判边界会让零尺寸 uv 通过（采样器处表现为完全不显示），
+    /// 而零尺寸与越界的症状都出现在**采样之后**，那时已经离病因很远。
+    pub fn is_in_range(&self) -> bool {
+        self.x >= 0.0
+            && self.y >= 0.0
+            && self.right() <= 1.0
+            && self.bottom() <= 1.0
+            && self.width > 0.0
+            && self.height > 0.0
+    }
+
+    /// 是否为整张纹理（可省略 `Command::Image` 的 `src`）。
+    pub fn is_full(&self) -> bool {
+        *self == Self::FULL
+    }
+
+    /// 钳到 `0..1`，并夹正零/负尺寸。
+    ///
+    /// 越界 uv 的危害在采样器处才显现（取到相邻图块 / 整个不显示），而那时已经
+    /// 离病因很远。所以在**这里**钳一次，症状留在产生它的地方。
+    pub fn clamped(&self) -> UvRect {
+        let x = self.x.clamp(0.0, 1.0);
+        let y = self.y.clamp(0.0, 1.0);
+        UvRect {
+            x,
+            y,
+            width: self.width.clamp(0.0, 1.0 - x),
+            height: self.height.clamp(0.0, 1.0 - y),
+        }
+    }
+}
+
+impl Default for UvRect {
+    fn default() -> Self {
+        Self::FULL
+    }
+}
+
 /// 点。
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Point {

@@ -1,4 +1,4 @@
-//! 布局：Measure / Arrange 协议。
+//! 布局：Measure / Arrange 协议 + 遍历节点树的两趟驱动。
 //!
 //! # 两趟而不是一趟
 //!
@@ -9,13 +9,21 @@
 //! - [`measure`]：给定约束 → 返回内容想要的尺寸（`Size`，可能小于约束）。
 //! - [`arrange`]：给定最终矩形 → 摆放自身与子项。
 //!
-//! # 为什么是 trait 而不是 `dyn`
+//! # 几何只有一处算法
+//!
+//! 命中测试（[`crate::hit`]）与绘制（[`crate::paint::render`]）读的是**同一批**
+//! 已摆好的矩形，所以不会出现"看得见但点不到"。这要求两趟都写在本模块而不是
+//! 各写一份。
+//!
+//! # 为什么 `Stack` 是静态分发而不是 `dyn`
 //!
 //! 布局是热路径，且每个节点的布局类型是静态已知的。静态分发让 trait object 的
-//! 一次间接调用与一次 `dyn` 胖指针解引用消失。代价是无法在运行时混排不同布局
-//! 容器——而这本来也不需要（一个容器的子项布局由它自己决定）。
+//! 一次间接调用与一次胖指针解引用消失。代价是无法在运行时混排不同布局容器
+//! ——而这本来也不需要（一个容器的子项布局由它自己决定）。
 
 use crate::core::{Point, Rect, Size, Thickness};
+use crate::context::Context;
+use crate::node::{Dirty, Node};
 
 /// 布局约束。
 ///
@@ -322,4 +330,186 @@ pub fn align_box(content: Size, available: Size, horizontal: Align, vertical: Al
         AlignItems::End => (available.height - content.height, content.height),
     };
     Rect::new(x, y, width, height)
+}
+
+// ==================================================================
+// 以下是遍历 `Node` 树的两趟驱动。
+// ==================================================================
+
+/// 布局整棵子树：测量 + 按最终矩形摆放每个子节点。
+///
+/// 这是 [`crate::paint::render`] 的前置步骤——两者必须成对调用，因为 `render` 只读
+/// 已摆好的矩形，不再自己算几何。
+pub fn layout(node: &mut Node, bounds: Rect, ctx: Context<'_>) {
+    // 用**上界**而非固定约束测量：固定约束的 min == max，会把每个节点都撑成
+    // 窗口大小，于是所有 `Width` / `Height` 全部失效（子树内容再大也不缩）。
+    // 根节点最终仍由 `arrange` 铺满 `bounds` —— 那是"填满窗口"的正确语义，
+    // 但测量阶段必须允许内容小于窗口。
+    measure(
+        node,
+        Constraints {
+            min: Size::new(0.0, 0.0),
+            max: Size::new(bounds.width, bounds.height),
+        },
+        ctx,
+    );
+    arrange(node, bounds, ctx);
+}
+
+/// 测量并在必要时重排节点树，返回整棵树的内容尺寸。
+///
+/// 测量结果按「约束 → 结果」缓存：约束不变则直接命中，这是布局里最重要的一处
+/// 短路（静止时每帧都会调它）。
+pub fn measure(node: &mut Node, constraints: Constraints, ctx: Context<'_>) -> Size {
+    if let Some(size) = cached_for(node, constraints) {
+        return size;
+    }
+    let padding = node.padding(ctx);
+    let child_constraints = constraints.deflate(padding);
+
+    // 折叠的子节点不参与测量，也不占间距。
+    let visible = visible_children(node, ctx);
+
+    let mut sizes = Vec::with_capacity(visible.len());
+    for &i in &visible {
+        sizes.push(measure(&mut node.children_mut()[i], child_constraints, ctx));
+    }
+
+    let stack = node.stack(ctx);
+    let mut content = stack.content_size(&sizes);
+    // 文本节点自己贡献内容尺寸。
+    //
+    // 必须在 `content_size` **之后**做这件事，而不是把文本当成一个子项：文本是
+    // 叶节点，没有自己的 `Node`，所以子项列表里根本没有它。若不单独补，内容尺寸
+    // 恒为 0，文本行会被压成零高 —— 而"看不见"是这类 bug 最常见的表现形式。
+    if let Some(text) = node.text_size(ctx) {
+        content = text;
+    }
+    let (own_w, own_h) = explicit_size(node, ctx);
+    let result = MeasureResult {
+        size: Size::new(
+            pick_axis(own_w, content.width, Axis::Horizontal, constraints, padding),
+            pick_axis(own_h, content.height, Axis::Vertical, constraints, padding),
+        ),
+    };
+    node.cache_measure(constraints, result);
+    node.merge_dirty(Dirty::Layout);
+    result.size
+}
+
+/// 按最终矩形摆放整棵子树。
+///
+/// 顺序无关紧要：绘制顺序由 [`crate::paint::render`] 的 `order` 决定，这里只算几何。
+pub fn arrange(node: &mut Node, bounds: Rect, ctx: Context<'_>) {
+    node.set_rect(bounds);
+    let padding = node.padding(ctx);
+    let inner = bounds.inset(padding);
+    let stack = node.stack(ctx);
+    let cross_align = node.cross_align(ctx);
+
+    let visible = visible_children(node, ctx);
+
+    // 用**测量缓存**里的尺寸，而不是重算——measure 刚跑过，缓存必然命中。
+    let sizes: Vec<Size> = visible
+        .iter()
+        .filter_map(|&i| node.children()[i].cached_size())
+        .collect();
+
+    let origin = Point::new(inner.x, inner.y);
+    let rects = stack.arrange(origin, Size::new(inner.width, inner.height), &sizes, cross_align);
+
+    for (slot, &i) in visible.iter().enumerate() {
+        arrange(&mut node.children_mut()[i], rects[slot], ctx);
+    }
+}
+
+/// 缓存命中且约束相同则返回尺寸。
+///
+/// 单独抽出来是因为要同时看两样东西：缓存存在，且**约束相等**。只判存在的话，
+/// 父容器尺寸一变就会拿旧结果继续用 —— 那正是 `Constraints` 必须参与相等比较的
+/// 原因。
+fn cached_for(node: &Node, constraints: Constraints) -> Option<Size> {
+    match node.measure_cache {
+        Some((cached, result)) if cached == constraints => Some(result.size),
+        _ => None,
+    }
+}
+
+/// 未被折叠的子节点下标。
+///
+/// 折叠节点既不占位也不绘制（见 [`crate::paint::render`]），所以它必须在测量与
+/// 排列两趟里都缺席 —— 只在一趟里过滤会让子项尺寸与矩形对不上。
+fn visible_children(node: &Node, ctx: Context<'_>) -> Vec<usize> {
+    (0..node.children().len())
+        .filter(|i| !node.children()[*i].is_collapsed(ctx))
+        .collect()
+}
+
+/// 显式尺寸（`None` = 由内容决定）。
+fn explicit_size(node: &Node, ctx: Context<'_>) -> (Option<f32>, Option<f32>) {
+    (
+        finite(node.number_or(&crate::props::WIDTH, f32::NAN, ctx)),
+        finite(node.number_or(&crate::props::HEIGHT, f32::NAN, ctx)),
+    )
+}
+
+/// 单轴。约束与内边距都必须按轴取，不能共用。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Axis {
+    Horizontal,
+    Vertical,
+}
+
+impl Axis {
+    /// 该轴上的约束区间。
+    fn bounds(self, c: Constraints) -> (f32, f32) {
+        match self {
+            Axis::Horizontal => (c.min.width, c.max.width),
+            Axis::Vertical => (c.min.height, c.max.height),
+        }
+    }
+
+    /// 该轴上的内边距之和。
+    fn padding(self, p: Thickness) -> f32 {
+        match self {
+            Axis::Horizontal => p.left + p.right,
+            Axis::Vertical => p.top + p.bottom,
+        }
+    }
+}
+
+/// 单轴上「显式尺寸」与「内容尺寸」如何取值。
+///
+/// 显式尺寸优先；否则内容尺寸加内边距。三步夹逼各有理由：
+///
+/// - **不低于下限**：父容器明确要的空间必须给足（`Fill` 语义）。
+/// - **不超过上限**：内容溢出时应当被裁剪/滚动，而不是把父容器撑大。没有这一步，
+///   一个长列表会把窗口顶出去。
+/// - **显式尺寸也要夹逼**：父给的区间是硬边界，`Width` 只是"想要"，不是"命令"。
+///
+/// 上限为无界时跳过中间那步——`natural.min(INFINITY)` 虽然也等于 `natural`，但
+/// 写成显式分支能让"无界"这个意图留在代码里，而不是依赖 `f32::INFINITY` 的语义。
+fn pick_axis(
+    explicit: Option<f32>,
+    content: f32,
+    axis: Axis,
+    constraints: Constraints,
+    padding: Thickness,
+) -> f32 {
+    let (min, max) = axis.bounds(constraints);
+    let natural = match explicit {
+        Some(v) => v,
+        None => content + axis.padding(padding),
+    };
+    let clamped = natural.max(min);
+    if max.is_finite() {
+        clamped.min(max)
+    } else {
+        clamped
+    }
+}
+
+/// `NaN` 或负数表示"未设置"，转成 `None`。
+fn finite(v: f32) -> Option<f32> {
+    (v.is_finite() && v >= 0.0).then_some(v)
 }
