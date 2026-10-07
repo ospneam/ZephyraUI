@@ -1132,12 +1132,12 @@ mod effect_contract {
 ///
 /// ⚠ 顶点顺序是刻意选的：**首顶点在内部**，后两个才是包围盒的对角。
 ///
-/// 为什么端到端那条（`带滤镜的矢量图标产出离屏需求`）替代不了这条：它走真实图标
+/// 为什么端到端那条（`blurred_vector_icon_yields_offscreen_requirement`）替代不了这条：它走真实图标
 /// 的三角化网格，而那个网格的**首顶点恰好是极值角点** —— 于是「忘了更新 max 边」
 /// 这个变异算出来的结果与正确答案**恰好相同**，测试一直显示绿色却什么也没验证。
 /// 这个洞是**变异测试抓出来的**，不是看代码想出来的。
 #[test]
-fn 顶点紧包围盒_首顶点落在内部() {
+fn vertex_bounds_when_first_vertex_is_interior() {
     use crate::paint::{bounds_of_vertices, Vertex};
     let v = |x: f32, y: f32| Vertex {
         position: Point::new(x, y),
@@ -1166,12 +1166,12 @@ fn 顶点紧包围盒_首顶点落在内部() {
     );
 }
 
-/// 带滤镜的矢量图标产出离屏需求。
+/// blurred_vector_icon_yields_offscreen_requirement。
     ///
     /// 「矢量图标 + 投影/模糊被静默忽略」就是这个缺口：以前 `Path` 分支直接
     /// `continue`，于是图标照常画、只是不开离屏，效果没发生也不报任何错。
     #[test]
-    fn 带滤镜的矢量图标产出离屏需求() {
+    fn blurred_vector_icon_yields_offscreen_requirement() {
         // 方框只占 24×24 view_box 的中间（8..16），所以三角化后的紧包围盒
         // **明显小于**元素自身的 24×24 —— 让「误用布局矩形」的实现露馅。
         let icons: &'static IconSet = Box::leak(Box::new(
@@ -1249,7 +1249,7 @@ fn 顶点紧包围盒_首顶点落在内部() {
 
     /// 不带滤镜的图标不开离屏 —— 图标是最常见的命令，不能给它加 RT 开销。
     #[test]
-    fn 不带滤镜的矢量图标不开离屏() {
+    fn unfiltered_vector_icon_yields_no_offscreen() {
         let icons: &'static IconSet = Box::leak(Box::new(
             IconSet::new().with("sq", IconSource::Path("M8 8L16 8L16 16L8 16Z")),
         ));

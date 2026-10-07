@@ -361,7 +361,7 @@ mod tests {
     /// 这是「矢量图标 + 投影被静默忽略」那个缺口的回归测试：以前这里直接返回
     /// `None`，于是 `quad::expand` 照常画图标、只是不开离屏，效果没发生也不报错。
     #[test]
-    fn 带滤镜的_path_按紧包围盒产出离屏需求() {
+    fn blurred_path_yields_offscreen_with_tight_bounds() {
         // ⚠ 顶点顺序是刻意选的：**首顶点在内部**，后两个才是包围盒的对角。
         // 于是「拿首顶点当 min/max」「只遍历一部分」「忘了 min」这几类实现都会
         // 算出不同的数 —— 这个测试对它们敏感。
@@ -389,7 +389,7 @@ mod tests {
 
     /// 无滤镜的 Path 不开离屏 —— 这是图标最常见的路径，必须零开销。
     #[test]
-    fn 无滤镜的_path_不开离屏() {
+    fn unfiltered_path_yields_no_offscreen() {
         let l = list_of(vec![
             path(
                 FilterChain::none(),
@@ -411,7 +411,7 @@ mod tests {
     /// 真正的零尺寸护栏属于**执行侧**（E4 绑 RT 时），届时对所有命令类型统一处理，
     /// 而不是在这里给 Path 单独开一个特例。
     #[test]
-    fn 空_path_给零尺寸而不是崩掉() {
+    fn empty_path_gives_zero_sized_bounds() {
         let plans = plan_offscreens(&list_of(vec![path(
             blur(2.0),
             BlendMode::default(),

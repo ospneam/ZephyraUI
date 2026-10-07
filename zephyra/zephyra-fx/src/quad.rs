@@ -42,7 +42,7 @@
 //! 尺寸把 DIP 映射到 NDC，于是同一个 `DisplayList` 在 100% 与 200% 缩放下
 //! 尺寸相同、内容清晰 —— 因为栅格化发生在物理像素上。
 
-use zephyra_core::core::{Color, Rect, UvRect};
+use zephyra_core::core::{Color, Point, Rect, UvRect};
 use zephyra_core::paint::{Command, DisplayList};
 
 /// 每顶点 52 字节：位置(2) + 局部(2) + uv(2) + 颜色(4) + 圆角描边(2) + 类型(1) 个 f32。
@@ -561,6 +561,94 @@ pub struct RenderReport {
 /// 分四段而**不是**四个 draw call 参数组：矩形与字形可合批成一次 draw，图像必须
 /// 按纹理切批，而"按纹理切批"这件事只有拿到顶点之后才算得出来。多边形因为顶点数
 /// 不是 4 的倍数只能单独成段（见 [`Vertex::path`]）。
+/// 一段连续顶点，共享同一张纹理与同一种混合模式。
+///
+/// # 为什么需要它
+///
+/// [`QuadBatch`] 的三段只说明**顶点在流里的位置**，没说「哪一段来自哪些命令」。而
+/// 两样东西必须按段切换，base 拿到合并后的流就无从下手：
+///
+/// 1. **纹理** —— 一次 draw 只能绑一张。
+/// 2. **混合模式** —— 混合方程是**渲染管线状态**。29 个混合模式里绝大多数
+///    （Multiply / Screen / Overlay…）必须按段换混合状态或 PS 变体。
+///
+/// [`QuadBatch::batches`] 只覆盖了第 1 条：它按**纹理**切，但两段相邻的图像若混合
+/// 模式不同，仍会被合进同一批 —— base 于是给两段套同一个混合方程。
+///
+/// # 不变量：runs 恰好划分整条顶点流
+///
+/// 按 `first_vertex` 升序拼接时**不留缝、不重叠、不少不漏**，且顺序与
+/// [`QuadBatch::flatten`] 的输出一致。拼接相等是本类型的全部意义 —— 漏掉一段的
+/// 症状是「某个图元不出现」，两段重叠的症状是「某个图元重复画」（半透明时更糟：
+/// 同一处叠两层，颜色变深且没有任何报错）。所以它有专门的测试守着。
+///
+/// # 为什么只合并**相邻**的同混合模式段
+///
+/// 重排命令可以把同混合模式的凑到一起，少几次 draw —— 但**不能**：半透明图形互相
+/// 叠加时重排会改变可见结果。所以只认「本来就连着」，draw 次数是命令顺序的上界，
+/// 不是最小值。这是刻意的取舍。
+#[derive(Debug, Clone, PartialEq)]
+pub struct DrawRun {
+    /// 在 [`QuadBatch::flatten`] 合并流里的起点。
+    pub first_vertex: u32,
+    /// 顶点数。
+    pub vertex_count: u32,
+    /// 要绑定的纹理名。`None` = 不换纹理绑定。
+    ///
+    /// 字形在 `solid` 段里但**也要采样**（字形图集）—— 它记 `None`，因为图集是
+    /// 渲染器全局绑的那一张，不参与逐批绑定；只有 [`Command::Image`](zephyra_core::paint::Command::Image)
+    /// 的纹理是逐段绑的。
+    pub texture: Option<String>,
+    /// 该段的混合模式。
+    pub blend: zephyra_core::filter::BlendMode,
+}
+
+impl DrawRun {
+    /// 这一段的结束下标（开区间）。
+    pub fn end(&self) -> u32 {
+        self.first_vertex + self.vertex_count
+    }
+}
+
+/// 记录一段「同纹理 + 同混合」的连续顶点；能接上一段就接，否则新开一段。
+///
+/// 只合并**相邻**段（`last.end() == first`），因为不重排命令 —— 见 [`DrawRun`]。
+///
+/// # ⚠ 那条相邻性检查在当前结构下**不是**承重逻辑
+///
+/// 三份段内记录各自只增长（`solid` / `pending` / `paths` 都是只 append），所以连续两次
+/// `push_run` 的偏移天然相等 —— 删掉这条检查没有任何测试会失败（变异测试实测
+/// SURVIVED）。它保留下来是当**护栏**：万一哪天 `runs` 因为漏 clear 而带着上一帧的
+/// 条目进来，相邻性检查会阻止它把新段接到一个坐标不相干的旧段后面。
+///
+/// 真正的合并规则是「同纹理 + 同混合」那两条；相邻性只是别把不接的东西硬接上。
+fn push_run(
+    runs: &mut Vec<DrawRun>,
+    first: u32,
+    count: u32,
+    texture: Option<String>,
+    blend: zephyra_core::filter::BlendMode,
+) {
+    if count == 0 {
+        return;
+    }
+    if let Some(last) = runs.last_mut() {
+        if last.end() == first
+            && last.blend == blend
+            && last.texture.as_deref() == texture.as_deref()
+        {
+            last.vertex_count += count;
+            return;
+        }
+    }
+    runs.push(DrawRun {
+        first_vertex: first,
+        vertex_count: count,
+        texture,
+        blend,
+    });
+}
+
 #[derive(Debug, Default)]
 pub struct QuadBatch {
     /// 矩形 + 字形（可一次 draw 画完）。
@@ -571,6 +659,11 @@ pub struct QuadBatch {
     pub paths: Vec<Vertex>,
     /// 图像分批：`(纹理名, 该批顶点数)`。
     pub batches: Vec<(String, u32)>,
+    /// 逐段元数据：哪段用哪张纹理、哪种混合模式。位置是**合并流**里的下标。
+    ///
+    /// 与 [`QuadBatch::batches`] 的区别：后者只按纹理切图元段，前者多切了混合模式
+    /// —— 两段相邻的图像若混合模式不同，`batches` 是一批而 `runs` 是两段。
+    pub runs: Vec<DrawRun>,
     /// 统计。
     pub report: RenderReport,
 }
@@ -627,6 +720,35 @@ impl QuadBatch {
     }
 }
 
+/// 分段记录的三份（`solid` / `images` / `paths`），`first_vertex` 是**段内偏移**。
+///
+/// 末尾由 [`merge_runs`] 加上各自基址拼成合并流坐标。
+#[derive(Debug, Default)]
+struct RunTally {
+    solid: Vec<DrawRun>,
+    images: Vec<DrawRun>,
+    paths: Vec<DrawRun>,
+}
+
+/// 把三份段内偏移的 run 拼成合并流坐标（`solid` → `images` → `paths`）。
+fn merge_runs(tally: &RunTally, solid_len: u32, images_len: u32, out: &mut Vec<DrawRun>) {
+    out.clear();
+    out.reserve(tally.solid.len() + tally.images.len() + tally.paths.len());
+    let mut add = |runs: &[DrawRun], base: u32| {
+        for r in runs {
+            out.push(DrawRun {
+                first_vertex: r.first_vertex + base,
+                vertex_count: r.vertex_count,
+                texture: r.texture.clone(),
+                blend: r.blend,
+            });
+        }
+    };
+    add(&tally.solid, 0);
+    add(&tally.images, solid_len);
+    add(&tally.paths, solid_len + images_len);
+}
+
 /// 跨帧复用的展开缓冲。
 ///
 /// # 为什么需要它
@@ -677,7 +799,13 @@ pub struct Scratch {
     /// ⚠ 它存 `(String, …)`，所以复用 Vec **不等于**复用那些 `String` 的堆内存。
     /// 那部分（每帧两三个几十字节的小分配）留在原地，不为了它把句柄改成
     /// `Rc<str>` —— 那是契约改动，收益与风险不成比例。
-    image_quads: Vec<(String, Rect, UvRect, Color, f32)>,
+    image_quads: Vec<(String, Rect, UvRect, Color, f32, zephyra_core::filter::BlendMode)>,
+    /// 分段记录，三份分开是因为它们在**遍历过程中交错**产生（`solid` 与 `paths`
+    /// 来自同一次命令遍历，`images` 来自其后的分批循环），而合并流要求
+    /// `solid` → `images` → `paths` 的顺序。分开记，末尾统一加基址即可。
+    run_tally: RunTally,
+    /// 合并后的 [`DrawRun`] 列表（`run_tally` 的三份按顺序加基址后的结果）。
+    runs: Vec<DrawRun>,
     /// 当前图像批的顶点。换纹理时清空重填。
     ///
     /// 它必须在复用范围内 —— 否则 `out.images = pending` 那一步会把从 `scratch`
@@ -720,6 +848,17 @@ impl Scratch {
         self.indices.clear();
         self.image_quads.clear();
         self.pending.clear();
+        // run 相关三处同样必须清：段记录不清会让 `runs` 每帧多出上一帧的条目，
+        // 症状与顶点段不清时一样（合成器按 `runs` 逐段画，于是每帧多画一层）。
+        //
+        // ⚠ 这几行**无法被测试单独钉住** —— `expand_translated_into` 在借出缓冲后
+        // 自己也 clear 一遍，所以删掉这里的 clear 不会有任何测试失败（变异实测
+        // SURVIVED）。留着是因为 `reset()` 的契约是"清空全部段"，少清一处就让它
+        // 变成一句谎话，而谎话的代价由下一个读文档的人付。
+        self.run_tally.solid.clear();
+        self.run_tally.images.clear();
+        self.run_tally.paths.clear();
+        self.runs.clear();
     }
 
     /// 各缓冲的容量，供诊断"稳态是否还在长"。
@@ -733,6 +872,10 @@ impl Scratch {
             batches: self.batches.capacity(),
             vertices: self.vertices.capacity(),
             indices: self.indices.capacity(),
+            runs: self.runs.capacity(),
+            runs_solid: self.run_tally.solid.capacity(),
+            runs_images: self.run_tally.images.capacity(),
+            runs_paths: self.run_tally.paths.capacity(),
         }
     }
 }
@@ -746,6 +889,12 @@ pub struct ScratchCaps {
     pub batches: usize,
     pub vertices: usize,
     pub indices: usize,
+    /// 合并后的 [`DrawRun`] 缓冲。
+    pub runs: usize,
+    /// 分段记录的三份（段内偏移）。
+    pub runs_solid: usize,
+    pub runs_images: usize,
+    pub runs_paths: usize,
 }
 
 /// 把一份 `DisplayList` 展开成顶点流。
@@ -762,13 +911,39 @@ pub fn expand(
     size: (u32, u32),
     is_registered: impl Fn(&str) -> bool,
 ) -> QuadBatch {
+    expand_translated(list, size, is_registered, Point::ZERO)
+}
+
+/// [`expand`] 加上**平移**：几何按 `translate` 整体搬移后再换算成 NDC。
+///
+/// # 为什么平移必须发生在 `expand` **内部**
+///
+/// [`Vertex::position`] 是**已经算好的 NDC**，而 NDC 是「像素坐标 ÷ 目标尺寸」的
+/// 产物。于是要画进一张**紧致**的离屏 RT（尺寸 = `plan_offscreens` 的 `bounds`，
+/// 原点在 `bounds.x/y`），就得让「屏幕坐标 − bounds 原点」这一步发生**在换算之前**。
+/// 换算之后再平移做不到：那时已经除过一次目标尺寸了。
+///
+/// 所以调用方要成对传：`size` = RT 的像素尺寸，`translate` = `−bounds` 原点。
+/// 两个都传错就会画偏，但**不会**看起来像"完全没画"—— 那是更难查的一类症状。
+///
+/// # `translate` 为零时逐字节等于 [`expand`]
+///
+/// 零平移走的是同一条代码路径（没有平移分支），所以这不只是"等价"，是同一份几何。
+/// 有测试钉住这条。
+pub fn expand_translated(
+    list: &DisplayList,
+    size: (u32, u32),
+    is_registered: impl Fn(&str) -> bool,
+    translate: Point,
+) -> QuadBatch {
     let mut scratch = Scratch::new();
-    let report = expand_into(list, size, &is_registered, &mut scratch);
+    let report = expand_translated_into(list, size, &is_registered, translate, &mut scratch);
     QuadBatch {
         solid: scratch.solid,
         images: scratch.images,
         paths: scratch.paths,
         batches: scratch.batches,
+        runs: scratch.runs,
         report,
     }
 }
@@ -795,7 +970,23 @@ pub fn expand_into(
     is_registered: &dyn Fn(&str) -> bool,
     scratch: &mut Scratch,
 ) -> RenderReport {
+    expand_translated_into(list, size, is_registered, Point::ZERO, scratch)
+}
+
+/// [`expand_into`] 加上平移 —— 见 [`expand_translated`]。
+///
+/// 平移作用在**像素坐标**上（换算 NDC 之前），因此四条图元路径全部受影响：
+/// 矩形、字形、图像、以及多边形的 `to_ndc`。裁剪矩形同样要平移，否则拿未平移的
+/// 屏幕坐标去裁已平移的几何，交集算出来是空的。
+pub fn expand_translated_into(
+    list: &DisplayList,
+    size: (u32, u32),
+    is_registered: &dyn Fn(&str) -> bool,
+    translate: Point,
+    scratch: &mut Scratch,
+) -> RenderReport {
     let px = (size.0 as f32, size.1 as f32);
+    let shift = |r: Rect| shift_rect(r, translate);
     // 从 `scratch` **借**缓冲：把上一帧的成果取到本地 `out`，末尾再还回去。
     //
     // 为什么是 `take` 而不是让 `out` 直接引用 `scratch` 的字段：`out` 还要在末尾
@@ -823,18 +1014,25 @@ pub fn expand_into(
         images: std::mem::take(&mut scratch.images),
         paths: std::mem::take(&mut scratch.paths),
         batches: std::mem::take(&mut scratch.batches),
+        runs: std::mem::take(&mut scratch.runs),
         report: RenderReport::default(),
     };
     out.solid.clear();
     out.images.clear();
     out.paths.clear();
     out.batches.clear();
+    out.runs.clear();
     // `vertices` 与 `indices` 不走 `take`（末尾还要继续用它们），所以显式清。
     scratch.vertices.clear();
     scratch.indices.clear();
     // 同样借出下面两个：`pending` 会成为 `out.images`（末尾要还回去），
     // `image_quads` 是本趟的临时队列（用完即弃，但 Vec 本身可复用）。
     let mut image_quads = std::mem::take(&mut scratch.image_quads);
+    // 分段记录借出来，末尾连同内容一起还回去。
+    let mut tally = std::mem::take(&mut scratch.run_tally);
+    tally.solid.clear();
+    tally.images.clear();
+    tally.paths.clear();
     // 当前图像批的顶点。换纹理时把它整体搬进 `batches`。
     let mut pending = std::mem::take(&mut scratch.pending);
     image_quads.clear();
@@ -868,7 +1066,11 @@ pub fn expand_into(
                 if fill.a <= 0.0 && stroke_w <= 0.0 {
                     continue;
                 }
-                let clipped = intersect(*rect, clip.unwrap_or(*rect));
+                // 平移必须发生在**裁剪之前**：`clip` 在 [`Command::PushClip`] 时已经平移到目标
+                // 空间，而 `rect` 还是屏幕坐标 —— 两者不在同一空间里，求交算出来是空的
+                //（症状是该图元静默消失，而不是"位置略偏"，后者反而好查）。
+                let rect = shift(*rect);
+                let clipped = intersect(rect, clip.unwrap_or(rect));
                 if clipped.width <= 0.0 || clipped.height <= 0.0 {
                     continue;
                 }
@@ -886,6 +1088,7 @@ pub fn expand_into(
                 }
                 // 描边单独画一遍环带，而不是把描边色混进填充 ——
                 // 混进去会让描边与填充重叠处被填充盖住。
+                let solid_before = out.solid.len();
                 if fill.a > 0.0 {
                     out.solid.extend_from_slice(&Vertex::from_rect(
                         rect,
@@ -909,6 +1112,13 @@ pub fn expand_into(
                     ));
                     out.report.quads += 1;
                 }
+                push_run(
+                    &mut tally.solid,
+                    solid_before as u32,
+                    (out.solid.len() - solid_before) as u32,
+                    None,
+                    *blend,
+                );
             }
             Command::Image {
                 dst,
@@ -925,7 +1135,7 @@ pub fn expand_into(
                 if *blend != zephyra_core::filter::BlendMode::default() {
                     out.report.unimplemented_blends += 1;
                 }
-                let rect = intersect(*dst, clip.unwrap_or(*dst));
+                let rect = intersect(shift(*dst), clip.unwrap_or(shift(*dst)));
                 if rect.width <= 0.0 || rect.height <= 0.0 || tint.a <= 0.0 {
                     continue;
                 }
@@ -938,6 +1148,7 @@ pub fn expand_into(
                     uv,
                     *tint,
                     radius.radius,
+                    *blend,
                 ));
             }
             Command::Text {
@@ -957,6 +1168,7 @@ pub fn expand_into(
                     continue;
                 }
                 let rgba = [color.r, color.g, color.b, color.a];
+                let solid_before = out.solid.len();
                 for g in glyphs {
                     // 零尺寸字形（空格）不产出几何，但已经推进了后续字形的
                     // offset —— 跳过它即正确的"什么都不画"。
@@ -964,7 +1176,7 @@ pub fn expand_into(
                         continue;
                     }
                     out.solid.extend_from_slice(&Vertex::from_uv_rect(
-                        g.dst,
+                        shift(g.dst),
                         px,
                         rgba,
                         g.uv,
@@ -972,6 +1184,15 @@ pub fn expand_into(
                     ));
                     out.report.quads += 1;
                 }
+                // 整段文本记成一段：字形之间没有纹理/混合模式的变化，拆开只会让
+                // draw 次数从 1 变成「字形个数」。
+                push_run(
+                    &mut tally.solid,
+                    solid_before as u32,
+                    (out.solid.len() - solid_before) as u32,
+                    None,
+                    *blend,
+                );
             }
             Command::Path {
                 vertices,
@@ -1000,7 +1221,9 @@ pub fn expand_into(
                 let before = out.paths.len();
                 let (w, h) = (px.0.max(1e-6), px.1.max(1e-6));
                 let to_ndc = |p: zephyra_core::core::Point| {
-                    [p.x / w * 2.0 - 1.0, 1.0 - p.y / h * 2.0]
+                    let x = p.x + translate.x;
+                    let y = p.y + translate.y;
+                    [x / w * 2.0 - 1.0, 1.0 - y / h * 2.0]
                 };
                 let rgba = [fill.r, fill.g, fill.b, fill.a];
                 match clip_rect {
@@ -1057,11 +1280,18 @@ pub fn expand_into(
                 if added > 0 {
                     out.report.path_triangles += added;
                 }
+                push_run(
+                    &mut tally.paths,
+                    before as u32,
+                    (out.paths.len() - before) as u32,
+                    None,
+                    *blend,
+                );
             }
             Command::PushClip(r) => {
                 clip = Some(match clip {
-                    Some(c) => intersect(c, *r),
-                    None => *r,
+                    Some(c) => intersect(c, shift(*r)),
+                    None => shift(*r),
                 });
             }
             Command::PopClip => {
@@ -1079,19 +1309,40 @@ pub fn expand_into(
     // 每批记下它要绑的**纹理名**（而不是绑定对象）—— 绑定要活到提交之后，
     // 而纹理表是只读借用，提前取出会造成不必要的借用交叉。
     let mut open: Option<String> = None;
-    for (name, rect, uv, tint, radius) in &image_quads {
+    // 当前图像批的混合模式：纹理相同**且**混合模式相同才算同一批。
+    //
+    // ⚠ 只按纹理合批是不够的：相邻两段图像若混合模式不同而纹理相同，合进一批后
+    // base 只能给它们套**同一个**混合方程 —— 症状是「有一段的混合效果没生效」，
+    // 而顶点数、缺失纹理数这些统计全都正常。
+    let mut open_blend = zephyra_core::filter::BlendMode::default();
+    // 当前批在 `images` 段里的起点。
+    //
+    // ⚠⚠ 这里**不能**在换批时 `pending.clear()`：那是本层一个长期存在的 bug ——
+    // `pending` 是 `out.images` 的**全部**内容（合并流里的整个 images 段），而
+    // `batches` 报的是「每批多少顶点」、渲染器据此从 `image_first` 起逐批推进。
+    // 清掉就等于只留下最后一批的顶点：`batches` 声称 12 个、`images` 只有 4 个，
+    // 渲染器读到别的图元的位置上 —— 症状是图像错位或消失，而 `batches` 的统计
+    // **完全正常**，所以极难往这里联想。
+    //
+    // 之所以一直没被发现：demo 里所有图像共用一张纹理 ⇒ 永远只有一批 ⇒
+    // `clear()` 是空操作。有测试专门钉住多批的情形。
+    let mut batch_start = 0u32;
+    for (name, rect, uv, tint, radius, blend) in &image_quads {
         // 未注册的纹理整条跳过，且**不**打断当前批。
         if !is_registered(name) {
             out.report.missing_textures += 1;
             continue;
         }
-        if open.as_deref() != Some(name.as_str()) {
+        if open.as_deref() != Some(name.as_str()) || open_blend != *blend {
             if let Some(prev) = open.take() {
-                out.batches.push((prev, pending.len() as u32));
+                out.batches
+                    .push((prev, (pending.len() as u32) - batch_start));
             }
-            pending.clear();
+            batch_start = pending.len() as u32;
             open = Some(name.clone());
+            open_blend = *blend;
         }
+        let first = pending.len() as u32;
         pending.extend_from_slice(&Vertex::from_rounded_uv_rect(
             *rect,
             px,
@@ -1099,10 +1350,18 @@ pub fn expand_into(
             *uv,
             *radius,
         ));
+        push_run(
+            &mut tally.images,
+            first,
+            (pending.len() as u32) - first,
+            Some(name.clone()),
+            *blend,
+        );
         out.report.quads += 1;
     }
     if let Some(prev) = open.take() {
-        out.batches.push((prev, pending.len() as u32));
+        out.batches
+            .push((prev, (pending.len() as u32) - batch_start));
     }
     // `out.images` 直接吃掉 `pending` 的内容。
     //
@@ -1123,6 +1382,15 @@ pub fn expand_into(
     // 顶点基址全部错位 —— 症状是"路径出现后，它前面所有图元一起变成乱码几何"。
     let report = out.report;
     let (image_first, path_first) = out.append_to(&mut scratch.vertices);
+    // runs 的基址 = 合并流里各段的起点，与上面 `append_to` 的顺序**必须**一致。
+    // `scratch.vertices` 是给渲染器用的合并流，`out.runs` 是给它导航的目录 ——
+    // 两者对不上就是"按 runs 画会画错段"，症状是图元错位而非报错。
+    merge_runs(
+        &tally,
+        out.solid.len() as u32,
+        out.images.len() as u32,
+        &mut out.runs,
+    );
     let total_quads = (out.solid.len() + out.images.len()) / 4;
     let path_tris = out.paths.len() / 3;
     let path_index_start =
@@ -1143,8 +1411,21 @@ pub fn expand_into(
     scratch.paths = out.paths;
     scratch.batches = out.batches;
     scratch.image_quads = image_quads;
+    scratch.run_tally = tally;
+    scratch.runs = out.runs;
 
     report
+}
+
+/// 把矩形按 `t` 平移（宽高不变）。
+///
+/// 平移只搬动原点、不改尺寸，所以 `Vertex::local` / `half_size` 这些**局部**量
+/// 一概不用动 —— 它们是由 `rect` 的**尺寸**推出来的，与位置无关。
+pub fn shift_rect(r: Rect, t: Point) -> Rect {
+    if t.x == 0.0 && t.y == 0.0 {
+        return r;
+    }
+    Rect::new(r.x + t.x, r.y + t.y, r.width, r.height)
 }
 
 /// 两个矩形求交（裁剪用）。
@@ -1741,6 +2022,64 @@ mod tests {
         assert_eq!(b.batches[0].1, 12, "3 个四边形 = 12 个顶点");
     }
 
+    /// 只合并**相邻**的同混合模式段 —— 中间隔着别的段时不许跨过去合并。
+///
+/// # 为什么"跨过去合并"是错的
+///
+/// 那需要把后面的命令重排到前面才能凑到一起。而半透明图形互相叠加时，重排会改变
+/// 可见结果。所以 draw 次数是命令顺序的**上界**，不是最小值 —— 这是刻意的取舍。
+///
+/// # ⚠ 别拿"隔着别的**图元类型**"当例子
+///
+/// 比如「矩形 / 三角形 / 矩形」并不会拆成三段：合并流里 `solid` 整段在前、
+/// `paths` 整段在后（见 [`QuadBatch::flatten`]），所以两个矩形在段内本来就是相邻的，
+/// 合并是正确的。真正需要拆的是**同一段内混合模式不同**的情形 —— 合成器会照
+/// `runs` 逐段设混合状态，跨过去合并会让中间那一段套上错误的方程。
+#[test]
+fn runs_不跨过其它段合并() {
+    use zephyra_core::filter::BlendMode;
+    let l = list_of(vec![
+        quad_with_blend(Rect::new(0.0, 0.0, 10.0, 10.0), BlendMode::Multiply),
+        quad(Rect::new(20.0, 0.0, 10.0, 10.0), Color::rgb(0.0, 1.0, 0.0)),
+        quad_with_blend(Rect::new(40.0, 0.0, 10.0, 10.0), BlendMode::Multiply),
+    ]);
+    let b = expand(&l, (100, 100), |_| true);
+    let starts: Vec<u32> = b.runs.iter().map(|r| r.first_vertex).collect();
+    assert_eq!(
+        starts,
+        vec![0, 4, 8],
+        "两个 Multiply 之间夹着一个 SrcOver ⇒ 三段，不得把两个 Multiply 凑成一段：{:?}",
+        b.runs
+    );
+    let blends: Vec<BlendMode> = b.runs.iter().map(|r| r.blend).collect();
+    assert_eq!(
+        blends,
+        vec![BlendMode::Multiply, BlendMode::default(), BlendMode::Multiply],
+        "每段的混合模式必须与来源命令一致"
+    );
+}
+
+/// 多个纹理分批时，**全部**图像顶点都必须留在合并流里。
+    ///
+    /// `batches` 报的是「每批多少顶点」，渲染器靠它从 `image_first` 起逐批推进；
+    /// 而 `images` 段只有把每一批的顶点都留着才对得上。少一个就是渲染器读到
+    /// 别的图元的位置上 —— 症状是图像错位/消失，且 `batches` 的统计完全正常。
+    #[test]
+    fn all_image_vertices_survive_multi_texture_batching() {
+        let img = |name: &'static str| image(name, Rect::new(0.0, 0.0, 4.0, 4.0));
+        let l = list_of(vec![img("a"), img("b"), img("a")]);
+        let b = expand(&l, (100, 100), |_| true);
+        assert_eq!(b.report.image_batches, 3, "a/b/a 分三批");
+        let claimed: u32 = b.batches.iter().map(|(_, n)| *n).sum();
+        assert_eq!(
+            b.images.len() as u32,
+            claimed,
+            "batches 声称 {claimed} 个图像顶点，images 段却只有 {}",
+            b.images.len()
+        );
+        assert_eq!(b.images.len(), 12, "3 张图 × 4 顶点");
+    }
+
     #[test]
     fn an_unregistered_texture_is_counted_but_does_not_split_the_batch() {
         let img = |name: &'static str| image(name, Rect::new(0.0, 0.0, 4.0, 4.0));
@@ -2002,7 +2341,368 @@ mod tests {
         assert_eq!(r.width, 0.0);
         assert_eq!(r.height, 0.0);
     }
+// ---- E3：`runs` 分段元数据 + `translate` 平移 ----
+
+    fn quad_with_blend(rect: Rect, blend: zephyra_core::filter::BlendMode) -> Command {
+        Command::Quad {
+            rect,
+            radius: zephyra_core::core::CornerRadius { radius: 0.0 },
+            fill: Color::rgb(1.0, 1.0, 1.0),
+            stroke: None,
+            filter: zephyra_core::filter::FilterChain::none(),
+            blend,
+        }
+    }
+
+    fn image_with_blend(
+        name: &'static str,
+        dst: Rect,
+        blend: zephyra_core::filter::BlendMode,
+    ) -> Command {
+        Command::Image {
+            texture: zephyra_core::paint::TextureRef::new(name),
+            src: None,
+            dst,
+            radius: zephyra_core::core::CornerRadius { radius: 0.0 },
+            tint: Color::rgb(1.0, 1.0, 1.0),
+            filter: zephyra_core::filter::FilterChain::none(),
+            blend,
+        }
+    }
+
+    /// **零回归判据**：按 `runs` 逐段切出来的顶点流拼起来 == 未切分的合并流。
+    ///
+    /// 这是 E3 存在的全部理由 —— 加了分段元数据之后，"合成器照着 `runs` 画"与
+    /// "合成器照着整条流画"必须画出**同一个东西**。漏一段的症状是图元不出现，
+    /// 两段重叠的症状是图元重复画（半透明时颜色变深，且不报任何错）。
+    #[test]
+    fn runs_spliced_rebuild_the_unsplit_stream() {
+        use zephyra_core::filter::BlendMode;
+        let l = list_of(vec![
+            quad(Rect::new(0.0, 0.0, 10.0, 10.0), Color::rgb(1.0, 0.0, 0.0)),
+            quad_with_blend(Rect::new(20.0, 0.0, 10.0, 10.0), BlendMode::Multiply),
+            image("t1", Rect::new(0.0, 20.0, 10.0, 10.0)),
+            image_with_blend("t1", Rect::new(20.0, 20.0, 10.0, 10.0), BlendMode::Screen),
+            path_cmd(
+                &[[0.0, 40.0], [10.0, 40.0], [10.0, 50.0]],
+                Color::rgb(0.0, 1.0, 0.0),
+            ),
+        ]);
+        let b = expand(&l, (100, 100), |_| true);
+        let (all, _, _) = b.flatten();
+
+        // 结构：连续、完整覆盖
+        assert!(!b.runs.is_empty(), "这批命令里每种图元都有，runs 不该为空");
+        assert_eq!(
+            b.runs[0].first_vertex, 0,
+            "第一段必须从流头开始，否则开头的图元没人画"
+        );
+        for w in b.runs.windows(2) {
+            assert_eq!(
+                w[1].first_vertex,
+                w[0].end(),
+                "段与段之间不许有缝也不许重叠：{:?} 之后是 {:?}",
+                w[0],
+                w[1]
+            );
+        }
+        assert_eq!(
+            b.runs.last().unwrap().end() as usize,
+            all.len(),
+            "最后一段必须正好到流尾，否则尾部的图元没人画（或被多画一次）"
+        );
+
+        // 判据本体：逐段切出来拼接 == 整条流
+        let mut spliced = Vec::new();
+        for r in &b.runs {
+            let s = r.first_vertex as usize;
+            spliced.extend_from_slice(&all[s..s + r.vertex_count as usize]);
+        }
+        assert_eq!(spliced, all, "按 runs 切分再拼起来必须与合并流逐顶点相同");
+    }
+
+    /// 混合模式全默认时 `runs` 就是原来的三段 —— 合批行为**没有**被 E3 改动。
+    ///
+    /// ⚠ 刻意放**两个**矩形：不合并的话这里会是 4 段而不是 3 段，所以这条钉住的
+    /// 是「相邻同混合模式的段被合并」这件事，而不只是「段数等于三」。
+    #[test]
+    fn default_blend_yields_exactly_three_runs() {
+        let l = list_of(vec![
+            quad(Rect::new(0.0, 0.0, 10.0, 10.0), Color::rgb(1.0, 0.0, 0.0)),
+            quad(Rect::new(20.0, 0.0, 10.0, 10.0), Color::rgb(0.0, 1.0, 0.0)),
+            image("t1", Rect::new(0.0, 20.0, 10.0, 10.0)),
+            path_cmd(
+                &[[0.0, 40.0], [10.0, 40.0], [10.0, 50.0]],
+                Color::rgb(0.0, 0.0, 1.0),
+            ),
+        ]);
+        let b = expand(&l, (100, 100), |_| true);
+        let (all, image_first, path_first) = b.flatten();
+        assert_eq!(b.runs.len(), 3, "solid / images / paths 各一段：{:?}", b.runs);
+        assert_eq!(b.runs[0].first_vertex, 0);
+        assert_eq!(b.runs[0].end(), image_first, "第一段正好是 solid");
+        assert_eq!(b.runs[1].first_vertex, image_first);
+        assert_eq!(b.runs[1].end(), path_first, "第二段正好是 images");
+        assert_eq!(b.runs[2].first_vertex, path_first);
+        assert_eq!(b.runs[2].end() as usize, all.len());
+        assert!(
+            b.runs[0].texture.is_none() && b.runs[2].texture.is_none(),
+            "矩形与多边形不换纹理绑定：{:?}",
+            b.runs
+        );
+        assert_eq!(
+            b.runs[1].texture.as_deref(),
+            Some("t1"),
+            "只有 images 段换绑定：{:?}",
+            b.runs
+        );
+    }
+
+    /// 相邻**同纹理**但混合模式不同的图像必须拆段。
+    ///
+    /// 只按纹理合批是不够的：合进一批后 base 只能给两段套同一个混合方程，症状是
+    /// 「有一段的效果没生效」—— 而顶点数、缺失纹理数这些统计全都正常。
+    #[test]
+    fn same_texture_different_blend_splits_runs() {
+        use zephyra_core::filter::BlendMode;
+        let l = list_of(vec![
+            image("t1", Rect::new(0.0, 0.0, 10.0, 10.0)),
+            image_with_blend("t1", Rect::new(20.0, 0.0, 10.0, 10.0), BlendMode::Multiply),
+        ]);
+        let b = expand(&l, (100, 100), |_| true);
+        let image_runs: Vec<&DrawRun> = b
+            .runs
+            .iter()
+            .filter(|r| r.texture.is_some())
+            .collect();
+        assert_eq!(
+            image_runs.len(),
+            2,
+            "同纹理但混合模式不同 ⇒ 两段：{:?}",
+            image_runs
+        );
+        assert_eq!(image_runs[0].blend, BlendMode::default());
+        assert_eq!(image_runs[1].blend, BlendMode::Multiply);
+        assert!(
+            b.runs.iter().all(|r| r.texture.as_deref() == Some("t1")),
+            "两段都是同一张纹理"
+        );
+        // `batches` 是渲染器实际用来绑定纹理的那份，它也必须拆开 ——
+        // 只拆 `runs` 而不拆 `batches`，渲染器仍会把两段当一批。
+        assert_eq!(
+            b.batches.len(),
+            2,
+            "batches 也必须按混合模式拆：{:?}",
+            b.batches
+        );
+    }
+
+    /// 零平移必须与「不传平移」**逐顶点相同**。
+    #[test]
+    fn zero_translate_matches_no_translate() {
+        let l = list_of(vec![
+            quad(Rect::new(1.0, 2.0, 10.0, 10.0), Color::rgb(1.0, 0.0, 0.0)),
+            image("t1", Rect::new(3.0, 4.0, 10.0, 10.0)),
+            path_cmd(
+                &[[0.0, 40.0], [10.0, 40.0], [10.0, 50.0]],
+                Color::rgb(0.0, 1.0, 0.0),
+            ),
+        ]);
+        let a = expand(&l, (128, 128), |_| true);
+        let b = expand_translated(&l, (128, 128), |_| true, Point::ZERO);
+        assert_eq!(a.solid, b.solid, "零平移不该改变任何顶点");
+        assert_eq!(a.images, b.images);
+        assert_eq!(a.paths, b.paths);
+        assert_eq!(a.runs, b.runs);
+    }
+
+    /// translate_moves_geometry_into_target_space —— 坐标刻意取 f32 可精确表示的值，于是可以断言**相等**。
+    ///
+    /// 尺寸 128、三角形 (16,16)-(48,16)-(48,80)、平移 (-16,-16) ⇒ 落到 (0,0)
+    /// / (32,0) / (32,64)；除以 128 再乘 2 全是 0.25 / 0.5 / 1.0 这些二进制精确值。
+    #[test]
+    fn translate_moves_geometry_into_target_space() {
+        let tri = [[16.0, 16.0], [48.0, 16.0], [48.0, 80.0]];
+        let l = list_of(vec![path_cmd(&tri, Color::rgb(0.0, 1.0, 0.0))]);
+        let b = expand_translated(&l, (128, 128), |_| true, Point::new(-16.0, -16.0));
+        let got: Vec<[f32; 2]> = b.paths.iter().map(|v| v.position).collect();
+        assert_eq!(
+            got,
+            vec![[-1.0, 1.0], [-0.5, 1.0], [-0.5, 0.0]],
+            "平移后的 NDC：(0,0)→(-1,1)、(32,0)→(-0.5,1)、(32,64)→(-0.5,0)"
+        );
+        // 未平移的同一批几何必须**不同**，否则这条测试恒真。
+        let plain = expand(&l, (128, 128), |_| true);
+        let plain_pos: Vec<[f32; 2]> = plain.paths.iter().map(|v| v.position).collect();
+        assert_ne!(
+            got, plain_pos,
+            "前提核对：不传平移的 NDC 必须与平移后不同（未平移首点是 (-0.75,0.75)）"
+        );
+    }
+
+    /// 平移必须**同时**作用于裁剪矩形。
+    ///
+    /// 用「预先平移的等价列表」当判据，而不是手算 NDC —— 这样断言的是
+    /// 「平移对所有几何一视同仁」，包括裁剪。
+    #[test]
+    fn translate_also_applies_to_clip_rect() {
+        use zephyra_core::paint::Command::{PopClip, PushClip};
+        let t = Point::new(-16.0, -16.0);
+        let clip = Rect::new(0.0, 0.0, 64.0, 128.0);
+        let body = Rect::new(0.0, 0.0, 128.0, 128.0);
+
+        // A：屏幕坐标 + 平移；B：预先平移 + 不平移。两者必须完全等价。
+        let a = expand_translated(
+            &list_of(vec![
+                PushClip(clip),
+                quad(body, Color::rgb(1.0, 1.0, 1.0)),
+                PopClip,
+            ]),
+            (128, 128),
+            |_| true,
+            t,
+        );
+        let b = expand(
+            &list_of(vec![
+                PushClip(shift_rect(clip, t)),
+                quad(shift_rect(body, t), Color::rgb(1.0, 1.0, 1.0)),
+                PopClip,
+            ]),
+            (128, 128),
+            |_| true,
+        );
+        assert_eq!(
+            a.solid, b.solid,
+            "裁剪矩形没跟着平移的话，交集算在两个不同的空间里，结果是错的段"
+        );
+    }
+
+    /// 裁剪确实**生效**（而不只是「平移了裁剪矩形」）。
+    ///
+    /// 宽度断言：128 宽的矩形被 64 宽的裁剪区切一半（再各内缩 `AA_BAND/2`）。
+    /// 若裁剪矩形根本没参与，这个四边形会是满 128 宽。
+    #[test]
+    fn clipping_still_applies_after_translate() {
+        use zephyra_core::paint::Command::{PopClip, PushClip};
+        let b = expand_translated(
+            &list_of(vec![
+                PushClip(Rect::new(0.0, 0.0, 64.0, 128.0)),
+                quad(Rect::new(0.0, 0.0, 128.0, 128.0), Color::rgb(1.0, 1.0, 1.0)),
+                PopClip,
+            ]),
+            (128, 128),
+            |_| true,
+            Point::new(-16.0, -16.0),
+        );
+        assert_eq!(b.solid.len(), 4, "只应剩一个四边形");
+        // 两个 x 顶点分别是裁剪区左右边界（各再内缩 AA_BAND/2）。
+        let xs = [b.solid[0].position[0], b.solid[1].position[0]];
+        let span_pixels = (xs[1] - xs[0]).abs() / 2.0 * 128.0;
+        assert!(
+            (span_pixels - (64.0 + AA_BAND)).abs() < 1e-3,
+            "裁剪后跨度应约 64+AA_BAND 像素，实得 {span_pixels}"
+        );
+    }
+
+    /// 平移必须作用到**图像**上。
+///
+/// ⚠ 这条是被变异测试逼出来的：图像走的是"先入队、后按纹理分批展开"这条完全不同的
+/// 路径（`image_quads` → `pending`），前几条平移测试只覆盖了矩形/字形/多边形，删掉
+/// 图像那一处的平移时**没有任何测试失败**。
+///
+/// 坐标取 f32 可精确表示的值（尺寸 128、矩形 32、平移 -16），于是可以断言相等。
+#[test]
+fn translate_also_applies_to_images() {
+    let l = list_of(vec![image(
+        "t1",
+        Rect::new(16.0, 16.0, 32.0, 32.0),
+    )]);
+    let b = expand_translated(&l, (128, 128), |_| true, Point::new(-16.0, -16.0));
+    let got: Vec<[f32; 2]> = b.images.iter().map(|v| v.position).collect();
+    // 图像半径为 0 ⇒ `kind::IMAGE` 的 `pad` 为 0，不外扩，所以顶点正好在 (0,0)-(32,32)。
+    assert_eq!(
+        got,
+        vec![[-1.0, 1.0], [-0.5, 1.0], [-0.5, 0.5], [-1.0, 0.5]],
+        "平移后图像落在 (0,0)-(32,32)"
+    );
+    let plain = expand(&l, (128, 128), |_| true);
+    assert_ne!(
+        got,
+        plain.images.iter().map(|v| v.position).collect::<Vec<_>>(),
+        "前提核对：不传平移必须给出不同的 NDC"
+    );
 }
+
+/// 平移必须作用到**字形**上。
+#[test]
+fn translate_also_applies_to_glyphs() {
+    let l = list_of(vec![Command::Text {
+        atlas: zephyra_core::paint::TextureRef::new("glyph-atlas"),
+        glyphs: vec![zephyra_core::paint::GlyphQuad {
+            uv: UvRect::new(0.1, 0.2, 0.05, 0.05),
+            dst: Rect::new(16.0, 16.0, 32.0, 32.0),
+            color_glyph: false,
+        }],
+        color: Color::rgb(1.0, 1.0, 1.0),
+        filter: zephyra_core::filter::FilterChain::none(),
+        blend: zephyra_core::filter::BlendMode::default(),
+    }]);
+    let b = expand_translated(&l, (128, 128), |_| true, Point::new(-16.0, -16.0));
+    let got: Vec<[f32; 2]> = b.solid.iter().map(|v| v.position).collect();
+    // `kind::GLYPH` 不外扩（位图自带抗锯齿边缘），所以顶点正好在 (0,0)-(32,32)。
+    assert_eq!(
+        got,
+        vec![[-1.0, 1.0], [-0.5, 1.0], [-0.5, 0.5], [-1.0, 0.5]],
+        "平移后字形落在 (0,0)-(32,32)"
+    );
+}
+
+/// `shift_rect` 只搬动原点，宽高原样。
+    #[test]
+    fn shift_rect_moves_origin_only() {
+        let r = Rect::new(1.0, 2.0, 3.0, 4.0);
+        assert_eq!(
+            shift_rect(r, Point::new(10.0, 20.0)),
+            Rect::new(11.0, 22.0, 3.0, 4.0),
+            "宽高必须原样 —— 改了会让 SDF 的 half_size 与 uv 外插全错"
+        );
+        assert_eq!(
+            shift_rect(r, Point::ZERO),
+            r,
+            "零平移是恒等（这条让调用方能无脑传 Point::ZERO）"
+        );
+    }
+
+    /// 复用缓冲时 `runs` 不增长。
+    ///
+    /// 漏清 `run_tally` 的症状与漏清顶点段一模一样：段数每帧累加，合成器按
+    /// `runs` 画就每帧多画一层，且所有几何统计仍然正常。
+    #[test]
+    fn runs_do_not_grow_with_reused_scratch() {
+        let l = list_of(vec![
+            quad(Rect::new(0.0, 0.0, 10.0, 10.0), Color::rgb(1.0, 0.0, 0.0)),
+            image("t1", Rect::new(0.0, 20.0, 10.0, 10.0)),
+            path_cmd(
+                &[[0.0, 40.0], [10.0, 40.0], [10.0, 50.0]],
+                Color::rgb(0.0, 1.0, 0.0),
+            ),
+        ]);
+        let mut s = Scratch::new();
+        let mut report = expand_translated_into(&l, (100, 100), &|_| true, Point::ZERO, &mut s);
+        let first = s.runs.len();
+        assert!(first > 0, "前提：这批命令产出若干段");
+        for _ in 0..5 {
+            report = expand_translated_into(&l, (100, 100), &|_| true, Point::ZERO, &mut s);
+            assert_eq!(
+                s.runs.len(),
+                first,
+                "runs 逐帧增长 ⇒ run_tally / runs 忘了 clear"
+            );
+        }
+        assert_eq!(report.quads, 2, "几何统计也不该变（1 矩形 + 1 图像；Path 计入 path_triangles）");
+    }
+}
+
 
 /// `kind` 落在着色器划定的**哪个分支** —— 也就是"这块像素会被画成什么"。
 ///

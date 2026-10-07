@@ -317,6 +317,13 @@ pub struct Point {
 
 impl Point {
     /// 构造点。
+    /// 零点。
+    ///
+    /// 「不位移」在离屏渲染里是**常用的默认值**（展开一帧到屏幕时平移量就是零），
+    /// 所以给它具名常量而不是到处写 `Point::new(0.0, 0.0)` —— 后者读起来像
+    /// 「平移到屏幕左上角」，而 `ZERO` 读起来像「不平移」。
+    pub const ZERO: Point = Point { x: 0.0, y: 0.0 };
+
     pub const fn new(x: f32, y: f32) -> Self {
         Self { x, y }
     }
