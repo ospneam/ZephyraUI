@@ -42,8 +42,8 @@ fn vs() -> D3D12_SHADER_BYTECODE {
 
 fn ps() -> D3D12_SHADER_BYTECODE {
     D3D12_SHADER_BYTECODE {
-        pShaderBytecode: zephyra_winit_d3d12::shader::PS_BYTECODE.as_ptr() as *const _,
-        BytecodeLength: zephyra_winit_d3d12::shader::PS_BYTECODE.len(),
+        pShaderBytecode: zephyra_winit_d3d12::shader::PS_VARIANTS[0].1.as_ptr() as *const _,
+        BytecodeLength: zephyra_winit_d3d12::shader::PS_VARIANTS[0].1.len(),
     }
 }
 

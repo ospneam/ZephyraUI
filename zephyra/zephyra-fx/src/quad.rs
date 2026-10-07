@@ -847,6 +847,13 @@ pub struct Scratch {
 
 impl Scratch {
     /// 空缓冲。
+
+    /// 本帧的 [`DrawRun`] 列表 —— 渲染器逐段回放的**目录**。
+    ///
+    /// 段的下标指向 [`Scratch::vertices`]（合并后的顶点缓冲）。
+    pub fn runs(&self) -> &[DrawRun] {
+        &self.runs
+    }
     pub fn new() -> Self {
         Self::default()
     }

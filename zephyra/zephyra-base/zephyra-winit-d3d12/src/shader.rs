@@ -32,18 +32,70 @@ use crate::quad::Vertex;
 /// 顶点着色器字节码（`fxc /T vs_5_1`）。
 pub const VS_BYTECODE: &[u8] = include_bytes!("../shaders/zephyra.vs.bin");
 
-/// 像素着色器字节码（`fxc /T ps_5_1`）。
+/// 像素着色器**变体表**，与 `zephyra-winit`（D3D11 那边）**逐项一致**。
 ///
-/// # 为什么是 `ps_5_1` 而不是 `ps_5_0`
+/// 两边各写一份是刻意的：`.bin` 是**同一批**离线产物（`shader_assets_are_in_sync`
+/// 保证两份 `.hlsl` 与全部 `.bin` 字节一致），但"哪个模式用哪个变体"是**后端自己的
+/// 决定**，放在一起反而会让两边互相牵制。
 ///
-/// D3D12 的目标特性集是着色器模型 **5.1**（Skia 的 D3D12 后端也用 `vs_5_1`）。5.1 比
-/// 5.0 多出的东西（本项目用不上：`SampleShading`、`ViewInstancing`、`Int64` 运算）
-/// 无关紧要，要紧的是 5.1 与 D3D12 的根签名/描述符模型是配套的。
-///
-/// D3D11 接受 5.1 字节码（`FeatureLevel 11_0` 起就支持），所以 `zephyra-winit` 那边
-/// 也用 5.1 —— **两个后端共用同一份字节码**，于是顶点布局也只有一处定义。
-pub const PS_BYTECODE: &[u8] = include_bytes!("../shaders/zephyra.ps.bin");
+/// 顺序与 `BlendMode` 的声明顺序对应，见 [`ps_for_blend_mode`]。
+pub const PS_VARIANTS: [(&str, &[u8]); 18] = [
+    ("PSMain", include_bytes!("../shaders/zephyra.PSMain.ps.bin")),
+    ("PSOverlay", include_bytes!("../shaders/zephyra.PSOverlay.ps.bin")),
+    ("PSDarken", include_bytes!("../shaders/zephyra.PSDarken.ps.bin")),
+    ("PSLighten", include_bytes!("../shaders/zephyra.PSLighten.ps.bin")),
+    ("PSColorDodge", include_bytes!("../shaders/zephyra.PSColorDodge.ps.bin")),
+    ("PSColorBurn", include_bytes!("../shaders/zephyra.PSColorBurn.ps.bin")),
+    ("PSHardLight", include_bytes!("../shaders/zephyra.PSHardLight.ps.bin")),
+    ("PSSoftLight", include_bytes!("../shaders/zephyra.PSSoftLight.ps.bin")),
+    ("PSDifference", include_bytes!("../shaders/zephyra.PSDifference.ps.bin")),
+    ("PSExclusion", include_bytes!("../shaders/zephyra.PSExclusion.ps.bin")),
+    ("PSMultiply", include_bytes!("../shaders/zephyra.PSMultiply.ps.bin")),
+    ("PSHue", include_bytes!("../shaders/zephyra.PSHue.ps.bin")),
+    ("PSSaturation", include_bytes!("../shaders/zephyra.PSSaturation.ps.bin")),
+    ("PSColor", include_bytes!("../shaders/zephyra.PSColor.ps.bin")),
+    ("PSLuminosity", include_bytes!("../shaders/zephyra.PSLuminosity.ps.bin")),
+    ("PSBlurH", include_bytes!("../shaders/zephyra.PSBlurH.ps.bin")),
+    ("PSBlurV", include_bytes!("../shaders/zephyra.PSBlurV.ps.bin")),
+    ("PSComposite", include_bytes!("../shaders/zephyra.PSComposite.ps.bin")),
+];
 
+/// 第 `i` 个混合模式该用哪个 PS 变体；`None` = 默认 `PSMain` + 固定功能混合。
+///
+/// 与 D3D11 那边**逐项一致** —— 两边的行为必须一样，否则同一个 `DisplayList`
+/// 在两个后端上长得不一样。
+pub const fn ps_for_blend_mode(i: usize) -> Option<usize> {
+    match i {
+        0..=14 => None,
+        15 => Some(1),
+        16 => Some(2),
+        17 => Some(3),
+        18 => Some(4),
+        19 => Some(5),
+        20 => Some(6),
+        21 => Some(7),
+        22 => Some(8),
+        23 => Some(9),
+        24 => Some(10),
+        25 => Some(11),
+        26 => Some(12),
+        27 => Some(13),
+        28 => Some(14),
+        _ => None,
+    }
+}
+
+/// 模糊水平 / 垂直两个 pass 的 PS 变体下标。
+pub const PS_BLUR_H: usize = 15;
+pub const PS_BLUR_V: usize = 16;
+/// 离屏结果合成回目标（含投影染色）。
+pub const PS_COMPOSITE: usize = 17;
+
+/// D3D12 那边不再有单一 `PS_BYTECODE`：见 [`PS_VARIANTS`]。
+///
+/// 两份 `.hlsl` 用 `ps_5_0` / `vs_5_0` 各编一份，D3D12 直接吃 SM5.0 字节码
+/// （D3D12 不要求 5.1）。真正的约束是「两边 `.bin` 字节一致」。
+///
 /// 顶点布局表：`(HLSL 语义名, 语义索引, DXGI 格式, 字节偏移)`。
 ///
 /// # 为什么格式也在这张表里
@@ -312,17 +364,26 @@ mod tests {
     use super::*;
     use crate::quad::kind;
 
-    /// 两个字节码都必须是真 DXBC。
+    /// 全部字节码都必须是真 DXBC。
     ///
     /// 这条断言钉住「`.bin` 被提交进来了」——漏提交时 `include_bytes!` 在编译期就失败。
+    ///
+    /// # 为什么遍历**全部**变体而不是只看一个
+    ///
+    /// `.bin` 是离线产物，不参与编译期检查：漏提交 18 个变体里的任何一个，编译都
+    /// 照样成功，症状只会在运行时表现为"某个模式画不出来"。逐个查魔数与长度
+    /// 是唯一能把这种漏网在测试里拦下来的地方。
     #[test]
-    fn both_bytecode_blobs_are_dxbc() {
-        for (name, b) in [("vs", VS_BYTECODE), ("ps", PS_BYTECODE)] {
+    fn all_bytecode_blobs_are_dxbc() {
+        for (name, b) in PS_VARIANTS {
             assert!(b.len() >= 32, "{name} 太短（{} B），大概没生成", b.len());
             assert_eq!(&b[0..4], b"DXBC", "{name} 魔数不对");
             let total = u32::from_le_bytes([b[24], b[25], b[26], b[27]]) as usize;
             assert_eq!(total, b.len(), "{name} 头里的长度与实际字节数不符");
         }
+        let b = VS_BYTECODE;
+        assert!(b.len() >= 32, "vs 太短（{} B），大概没生成", b.len());
+        assert_eq!(&b[0..4], b"DXBC", "vs 魔数不对");
     }
 
     /// 布局不得越过 stride。

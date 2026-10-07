@@ -63,8 +63,78 @@ use crate::quad::Vertex;
 /// 顶点着色器字节码（`fxc /T vs_5_0`）。
 pub const VS_BYTECODE: &[u8] = include_bytes!("../shaders/zephyra.vs.bin");
 
-/// 像素着色器字节码（`fxc /T ps_5_0`）。
-pub const PS_BYTECODE: &[u8] = include_bytes!("../shaders/zephyra.ps.bin");
+/// 像素着色器变体表：`(HLSL 入口名, 字节码)`。
+///
+/// # 为什么是**离线**变体而不是"一个 PS + 一个模式常量"
+///
+/// 模式常量要有地方放：常量缓冲（要新建 buffer + `SetConstantBuffers`，D3D12 那边
+/// 还要动根签名）或顶点数据（把混合模式塞进与颜色无关的通道，污染 `quad::Vertex`
+/// 的顶点契约）。离线变体两者都不需要，运行时只是多一张 `ID3D11PixelShader`。
+///
+/// 代价只是 `.bin` 变多 —— 而 `.bin` 本来就是离线成本。
+///
+/// # 顺序**必须**与 `filter.rs` 的 `pub enum BlendMode` 一致
+///
+/// [`PS_FOR_BLEND_MODE`] 按下标取表，所以 `BlendMode as usize` 直接就是索引。
+/// `the_ps_variant_table_matches_the_blend_mode_enum` 逐项核对 29 个名字。
+///
+/// `PSMain` 是默认路径（系数可表达模式走固定功能混合方程，PS 只算源色）；
+/// 紧随其后的 14 个是可分离 / 非可分离混合模式的合成变体（E4.2 / E4.3）。
+/// 最后 3 个是效果执行用的：`PSBlurH` / `PSBlurV` / `PSComposite`。
+pub const PS_VARIANTS: [(&str, &[u8]); 18] = [
+    ("PSMain", include_bytes!("../shaders/zephyra.PSMain.ps.bin")),
+    ("PSOverlay", include_bytes!("../shaders/zephyra.PSOverlay.ps.bin")),
+    ("PSDarken", include_bytes!("../shaders/zephyra.PSDarken.ps.bin")),
+    ("PSLighten", include_bytes!("../shaders/zephyra.PSLighten.ps.bin")),
+    ("PSColorDodge", include_bytes!("../shaders/zephyra.PSColorDodge.ps.bin")),
+    ("PSColorBurn", include_bytes!("../shaders/zephyra.PSColorBurn.ps.bin")),
+    ("PSHardLight", include_bytes!("../shaders/zephyra.PSHardLight.ps.bin")),
+    ("PSSoftLight", include_bytes!("../shaders/zephyra.PSSoftLight.ps.bin")),
+    ("PSDifference", include_bytes!("../shaders/zephyra.PSDifference.ps.bin")),
+    ("PSExclusion", include_bytes!("../shaders/zephyra.PSExclusion.ps.bin")),
+    ("PSMultiply", include_bytes!("../shaders/zephyra.PSMultiply.ps.bin")),
+    ("PSHue", include_bytes!("../shaders/zephyra.PSHue.ps.bin")),
+    ("PSSaturation", include_bytes!("../shaders/zephyra.PSSaturation.ps.bin")),
+    ("PSColor", include_bytes!("../shaders/zephyra.PSColor.ps.bin")),
+    ("PSLuminosity", include_bytes!("../shaders/zephyra.PSLuminosity.ps.bin")),
+    ("PSBlurH", include_bytes!("../shaders/zephyra.PSBlurH.ps.bin")),
+    ("PSBlurV", include_bytes!("../shaders/zephyra.PSBlurV.ps.bin")),
+    ("PSComposite", include_bytes!("../shaders/zephyra.PSComposite.ps.bin")),
+];
+
+/// 第 `i` 个混合模式该用哪个 PS 变体。
+///
+/// `None` = 用默认的 `PSMain`（系数可表达模式，混合交给固定功能方程）。
+/// `Some(k)` = 用 `PS_VARIANTS[k]`。
+///
+/// 顺序与 `BlendMode` 的声明顺序一一对应：0..=14 是系数可表达（→ `None`），
+/// 15..=24 可分离，25..=28 非可分离。
+pub const fn ps_for_blend_mode(i: usize) -> Option<usize> {
+    match i {
+        0..=14 => None,
+        15 => Some(1),  // Overlay
+        16 => Some(2),  // Darken
+        17 => Some(3),  // Lighten
+        18 => Some(4),  // ColorDodge
+        19 => Some(5),  // ColorBurn
+        20 => Some(6),  // HardLight
+        21 => Some(7),  // SoftLight
+        22 => Some(8),  // Difference
+        23 => Some(9),  // Exclusion
+        24 => Some(10), // Multiply
+        25 => Some(11), // Hue
+        26 => Some(12), // Saturation
+        27 => Some(13), // Color
+        28 => Some(14), // Luminosity
+        _ => None,
+    }
+}
+
+/// 模糊水平 / 垂直两个 pass 的 PS 变体下标。
+pub const PS_BLUR_H: usize = 15;
+pub const PS_BLUR_V: usize = 16;
+/// 离屏结果合成回目标（含投影染色）。
+pub const PS_COMPOSITE: usize = 17;
 
 /// 顶点布局表：`(HLSL 语义名, 语义索引, DXGI 格式, 字节偏移)`。
 ///
@@ -134,7 +204,11 @@ impl std::error::Error for ShaderError {}
 /// 编译期就绪的着色器。
 pub struct Shaders {
     pub vs: ID3D11VertexShader,
-    pub ps: ID3D11PixelShader,
+    /// 全部 PS 变体，下标与 [`PS_VARIANTS`] 一致。
+    ///
+    /// 逐段选 PS（而不是全局一个）是因为混合模式**逐段**不同 —— 见
+    /// [`crate::renderer::Renderer`] 里按 `runs` 回放的那段。
+    pub ps: Vec<ID3D11PixelShader>,
     pub input_layout: ID3D11InputLayout,
 }
 
@@ -147,11 +221,16 @@ impl Shaders {
         let mut vs = None;
         unsafe { device.CreateVertexShader(VS_BYTECODE, None, Some(&mut vs as *mut _)) }
             .map_err(|e| ShaderError::Create("CreateVertexShader", e))?;
-        let mut ps = None;
-        unsafe { device.CreatePixelShader(PS_BYTECODE, None, Some(&mut ps as *mut _)) }
-            .map_err(|e| ShaderError::Create("CreatePixelShader", e))?;
+        let mut ps = Vec::with_capacity(PS_VARIANTS.len());
+        for (i, (name, bytes)) in PS_VARIANTS.iter().enumerate() {
+            let mut p = None;
+            unsafe { device.CreatePixelShader(bytes, None, Some(&mut p as *mut _)) }
+                .map_err(|e| ShaderError::Create(*name, e))?;
+            ps.push(p.unwrap_or_else(|| {
+                panic!("CreatePixelShader({name}) 成功时必给着色器（变体 #{i}）")
+            }));
+        }
         let vs = vs.expect("CreateVertexShader 成功时必给着色器");
-        let ps = ps.expect("CreatePixelShader 成功时必给着色器");
 
         let holders: Vec<InputElement> = VERTEX_LAYOUT
             .iter()
@@ -444,7 +523,7 @@ mod tests {
     /// 在编译期就失败，而格式写错只会在运行期变成一片空白。
     #[test]
     fn both_bytecode_blobs_are_dxbc() {
-        for (name, b) in [("vs", VS_BYTECODE), ("ps", PS_BYTECODE)] {
+        for (name, b) in [("vs", VS_BYTECODE), ("ps", PS_VARIANTS[0].1)] {
             assert!(b.len() >= 32, "{name} 太短（{} B），大概没生成", b.len());
             assert_eq!(&b[0..4], b"DXBC", "{name} 魔数不对");
             let total =

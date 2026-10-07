@@ -212,7 +212,7 @@ fn 裸_d3d11_能画出满屏三角形() {
         gpu.context
             .ClearRenderTargetView(&rtv, &[CLEAR.r, CLEAR.g, CLEAR.b, CLEAR.a]);
         gpu.context.VSSetShader(Some(&shaders.vs), None);
-        gpu.context.PSSetShader(Some(&shaders.ps), None);
+        gpu.context.PSSetShader(Some(&shaders.ps[0]), None);
         gpu.context.IASetInputLayout(&shaders.input_layout);
         let stride = std::mem::size_of::<zephyra_winit::quad::Vertex>() as u32;
         let off = 0u32;
@@ -784,7 +784,14 @@ fn shader_assets_are_in_sync() {
         assert_eq!(x, y, "两份 zephyra.hlsl 在第 {i} 个字节处分叉（第 4 行的 Viewstage 引用之类）");
     }
 
-    for bin_name in ["zephyra.ps.bin", "zephyra.vs.bin"] {
+    // PS 有 18 个变体 + 1 个 VS，每一个都要比过 —— 只查一个的话，其余 17 个
+    // 漏编译时不会有任何测试失败（`.bin` 是离线产物，不参与编译）。
+    let mut bin_names: Vec<String> = zephyra_winit::shader::PS_VARIANTS
+        .iter()
+        .map(|(n, _)| format!("zephyra.{n}.ps.bin"))
+        .collect();
+    bin_names.push("zephyra.vs.bin".to_string());
+    for bin_name in &bin_names {
         let bin = root.join("shaders").join(bin_name);
         let src_time = std::fs::metadata(&hlsl_a)
             .expect("拿得到 hlsl 的修改时间")
@@ -805,9 +812,11 @@ fn shader_assets_are_in_sync() {
 
 /// 纯色背景 + 带指定混合模式的纯色前景。
 ///
-/// ⚠ 只能挑**系数可表达**的那 15 个（`Clear`..`Screen`）。`Multiply` / `Overlay` 这类
-/// 属于「可分离」那批，需要片元着色器变体（E4.2），现在会**故意**退回 `SrcOver` ——
-/// 拿它写测试会得到"混合没生效"的结论，而那其实是预期行为。
+/// 全部 29 个模式都能用（系数可表达的 15 个走固定功能方程，其余 14 个走 PS 变体），
+/// 所以这里没有"只能挑某几个"的限制。
+///
+/// 背景用中灰、源用纯红，因为 29 个模式在这组底/源上的结果大多能两两分开 ——
+/// `separable_and_nonseparable_blends_are_applied_on_gpu` 列了其中几个的精确期望值。
 fn blend_probe(mode: zephyra_core::filter::BlendMode) -> DisplayList {
     let s = SIZE as f32;
     let mut list = DisplayList::new();
@@ -1009,23 +1018,298 @@ fn adjacent_runs_with_different_blends_all_apply_in_order() {
     );
 }
 
-/// 尚不能表达的混合模式必须**退回 SrcOver**，且**照常画**。
+/// 可分离 / 非可分离混合模式必须**真的**在 GPU 上生效。
 ///
-/// # 为什么这条重要
+/// # 为什么这批模式需要单独一组测试
 ///
-/// 退化方式选"退回 SrcOver"而不是"跳过这一段"：跳过会让元素凭空消失，而"效果没
-/// 生效"至少有迹可循（画出来颜色不对）。这是 fx 层早就定下的约定
-/// （`RenderReport::unimplemented_*` 那段注释），这里把它钉住。
+/// 系数可表达的那 15 个走**固定功能混合方程**，PS 只算源色 —— 它们的正确性由
+/// `blends` 表保证。而这 14 个走**PS 变体**：PS 自己采样 `dst`、算出最终颜色，
+/// 固定功能方程必须配 `Src`（原样接受）。
+///
+/// 两样东西**必须成对**换，只换其一的症状是"模式看起来没生效"且零错误：
+///
+/// - 只换 PS、混合状态仍是 `SrcOver` ⇒ 整体过曝；
+/// - 只换混合状态、PS 仍是 `PSMain` ⇒ 完全没效果（`PSMain` 不读 `dst`）。
+///
+/// 背景统一用 50% 灰、源用纯红，因为三种退化值与五种期望值两两不同：
+///
+/// ```text
+///   退化 SrcOver  (255,   0,   0)
+///   退化双重 SrcOver (255,255,255)   只换混合状态没换 PS
+///   Darken        (128,   0,   0)   min(0.5,1) / min(0.5,0) / min(0.5,0)
+///   Screen        (255, 128, 128)   1−(1−b)(1−s)
+///   Multiply      (128,   0,   0)   b·s
+///   Difference    (128, 128, 128)   |b−s|
+///   Luminosity    ( 77,  77,  77)   取源的明度 (0.3) 配目标的中性色相
+/// ```
 #[test]
-fn unsupported_blend_falls_back_to_src_over_and_still_draws() {
-    // `Multiply` 属于「可分离」那批（E4.2 才做），现在必然退回。
-    let px = render_probe(&blend_probe(zephyra_core::filter::BlendMode::Multiply));
+fn separable_and_nonseparable_blends_are_applied_on_gpu() {
+    use zephyra_core::filter::BlendMode;
+    // 容差 ±4：8 位量化 + 覆盖率插值。
+    let cases: [(BlendMode, [i32; 3]); 5] = [
+        (BlendMode::Darken, [128, 0, 0]),
+        (BlendMode::Screen, [255, 128, 128]),
+        (BlendMode::Multiply, [128, 0, 0]),
+        (BlendMode::Difference, [128, 128, 128]),
+        (BlendMode::Luminosity, [77, 77, 77]),
+    ];
+    for (mode, want) in cases {
+        let px = render_probe(&blend_probe(mode));
+        let p = probe_at(&px, 32, 32);
+        let got = [p[0] as i32, p[1] as i32, p[2] as i32];
+        let ok = (0..3).all(|i| (got[i] - want[i]).abs() <= 4);
+        assert!(
+            ok,
+            "{mode:?} 应得 {:?}，实得 {got:?}（退化值 255,0,0 = 退回 SrcOver；\
+             255,255,255 = 只换混合状态没换 PS）",
+            want
+        );
+    }
+}
+
+/// 同一个 `DisplayList` 里混合模式逐段不同 ⇒ 每一段都要用自己的 PS 与混合状态。
+///
+/// 这条同时钉住「PS 变体逐段切换」与「`g_dst` 逐段刷新」：第二段要读的 `dst`
+/// 已经含第一段的结果，所以 `g_dst` 的拷贝**必须发生在每段之前**，而不是帧首做一次。
+///
+/// ```text
+///   段1  灰底              = (0.5, 0.5, 0.5)
+///   段2  Darken 红         = min(灰,红)          = (0.5, 0,   0)
+///   段3  Screen 蓝         = 1−(1−b)(1−s)       = (0.5, 0,   1)   → 128,0,255
+/// ```
+///
+/// 判据落在 **绿** 通道上。若 `g_dst` 只在帧首拷一次，段3 读到的 `dst` 是帧首的
+/// 纯灰，`Screen` 会算成 `1−(1−0.5)(1−0) = 0.5` ⇒ 128，红通道两种情况都是 128、
+/// 蓝都是 255，只有绿能分开。
+#[test]
+fn per_run_ps_switching_uses_the_updated_destination() {
+    use zephyra_core::filter::BlendMode;
+    use zephyra_core::paint::Layer;
+    let s = SIZE as f32;
+    let mut list = DisplayList::new();
+    let mut push = |order: u32, fill: Color, blend: BlendMode, layer: Layer| {
+        list.push(
+            SortKey { layer, z: 0, order },
+            Command::Quad {
+                rect: Rect::new(0.0, 0.0, s, s),
+                radius: CornerRadius { radius: 0.0 },
+                fill,
+                stroke: None,
+                filter: zephyra_core::filter::FilterChain::none(),
+                blend,
+            },
+        );
+    };
+    push(0, Color::rgb(0.5, 0.5, 0.5), BlendMode::default(), Layer::Background);
+    push(1, Color::rgb(1.0, 0.0, 0.0), BlendMode::Darken, Layer::Content);
+    push(2, Color::rgb(0.0, 0.0, 1.0), BlendMode::Screen, Layer::Overlay);
+    list.sort();
+
+    let px = render_probe(&list);
+    let p = probe_at(&px, 32, 32);
+    // 期望 (128, 0, 255)：段3 的 Screen 读到的 dst 必须含段2 的 Darken 结果。
+    // 绿通道是关键判据（见上面文档）。
+    assert!(
+        (p[0] as i32 - 128).abs() <= 4 && p[1] <= 4 && p[2] >= 252,
+        "两段非默认模式应依次生效，第二段要看到第一段的结果（期望 128,0,255），\
+         实得 {p:?}。若 `g_dst` 只在帧首拷一次，第二段会基于**帧首**的目标算，绿会变成 128"
+    );
+}
+
+/// `g_dst` 的采样 uv 的 **y 必须翻转**。
+///
+/// # 为什么这条能抓住，而前面的测试抓不住
+///
+/// 前面所有混合测试的背景都是**铺满**的整屏纯色 —— 上下对称，所以把 y 翻不翻
+/// 都得到同一张图，`DstUv` 里 `0.5 − y·0.5` 写成 `y·0.5 + 0.5` 一个测试都抓不到。
+/// 这是"整屏纯色"这个便利选择顺带埋下来的盲区。
+///
+/// # 判据的设计
+///
+/// 背景只覆盖**上半屏**（y ∈ [0, 32)），源铺满全屏，模式取 `Multiply` + **白色**
+/// 源 —— 此时 `B = Cd·Cs = Cd` 且 `as = 1`，于是 PS 的输出恰好等于 `dst` 本身
+/// （"恒等透传"）。于是画面直接暴露出 PS 采样到的是**哪一半**的 `dst`：
+///
+/// ```text
+///   正确（y 翻转）  上半 = 灰 (128)   下半 = 黑（清屏色）
+///   写反            上半 = 黑          下半 = 灰
+/// ```
+#[test]
+fn dst_sampling_flips_the_y_axis() {
+    use zephyra_core::filter::BlendMode;
+    let s = SIZE as f32;
+    let mut list = DisplayList::new();
+    // 背景：只有上半屏。
+    list.push(
+        SortKey {
+            layer: zephyra_core::paint::Layer::Background,
+            z: 0,
+            order: 0,
+        },
+        Command::Quad {
+            rect: Rect::new(0.0, 0.0, s, s / 2.0),
+            radius: CornerRadius { radius: 0.0 },
+            fill: Color::rgb(0.5, 0.5, 0.5),
+            stroke: None,
+            filter: zephyra_core::filter::FilterChain::none(),
+            blend: BlendMode::default(),
+        },
+    );
+    // 源：铺满全屏的白色，`Multiply` 让 PS 变成 `dst` 的恒等透传。
+    list.push(
+        SortKey {
+            layer: zephyra_core::paint::Layer::Content,
+            z: 0,
+            order: 1,
+        },
+        Command::Quad {
+            rect: Rect::new(0.0, 0.0, s, s),
+            radius: CornerRadius { radius: 0.0 },
+            fill: Color::rgb(1.0, 1.0, 1.0),
+            stroke: None,
+            filter: zephyra_core::filter::FilterChain::none(),
+            blend: BlendMode::Multiply,
+        },
+    );
+    list.sort();
+
+    let px = render_probe(&list);
+    let top = probe_at(&px, 32, 16);
+    let bottom = probe_at(&px, 32, 48);
+    assert!(
+        (top[0] as i32 - 128).abs() <= 8,
+        "上半屏应透传出背景的灰 (128)，实得 {top:?}。\
+         若 `DstUv` 的 y 没翻转，上下会整体调换"
+    );
+    assert!(
+        bottom[0] <= 8,
+        "下半屏应透传清屏色黑 (0)，实得 {bottom:?} —— 白色 `Multiply` 源在此处是恒等透传，\
+         它的输出就是它采到的 `dst`"
+    );
+}
+
+/// PS 合成段必须用 **`Src`**（ONE/ZERO）而不是 `SrcOver` —— 而要看出这个区别，
+/// 源和目标**都必须半透明**。
+///
+/// # 为什么不透明时看不出
+///
+/// PS 写出的 alpha 是 `as + ad·(1−as)`。源不透明（`as = 1`）时它恒等于 1，于是
+/// `SrcOver` 的 `INV_SRC_ALPHA = 1 − 1 = 0`，两项退化成同一个结果 —— 于是
+/// `Src` 和 `SrcOver` 对**任何**不透明画面都完全等价。
+///
+/// 这就是 `separable_and_nonseparable_blends_are_applied_on_gpu` 抓不到
+/// "混合状态配错"的原因：那一组用的全是纯色不透明，判据是**真空**的。
+///
+/// # 本例的账（全部在预乘空间，`read_back` 不做反预乘）
+///
+/// ```text
+///   clear = rgba(0.5,0.5,0.5,0.5) → 预乘 (0.25,0.25,0.25,0.5)   ⇒ Cd = (0.5,0.5,0.5)
+///   源    = rgba(1,0,0,0.25)      → 预乘 (0.25,0,0,0.25)        ⇒ Cs = (1,0,0), as = 0.25
+///   B = Darken(Cd,Cs) = (0.5, 0, 0)
+///   out.rgb = 0.75·Cd + 0.25·B    = (0.5,   0.375, 0.375)       ⇒ 128, 96, 96
+///   out.a   = 0.25 + 0.5·0.75     = 0.625                        ⇒ 159
+///
+///   若混合状态错配成 SrcOver：
+///     rgb = out + (1−out.a)·dst   = (0.594, 0.469, 0.469)        ⇒ 151,120,120
+///     a   = out.a + (1−out.a)·ad = 0.8125                       ⇒ 207
+/// ```
+///
+/// 判据取**绿**通道（96 vs 120，相差 24）与 alpha（159 vs 207，相差 48）。
+#[test]
+fn ps_composite_runs_use_src_not_src_over_for_translucent_draws() {
+    use zephyra_core::filter::BlendMode;
+    let s = SIZE as f32;
+    let mut list = DisplayList::new();
+    list.push(
+        SortKey {
+            layer: zephyra_core::paint::Layer::Content,
+            z: 0,
+            order: 0,
+        },
+        Command::Quad {
+            rect: Rect::new(0.0, 0.0, s, s),
+            radius: CornerRadius { radius: 0.0 },
+            fill: Color::rgba(1.0, 0.0, 0.0, 0.25),
+            stroke: None,
+            filter: zephyra_core::filter::FilterChain::none(),
+            blend: BlendMode::Darken,
+        },
+    );
+    list.sort();
+
+    let px = render_probe_with(&list, Color::rgba(0.5, 0.5, 0.5, 0.5));
     let p = probe_at(&px, 32, 32);
     assert!(
-        p[0] >= 252 && p[1] <= 3 && p[2] <= 3,
-        "Multiply 尚未实现，应退回 SrcOver 得纯红 (255,0,0) —— \
-         元素必须**画出来**，不能被跳过。实得 {p:?}"
+        (p[0] as i32 - 128).abs() <= 8 && (p[1] as i32 - 96).abs() <= 8,
+        "PS 合成段应配 `Src`(ONE/ZERO)，期望 (128,96,…)，实得 {p:?}。\
+         配成 SrcOver 会得到 (151,120,…)"
     );
+    assert!(
+        (p[3] as i32 - 159).abs() <= 8,
+        "alpha 应是 PS 写出的 0.625 ⇒ 159，实得 {p:?}。\
+         配成 SrcOver 会让固定功能方程再叠一次 (1−a)·ad ⇒ 207"
+    );
+}
+
+/// 全部 29 个混合模式都应报"已实现" —— E4.2 / E4.3 的收尾判据。
+///
+/// 断言的是**表**而不是像素：`blends` 表缺项会让模式静默退化成 `SrcOver`，而
+/// 「每个模式都真的有实现」这件事一旦有人漏了 PS 变体，光看像素是看不出来的
+/// （漏的那几个会显示成 SrcOver，而 SrcOver 在这个测试里根本不出现）。
+#[test]
+fn every_blend_mode_has_an_implementation_path() {
+    use zephyra_core::filter::BlendMode;
+    // 与 `BlendMode` 的声明顺序一致；`COUNT` 钉住长度。
+    let all = [
+        BlendMode::Clear,
+        BlendMode::Src,
+        BlendMode::Dst,
+        BlendMode::SrcOver,
+        BlendMode::DstOver,
+        BlendMode::SrcIn,
+        BlendMode::DstIn,
+        BlendMode::SrcOut,
+        BlendMode::DstOut,
+        BlendMode::SrcATop,
+        BlendMode::DstATop,
+        BlendMode::Xor,
+        BlendMode::Plus,
+        BlendMode::Modulate,
+        BlendMode::Screen,
+        BlendMode::Overlay,
+        BlendMode::Darken,
+        BlendMode::Lighten,
+        BlendMode::ColorDodge,
+        BlendMode::ColorBurn,
+        BlendMode::HardLight,
+        BlendMode::SoftLight,
+        BlendMode::Difference,
+        BlendMode::Exclusion,
+        BlendMode::Multiply,
+        BlendMode::Hue,
+        BlendMode::Saturation,
+        BlendMode::Color,
+        BlendMode::Luminosity,
+    ];
+    assert_eq!(all.len(), BlendMode::COUNT, "BlendMode::COUNT 与枚举项数不符");
+    for m in all {
+        let has_ps = match zephyra_winit::shader::ps_for_blend_mode(m as usize) {
+            None => false,
+            Some(k) => {
+                assert!(
+                    k < zephyra_winit::shader::PS_VARIANTS.len(),
+                    "{m:?} 的 PS 变体下标 {k} 越界（表长 {}）",
+                    zephyra_winit::shader::PS_VARIANTS.len()
+                );
+                true
+            }
+        };
+        let has_coeff = m.as_coeff().is_some();
+        assert!(
+            has_ps || has_coeff,
+            "{m:?} 既没有 PS 变体也没有系数对 —— 它会静默退化成 SrcOver"
+        );
+    }
 }
 
 /// `Modulate` 的 **alpha 通道**必须走 alpha 对偶（`Cs → as`），不是颜色系数。

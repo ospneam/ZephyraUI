@@ -371,6 +371,48 @@ pub fn create_srv(
     })
 }
 
+/// 同上，但**显式**给出 SRV 格式。
+///
+/// # 为什么不复用 [`create_srv`]
+///
+/// `create_srv` 把格式钉死成 `R8G8B8A8_UNORM`，它服务的图集 / 上传图像都是那个格式。
+/// 离屏渲染目标却常是 `B8G8R8A8_UNORM`（测试里的 `offscreen_target` 就是），而
+/// **SRV 格式必须与纹理兼容** —— 拿 `R8G8B8A8` 去描述一张 `B8G8R8A8` 纹理时，
+/// `CreateShaderResourceView` 直接返回 `E_INVALIDARG`。
+///
+/// 症状极安静：调用方普遍用 `.ok()`，于是整条路径退化成"拿不到 SRV"，而画面
+/// 看起来只是"某个效果没生效"，没有任何错误码冒出来。
+pub fn create_srv_with_format(
+    device: &ID3D11Device,
+    tex: &ID3D11Texture2D,
+    format: DXGI_FORMAT,
+) -> windows::core::Result<ID3D11ShaderResourceView> {
+    let desc = D3D11_SHADER_RESOURCE_VIEW_DESC {
+        Format: format,
+        ViewDimension: D3D_SRV_DIMENSION_TEXTURE2D,
+        Anonymous: D3D11_SHADER_RESOURCE_VIEW_DESC_0 {
+            Texture2D: D3D11_TEX2D_SRV {
+                MostDetailedMip: 0,
+                MipLevels: 1,
+            },
+        },
+    };
+    let mut srv = None;
+    unsafe {
+        device.CreateShaderResourceView(
+            tex,
+            Some(&desc as *const _ as *const _),
+            Some(&mut srv as *mut _),
+        )
+    }?;
+    srv.ok_or_else(|| {
+        windows::core::Error::new(
+            windows::Win32::Foundation::E_FAIL,
+            "CreateShaderResourceView(显式格式) 成功却没给出视图",
+        )
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -26,6 +26,7 @@ use windows::Win32::Graphics::Direct3D12::*;
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_R16_UINT;
 
 use crate::quad::{self, RenderReport, Vertex};
+use zephyra_core::filter::{BlendMode, Coeff};
 use crate::shader::{self, ShaderError, Shaders};
 use crate::surface::{create_resource, heap_props, DescriptorHeap, SurfaceError};
 
@@ -59,7 +60,13 @@ struct UploadedTexture {
 /// 无法回答（同 `zephyra-winit::renderer` 的取舍）。
 pub struct Renderer {
     root_signature: ID3D12RootSignature,
-    pso: ID3D12PipelineState,
+    /// PSO 缓存，键 = (PS 变体下标, 混合模式下标, MSAA 采样数)。
+    ///
+    /// D3D12 的混合状态烤在 PSO 里，所以换混合模式必然换 PSO。懒建：
+    /// 绝大多数帧只用默认那一个，全量预建是纯粹的启动开销。
+    psos: std::cell::RefCell<
+        std::collections::HashMap<(usize, usize, u32), ID3D12PipelineState>,
+    >,
     /// shader 可见的 CBV/SRV 堆。着色器的 `t0` 绑到其中第 0 号。
     srv_heap: DescriptorHeap,
     /// 图集的 SRV 在 `srv_heap` 里的位置（恒为 0）。
@@ -91,6 +98,16 @@ pub struct Renderer {
     /// 必须活得比 `record_upload_atlas` 记录的那次 `CopyTextureRegion` 久 —— 释放了
     /// 就等于让 GPU 去读一段已经归还给驱动的内存。所以挂在渲染器上，由下一次上传替换。
     atlas_staging: Option<UploadBuffer>,
+    /// 输入布局（**持有** `SemanticName` 的内存）。
+    ///
+    /// ⚠ 只存 `descs()` 返回的**描述符数组**是不行的：那些 `SemanticName` 是指向
+    /// `InputElement` 内部缓冲的**裸指针**，而 `Shaders` 在 `new` 结束时就销毁了。
+    /// 悬空指针不会立刻炸 —— `CreateGraphicsPipelineState` 读到已释放内存后
+    /// **不确定地**给 `E_INVALIDARG`，于是症状是「有时建得出有时建不出」，而且
+    /// **每次挂的是不同的模式**。见 `InputLayout::owners` 的注释。
+    elements: shader::InputLayout,
+    /// MSAA 采样数。PSO 的 `SampleDesc` 必须与渲染目标一致，见 `create_pso`。
+    samples: u32,
     /// 设备。
     device: ID3D12Device,
     /// 已上传的图像纹理（所有权）。**必须活得比画它的那些命令久**。
@@ -250,6 +267,149 @@ impl Default for TextureTable {
     }
 }
 
+/// `Coeff` 到 D3D12 的**颜色**通道混合因子。
+///
+/// 与 D3D11 那边的 `d3d11_factor` **逐项一致**：两边各写一份是刻意的（各自的后端
+/// 枚举类型不同），但内容必须一样，否则同一个模式在两个后端上画出来不一样。
+///
+/// **穷尽**匹配：漏一个分支是编译错误，而不是运行时才暴露的静默错误。
+fn d3d12_factor(c: Coeff) -> D3D12_BLEND {
+    match c {
+        Coeff::Zero => D3D12_BLEND_ZERO,
+        Coeff::One => D3D12_BLEND_ONE,
+        Coeff::SrcColor => D3D12_BLEND_SRC_COLOR,
+        Coeff::OneMinusSrcColor => D3D12_BLEND_INV_SRC_COLOR,
+        Coeff::DstColor => D3D12_BLEND_DEST_COLOR,
+        Coeff::OneMinusDstColor => D3D12_BLEND_INV_DEST_COLOR,
+        Coeff::SrcAlpha => D3D12_BLEND_SRC_ALPHA,
+        Coeff::OneMinusSrcAlpha => D3D12_BLEND_INV_SRC_ALPHA,
+        Coeff::DstAlpha => D3D12_BLEND_DEST_ALPHA,
+        Coeff::OneMinusDstAlpha => D3D12_BLEND_INV_DEST_ALPHA,
+    }
+}
+
+/// `Coeff` 到 D3D12 的 **alpha 通道**混合因子。
+///
+/// # 为什么不能直接复用 [`d3d12_factor`]
+///
+/// D3D11 与 D3D12 在这一点上**同样限制**：alpha 通道只接受
+/// `ZERO` / `ONE` / `SRC_ALPHA` / `INV_SRC_ALPHA` / `DEST_ALPHA` / `INV_DEST_ALPHA`，
+/// 颜色因子（`SRC_COLOR` 等）在 alpha 通道上是非法的 —— D3D12 会在
+/// `CreateGraphicsPipelineState` 处给 `E_INVALIDARG`，症状同样是「建不出 PSO」
+/// 却不指出是哪个字段。
+///
+/// 正确映射同样是"颜色系数 → 它的 alpha 对偶"（`Cs → as`，`1−Cs → 1−as`，
+/// `Cd → ad`，`1−Cd → 1−ad`）—— 这不是近似，是 Porter-Duff 算子在预乘空间下的
+/// 正确展开。见 D3D11 那边 `d3d11_alpha_factor` 的完整推导表。
+fn d3d12_alpha_factor(c: Coeff) -> D3D12_BLEND {
+    match c {
+        Coeff::Zero => D3D12_BLEND_ZERO,
+        Coeff::One => D3D12_BLEND_ONE,
+        // 颜色系数 → alpha 对偶，理由见上。
+        Coeff::SrcColor => D3D12_BLEND_SRC_ALPHA,
+        Coeff::OneMinusSrcColor => D3D12_BLEND_INV_SRC_ALPHA,
+        Coeff::DstColor => D3D12_BLEND_DEST_ALPHA,
+        Coeff::OneMinusDstColor => D3D12_BLEND_INV_DEST_ALPHA,
+        Coeff::SrcAlpha => D3D12_BLEND_SRC_ALPHA,
+        Coeff::OneMinusSrcAlpha => D3D12_BLEND_INV_SRC_ALPHA,
+        Coeff::DstAlpha => D3D12_BLEND_DEST_ALPHA,
+        Coeff::OneMinusDstAlpha => D3D12_BLEND_INV_DEST_ALPHA,
+    }
+}
+
+/// PS 合成段（可分离 / 非可分离模式、模糊、合成）用的混合状态：**`Src`**（ONE/ZERO）。
+///
+/// 那些像素着色器已经把 `dst` 算进去、写出了**最终**颜色，固定功能方程只能"原样
+/// 接受"。配成 `SrcOver` 会再叠一次 ⇒ 整体过曝。
+///
+/// D3D12 与 D3D11 的差别在这里很实在：D3D11 可以逐段换 `ID3D11BlendState`，
+/// D3D12 的混合状态**烤在 PSO 里**，所以"换混合状态"在这里等于"换 PSO"。
+const fn src_blend_desc() -> D3D12_BLEND_DESC {
+    let rt = D3D12_RENDER_TARGET_BLEND_DESC {
+        BlendEnable: windows::core::BOOL(1),
+        LogicOpEnable: windows::core::BOOL(0),
+        SrcBlend: D3D12_BLEND_ONE,
+        DestBlend: D3D12_BLEND_ZERO,
+        BlendOp: D3D12_BLEND_OP_ADD,
+        SrcBlendAlpha: D3D12_BLEND_ONE,
+        DestBlendAlpha: D3D12_BLEND_ZERO,
+        BlendOpAlpha: D3D12_BLEND_OP_ADD,
+        LogicOp: D3D12_LOGIC_OP_NOOP,
+        // windows-rs 0.62 把写掩码声明成了**裸 `u8`**（不是 `D3D12_COLOR_WRITE_ENABLE`），
+        // 与 D3D11 那边的怪癖同源。
+        RenderTargetWriteMask: D3D12_COLOR_WRITE_ENABLE_ALL.0 as u8,
+    };
+    D3D12_BLEND_DESC {
+        AlphaToCoverageEnable: windows::core::BOOL(0),
+        IndependentBlendEnable: windows::core::BOOL(0),
+        RenderTarget: [rt; 8],
+    }
+}
+
+/// 第 `mode` 号混合模式的 D3D12 混合描述。
+///
+/// 系数可表达的模式从 [`BlendMode::as_coeff`] **推导**（绝不手抄一张表 —— 手抄
+/// 是本仓最出过事的一类错误：改了 `as_coeff` 忘了同步拷贝的表，两边静默漂移）；
+/// 其余的用 [`src_blend_desc`]。
+fn blend_desc_for(mode: usize) -> Option<D3D12_BLEND_DESC> {
+    let bm = mode_by_index(mode)?;
+    let (ks, kd) = bm.as_coeff()?;
+    let rt = D3D12_RENDER_TARGET_BLEND_DESC {
+        BlendEnable: windows::core::BOOL(1),
+        LogicOpEnable: windows::core::BOOL(0),
+        SrcBlend: d3d12_factor(ks),
+        DestBlend: d3d12_factor(kd),
+        BlendOp: D3D12_BLEND_OP_ADD,
+        SrcBlendAlpha: d3d12_alpha_factor(ks),
+        DestBlendAlpha: d3d12_alpha_factor(kd),
+        BlendOpAlpha: D3D12_BLEND_OP_ADD,
+        LogicOp: D3D12_LOGIC_OP_NOOP,
+        RenderTargetWriteMask: D3D12_COLOR_WRITE_ENABLE_ALL.0 as u8,
+    };
+    Some(D3D12_BLEND_DESC {
+        AlphaToCoverageEnable: windows::core::BOOL(0),
+        IndependentBlendEnable: windows::core::BOOL(0),
+        RenderTarget: [rt; 8],
+    })
+}
+
+/// 按**枚举声明顺序**取第 `i` 个混合模式（与 D3D11 那边 `mode_by_index` 一致）。
+fn mode_by_index(i: usize) -> Option<BlendMode> {
+    let all = [
+        BlendMode::Clear,
+        BlendMode::Src,
+        BlendMode::Dst,
+        BlendMode::SrcOver,
+        BlendMode::DstOver,
+        BlendMode::SrcIn,
+        BlendMode::DstIn,
+        BlendMode::SrcOut,
+        BlendMode::DstOut,
+        BlendMode::SrcATop,
+        BlendMode::DstATop,
+        BlendMode::Xor,
+        BlendMode::Plus,
+        BlendMode::Modulate,
+        BlendMode::Screen,
+        BlendMode::Overlay,
+        BlendMode::Darken,
+        BlendMode::Lighten,
+        BlendMode::ColorDodge,
+        BlendMode::ColorBurn,
+        BlendMode::HardLight,
+        BlendMode::SoftLight,
+        BlendMode::Difference,
+        BlendMode::Exclusion,
+        BlendMode::Multiply,
+        BlendMode::Hue,
+        BlendMode::Saturation,
+        BlendMode::Color,
+        BlendMode::Luminosity,
+    ];
+    all.get(i).copied()
+}
+
+
 impl Renderer {
     /// 建根签名、PSO、描述符堆、顶点/索引缓冲与图集纹理。
     ///
@@ -282,8 +442,15 @@ impl Renderer {
             .map_err(|e| ShaderError::Create("建根签名", e))?;
 
         // ---- PSO ----
-        let pso = Self::create_pso(device, &root_signature, shaders.elements.descs(), samples)
+        // PSO 全部懒建 —— 见 `pso_for`。这里只把**默认**那个先建出来，`Renderer::new`
+        // 一旦失败就能立刻报错，而不是等到第一帧才炸。
+        let pso = Self::create_pso(device, &root_signature, shaders.elements.descs(), 0,
+            zephyra_core::filter::BlendMode::SrcOver as usize, samples)
             .map_err(|e| ShaderError::Create("建 PSO", e))?;
+        let psos = std::collections::HashMap::from([(
+            (0usize, zephyra_core::filter::BlendMode::SrcOver as usize, samples),
+            pso.clone(),
+        )]);
 
         // ---- 顶点 / 索引缓冲 ----
         //
@@ -308,7 +475,7 @@ impl Renderer {
 
         Ok(Self {
             root_signature,
-            pso,
+            psos: std::cell::RefCell::new(psos),
             srv_heap,
             atlas_srv_slot: 0,
             vertex,
@@ -321,28 +488,65 @@ impl Renderer {
             device: device.clone(),
             textures: Vec::new(),
             next_texture_slot: 1,
+            elements: shaders.elements,
+            samples,
         })
     }
 
-    /// 建根签名：一个 `t0` 描述符表 + 一个 `s0` 静态采样器。
+    /// 根签名：两个描述符表（`t0` 主纹理 + `t1` 目标副本）+ 一个静态采样器。
+    ///
+    /// # 为什么要有 `t1`
+    ///
+    /// 可分离 / 非可分离混合模式必须读 `dst`，而 D3D12 **不能采样当前绑定的 RTV**
+    /// （D3D11 同理）—— 所以宿主先把渲染目标拷进一张单采样纹理，再当 SRV 绑到
+    /// `t1`。HLSL 里 `Texture2D<float4> g_dst : register(t1)` 说的就是它。
+    ///
+    /// # 为什么是**两个**表而不是一个表放两个描述符
+    ///
+    /// 一个表里的描述符在堆里必须**连续**，那意味着每帧都要把"当前纹理"的描述符
+    /// `CopyDescriptorsSimple` 到目标副本旁边 —— 纯粹为了相邻而做一次拷贝。
+    /// 两个表各自指向堆里任意的槽位，一次 `SetGraphicsRootDescriptorTable` 就够。
     fn create_root_signature(device: &ID3D12Device) -> Result<ID3D12RootSignature, SurfaceError> {
-        let ranges = [D3D12_DESCRIPTOR_RANGE {
-            RangeType: D3D12_DESCRIPTOR_RANGE_TYPE_SRV,
-            NumDescriptors: 1,
-            BaseShaderRegister: 0, // 与 `Texture2D g_tex : register(t0)` 对应
-            RegisterSpace: 0,
-            OffsetInDescriptorsFromTableStart: 0,
-        }];
-        let params = [D3D12_ROOT_PARAMETER {
-            ParameterType: D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE,
-            Anonymous: D3D12_ROOT_PARAMETER_0 {
-                DescriptorTable: D3D12_ROOT_DESCRIPTOR_TABLE {
-                    NumDescriptorRanges: 1,
-                    pDescriptorRanges: ranges.as_ptr(),
-                },
+        let ranges = [
+            D3D12_DESCRIPTOR_RANGE {
+                RangeType: D3D12_DESCRIPTOR_RANGE_TYPE_SRV,
+                NumDescriptors: 1,
+                BaseShaderRegister: 0, // 对 `Texture2D g_tex : register(t0)` 
+                RegisterSpace: 0,
+                OffsetInDescriptorsFromTableStart: 0,
             },
-            ShaderVisibility: D3D12_SHADER_VISIBILITY_PIXEL,
-        }];
+            D3D12_DESCRIPTOR_RANGE {
+                RangeType: D3D12_DESCRIPTOR_RANGE_TYPE_SRV,
+                NumDescriptors: 1,
+                BaseShaderRegister: 1, // 对 `Texture2D g_dst : register(t1)`
+                RegisterSpace: 0,
+                OffsetInDescriptorsFromTableStart: 0,
+            },
+        ];
+        // 两个参数各取 `ranges` 的一个元素。`params` 里只存指针，所以 `ranges`
+        // 必须活到 `D3D12SerializeRootSignature` 之后 —— 它在本函数作用域里，满足。
+        let params = [
+            D3D12_ROOT_PARAMETER {
+                ParameterType: D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE,
+                Anonymous: D3D12_ROOT_PARAMETER_0 {
+                    DescriptorTable: D3D12_ROOT_DESCRIPTOR_TABLE {
+                        NumDescriptorRanges: 1,
+                        pDescriptorRanges: &ranges[0],
+                    },
+                },
+                ShaderVisibility: D3D12_SHADER_VISIBILITY_PIXEL,
+            },
+            D3D12_ROOT_PARAMETER {
+                ParameterType: D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE,
+                Anonymous: D3D12_ROOT_PARAMETER_0 {
+                    DescriptorTable: D3D12_ROOT_DESCRIPTOR_TABLE {
+                        NumDescriptorRanges: 1,
+                        pDescriptorRanges: &ranges[1],
+                    },
+                },
+                ShaderVisibility: D3D12_SHADER_VISIBILITY_PIXEL,
+            },
+        ];
         // 静态采样器：与 `SamplerState g_smp : register(s0)` 对应。
         //
         // 过滤取线性、寻址取夹取（clamp）。夹取而非环绕：字形图集的 UV 在 [0,1] 内，
@@ -364,7 +568,7 @@ impl Renderer {
             ShaderVisibility: D3D12_SHADER_VISIBILITY_PIXEL,
         };
         let desc = D3D12_ROOT_SIGNATURE_DESC {
-            NumParameters: 1,
+            NumParameters: 2,
             pParameters: params.as_ptr(),
             NumStaticSamplers: 1,
             pStaticSamplers: &sampler,
@@ -416,39 +620,34 @@ impl Renderer {
         }
     }
 
-    /// 建图形 PSO：着色器字节码 + 输入布局 + 混合 + 光栅化。
+    /// 建图形 PSO：**指定**的像素着色器变体 + **指定**的混合模式。
+    ///
+    /// # 为什么 PSO 要按 (PS 变体, 混合模式, 采样数) 三元组建
+    ///
+    /// D3D12 的混合状态**烤在 PSO 里**，不像 D3D11 那样能逐段换
+    /// `ID3D11BlendState`。于是"换混合模式"在这里必然等于"换 PSO"。再叠加
+    /// 每个模式用哪个 PS 变体（系数可表达的那 15 个都用 `PSMain`，其余 14 个各用
+    /// 自己的合成变体）与 MSAA 采样数（`MultisampleEnable` 与 `SampleDesc` 都进
+    /// PSO），就是一个三元组。
+    ///
+    /// 数量上限 15 + 14 = 29（× 采样数），全部懒建 —— 绝大多数帧只用默认那一个。
     fn create_pso(
         device: &ID3D12Device,
         root_signature: &ID3D12RootSignature,
         elements: &[D3D12_INPUT_ELEMENT_DESC],
+        ps_index: usize,
+        mode: usize,
         samples: u32,
     ) -> Result<ID3D12PipelineState, SurfaceError> {
         // 混合状态与 D3D11 版**逐项一致**（两边各写一份，所以这里必须同步改）。
         //
         // **预乘 alpha**：顶点色在 `quad::Vertex::quad` 里已乘过自己的 alpha，所以
         // `SrcOver` 的颜色因子是 `ONE` —— 再乘一次 `SRC_ALPHA` 就是双重预乘，
-        // 表现为半透明区域整体发暗。alpha 通道 `ONE/INV_SRC_ALPHA`：
-        // `a = as + (1-as)·ad`，这正是交换链用 `DXGI_ALPHA_MODE_PREMULTIPLIED`
-        // 时该有的形状。
-        let rt_blend = D3D12_RENDER_TARGET_BLEND_DESC {
-            BlendEnable: windows::core::BOOL(1),
-            LogicOpEnable: windows::core::BOOL(0),
-            SrcBlend: D3D12_BLEND_ONE,
-            DestBlend: D3D12_BLEND_INV_SRC_ALPHA,
-            BlendOp: D3D12_BLEND_OP_ADD,
-            SrcBlendAlpha: D3D12_BLEND_ONE,
-            DestBlendAlpha: D3D12_BLEND_INV_SRC_ALPHA,
-            BlendOpAlpha: D3D12_BLEND_OP_ADD,
-            LogicOp: D3D12_LOGIC_OP_NOOP,
-            // windows-rs 0.62 把写掩码声明成了**裸 `u8`**（不是 `D3D12_COLOR_WRITE_ENABLE`），
-            // 与 D3D11 那边的怪癖同源。
-            RenderTargetWriteMask: D3D12_COLOR_WRITE_ENABLE_ALL.0 as u8,
-        };
-        let blend = D3D12_BLEND_DESC {
-            AlphaToCoverageEnable: windows::core::BOOL(0),
-            IndependentBlendEnable: windows::core::BOOL(0),
-            RenderTarget: [rt_blend; 8],
-        };
+        // 表现为半透明区域整体发暗。
+        let blend = blend_desc_for(mode).unwrap_or_else(src_blend_desc);
+        let (name, ps_bytes) = shader::PS_VARIANTS
+            .get(ps_index)
+            .unwrap_or_else(|| panic!("ps_index {ps_index} 越界（表长 {}）", shader::PS_VARIANTS.len()));
 
         // 光栅化：关背面剔除 —— 圆角 SDF 在边缘产生的三角形可能退化，剔除会让圆角
         // 出现缺口（表现为四边形的角被啃掉一块）。
@@ -463,10 +662,6 @@ impl Renderer {
             // ⚠ MSAA。**必须**与实际绑定的渲染目标采样数一致 —— D3D12 在
             // `OMSetRenderTargets` / `DrawIndexedInstanced` 处逐项比对，不一致时
             // 报「render target format does not match」而画面全错。
-            //
-            // `samples` 来自宿主传进来的 [`crate::swapchain::Swapchain::samples`]，
-            // 所以两边必然同源。写成常量 1 而实际绑单采样是本条最危险的写法：
-            // D3D12 会**解除渲染目标绑定**，症状是「窗口全黑且零 HRESULT」。
             MultisampleEnable: windows::core::BOOL((samples > 1) as i32),
             AntialiasedLineEnable: windows::core::BOOL(0),
             ForcedSampleCount: 0,
@@ -482,18 +677,17 @@ impl Renderer {
                 BytecodeLength: shader::VS_BYTECODE.len(),
             },
             PS: D3D12_SHADER_BYTECODE {
-                pShaderBytecode: shader::PS_BYTECODE.as_ptr() as *const _,
-                BytecodeLength: shader::PS_BYTECODE.len(),
+                pShaderBytecode: ps_bytes.as_ptr() as *const _,
+                BytecodeLength: ps_bytes.len(),
             },
             DS: D3D12_SHADER_BYTECODE::default(),
             HS: D3D12_SHADER_BYTECODE::default(),
             GS: D3D12_SHADER_BYTECODE::default(),
             StreamOutput: D3D12_STREAM_OUTPUT_DESC::default(),
             BlendState: blend,
-            SampleMask: u32::MAX, // 全采样掩码（D3D12 必填，非 0 即「什么都不画」）
+            SampleMask: u32::MAX, // 全采样掩码（D3D12 必填，传 0 等于「什么都不画」）
             RasterizerState: raster,
-            // 不用深度缓冲：UI 全部靠 painter's algorithm 排序，D3D12 没有深度缓冲
-            // 就没有「没清深度导致残留」这类问题。
+            // 不用深度缓冲：UI 全部靠 painter's algorithm 排序。
             DepthStencilState: D3D12_DEPTH_STENCIL_DESC::default(),
             InputLayout: D3D12_INPUT_LAYOUT_DESC {
                 pInputElementDescs: elements.as_ptr(),
@@ -507,11 +701,6 @@ impl Renderer {
             // 调试层的原话：
             //     "ID3D12Device::CreateGraphicsPipelineState: RTVFormats[] must be
             //      DXGI_FORMAT_UNKNOWN for all indices >= NumRenderTargets."
-            //
-            // 之前 8 个槽全填了 `R8G8B8A8_UNORM`，于是本机每一个 PSO 都被
-            // `E_INVALIDARG` 拒掉 —— 而**没有任何提示指向这个字段**。这是同一个模式
-            // 的第六次：把自己写的非法组合当成了环境的静默失效。证据链与复现命令见
-            // `tests/debug_probe.rs`。
             RTVFormats: {
                 let mut f = [windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_UNKNOWN; 8];
                 f[0] = windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_R8G8B8A8_UNORM;
@@ -519,10 +708,6 @@ impl Renderer {
             },
             DSVFormat: windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_UNKNOWN,
             // ⚠ 必须与 `MultisampleEnable` 和实际 RTV 的 `SampleDesc` **三者一致**。
-            //
-            // D3D12 允许 PSO 的 Count 大于 RTV 的（那样只是不做 MSAA），但**不允许
-            // 小于** —— 后者在 `CreateGraphicsPipelineState` 阶段就可能被拒，或在
-            // 绘制时逐槽报「format does not match」。
             SampleDesc: windows::Win32::Graphics::Dxgi::Common::DXGI_SAMPLE_DESC {
                 Count: samples,
                 Quality: 0,
@@ -533,10 +718,37 @@ impl Renderer {
             Flags: D3D12_PIPELINE_STATE_FLAG_NONE,
         };
         unsafe {
-            device
-                .CreateGraphicsPipelineState(&desc)
-                .map_err(|e| SurfaceError::new("CreateGraphicsPipelineState", e))
+            device.CreateGraphicsPipelineState(&desc).map_err(|e| {
+                SurfaceError::new(
+                    "CreateGraphicsPipelineState",
+                    windows::core::Error::new(
+                        e.code(),
+                        format!("ps={name} mode={mode} samples={samples}: {e}"),
+                    ),
+                )
+            })
         }
+    }
+
+    /// 取（必要时建）`(PS 变体, 混合模式, 采样数)` 对应的 PSO。
+    ///
+    /// 懒建 + 缓存：绝大多数帧只用默认那一个，把 29 × 采样数 个 PSO 全在
+    /// `Renderer::new` 里建出来是纯粹的启动开销。
+    fn pso_for(
+        &self,
+        device: &ID3D12Device,
+        elements: &[D3D12_INPUT_ELEMENT_DESC],
+        ps_index: usize,
+        mode: usize,
+        samples: u32,
+    ) -> Result<ID3D12PipelineState, SurfaceError> {
+        let key = (ps_index, mode, samples);
+        if let Some(p) = self.psos.borrow().get(&key) {
+            return Ok(p.clone());
+        }
+        let pso = Self::create_pso(device, &self.root_signature, elements, ps_index, mode, samples)?;
+        self.psos.borrow_mut().insert(key, pso.clone());
+        Ok(pso)
     }
 
     /// 图集边长（像素）。
@@ -885,13 +1097,13 @@ impl Renderer {
         let textures_ref = &textures;
         let mut report = quad::expand_into(display_list, size, &|n| textures_ref.contains(n), &mut self.scratch);
         let scratch = &self.scratch;
-        let image_first = scratch.image_first;
+        // 改成逐段回放后，`image_first` / `path_tris` / `batches` 这三个旧
+        // 「三段式」的量不再需要 —— 留着只会让人误以为还有三段式在起作用。
+        let path_first = scratch.path_first;
         let path_index_start = scratch.path_index_start;
         let all = &scratch.vertices;
         let indices = &scratch.indices;
-        let path_tris = scratch.paths.len() / 3;
         report.vertex_bytes = (all.len() * std::mem::size_of::<Vertex>()) as u64;
-        let batches: &[(String, u32)] = &scratch.batches;
 
         // ---- 2. 顶点缓冲按需增长，但不缩 ----
         //
@@ -937,13 +1149,19 @@ impl Renderer {
         self.vertex.record_upload(list, bytemuck::cast_slice(&all));
         self.index.record_upload(list, bytemuck::cast_slice(&indices));
 
-        // ---- 5. 绑定管线状态 ----
+        // ---- 5. 绑定根签名与描述符堆 ----
+        //
+        // PSO **不**在这里绑：混合模式逐段不同，而 D3D12 的混合状态烤在 PSO 里，
+        // 所以绑 PSO 移到第 9 步的逐段循环里（见那里关于「成对决定」的说明）。
         unsafe {
             list.SetGraphicsRootSignature(&self.root_signature);
-            list.SetPipelineState(&self.pso);
             list.SetDescriptorHeaps(&[Some(self.srv_heap.heap.clone())]);
             // 根签名里 `t0` 绑到 `srv_heap` 第 `atlas_srv_slot` 号。
             list.SetGraphicsRootDescriptorTable(0, self.srv_heap.gpu(self.atlas_srv_slot)?);
+            // `t1`（目标副本）也必须绑着**有效**对象 —— 与 `t0` 同理，悬空的 SRV
+            // 在某些驱动上会让后续采样返回未定义值。绑图集兜住（PS 合成模式的
+            // 接线尚未在此后端完成，见第 9 步的说明）。
+            list.SetGraphicsRootDescriptorTable(1, self.srv_heap.gpu(self.atlas_srv_slot)?);
         }
 
         // ---- 6. 视口 + 裁剪（必须成对）----
@@ -1041,70 +1259,77 @@ impl Renderer {
             }));
         }
 
-        // ---- 9. 矩形 + 字形：一次 draw ----
+        // ---- 9. 逐段回放：一段一个 draw ----
         //
-        // 它们不采样纹理（`kind == 0` 那条分支根本不看 `g_tex`），但片元着色器仍然声明
-        // 了 `g_tex`，所以 `t0` 必须绑着**有效**对象 —— 已由第 5 步绑图集兜住。
-        let solid_quads = (scratch.solid.len() / 4) as u32;
-        if solid_quads > 0 {
-            // `DrawIndexedInstanced` 而非 `DrawIndexed`：D3D12 只有带实例参数的版本
-            // （`ID3D12GraphicsCommandList` 没有 `DrawIndexed`）。这里 `instancecount`
-            // 恒为 1 —— 实例化在这里没有意义，索引已逐四边形展开。
-            unsafe {
-                list.DrawIndexedInstanced(solid_quads * 6, 1, 0, 0, 0);
-            }
-        }
-
-        // ---- 10. 图像：每种纹理一批 ----
+        // # 为什么按 [`quad::DrawRun`] 走而不是按"矩形/图像/多边形"分三段
         //
-        // 一批一次 draw，因为一次 draw 只能绑一张 SRV。批内是 `DisplayList` 的连续
-        // 切片（顺序由 `quad::expand` 保证），所以把不连续的同纹理合批会改变可见结果
-        // —— 半透明图像最明显。
+        // 混合模式是**逐命令**的属性：同一个 `DisplayList` 里完全可能前一条是
+        // `SrcOver`、后一条是 `Multiply`。按图元类型分三段的话，中间那段会被
+        // 拆到别处，绘制顺序就不再等于 `DisplayList` 的顺序 —— 半透明一多，
+        // 结果就错。所以按"连续同纹理 + 同模式"切段（`expand` 的 `runs`），
+        // 每段一次 draw，顺序天然保持。
         //
-        // `cursor` 是**四边形**计数（`batch.batches` 里记的是顶点数），换算成索引偏移
-        // 要乘 6。混用这两个单位是本文件最容易搞错的地方：错的时候 `startindex` 仍是
-        // 个合法值，只是不报错地画错位置。
-        let mut cursor_quads = image_first / 4;
-        for (name, n) in batches {
-            if *n == 0 {
+        // # 为什么每段都要 `SetPipelineState`
+        //
+        // D3D12 的混合状态**烤在 PSO 里**，不能像 D3D11 那样只换
+        // `OMSetBlendState`。 PSO 变体与混合模式必须**成对**决定：
+        //
+        // | 模式            | PS 变体       | 混合状态          |
+        // |-----------------|---------------|-------------------|
+        // | 系数可表达 15 个 | `PSMain`       | 该模式的系数对     |
+        // | 可分离/非可分离  | 各自的合成变体 | **`Src`**（ONE/ZERO）|
+        //
+        // 第二行为什么用 `Src`：那些 PS 已经把 `dst` 算进去、写出了**最终**颜色，
+        // 固定功能方程只能原样接受。配成 `SrcOver` 会再叠一次 ⇒ 整体过曝。
+        //
+        // PSO 按 `(PS 变体, 模式, 采样数)` 缓存（[`Renderer::pso_for`]），懒建。
+        let runs = scratch.runs();
+        for run in runs {
+            if run.vertex_count == 0 {
                 continue;
             }
-            // 顶点收集阶段已过滤掉未注册纹理，所以这里必然查得到。
-            let Some(slot) = textures.slot(name) else {
-                continue;
+            let mode = run.blend as usize;
+            let (ps_idx, pso_mode) = match shader::ps_for_blend_mode(mode) {
+                // 系数可表达：PS 只算源色，混合交给固定功能方程。
+                None => (0usize, mode),
+                // PS 合成模式：混合状态用 `Src`（`BlendMode::Src` = 1 号）。
+                // ⚠ `dst` 副本（`t1`）的接线尚未在此后端接上 —— 现在它读到的
+                // 是**未定义**内容。在接上之前，这 14 个模式不能宣称可用，
+                // 所以这里显式退回 `SrcOver` 并计入 `unimplemented_blends`，
+                // 而不是画出一个颜色错误的结果。
+                Some(_) => (0usize, zephyra_core::filter::BlendMode::SrcOver as usize),
             };
-            let quads = *n / 4;
+            let pso = self.pso_for(device, self.elements.descs(), ps_idx, pso_mode, self.samples)?;
+            // 纹理绑定。只有 `Command::Image` 逐段换；矩形 / 字形 / 多边形记
+            // `None`，绑图集兜住（`g_tex` 在 PS 里被声明，`t0` 悬空会让某些驱动
+            // 解除引用并崩溃）。
+            let slot = match &run.texture {
+                Some(name) => match textures.slot(name) {
+                    Some(s) => s,
+                    // 顶点收集阶段已过滤掉未注册纹理，这里本不该发生。
+                    None => continue,
+                },
+                None => self.atlas_srv_slot,
+            };
+            // 段落定位：`runs` 记**顶点**下标，`DrawIndexedInstanced` 要**索引**下标。
+            // 文本 4 顶点 → 6 索引（`/4*6`），路径是 1:1（每个顶点恰好被引用一次）。
+            let (index_start, index_count) = if run.first_vertex >= path_first {
+                (
+                    path_index_start + (run.first_vertex - path_first),
+                    run.vertex_count,
+                )
+            } else {
+                (
+                    (run.first_vertex / 4) * 6,
+                    (run.vertex_count / 4) * 6,
+                )
+            };
             unsafe {
+                list.SetPipelineState(&pso);
                 list.SetGraphicsRootDescriptorTable(0, self.srv_heap.gpu(slot)?);
-                list.DrawIndexedInstanced(quads * 6, 1, cursor_quads * 6, 0, 0);
-            }
-            cursor_quads += quads;
-        }
-
-        // ---- 11. 多边形：一次 draw ----
-        //
-        // 独立成段的原因：顶点数不是 4 的倍数、索引规则也不同
-        // （见 `quad::expand_indices_with_paths`）。
-        //
-        // ⚠ 同样必须把 `t0` 绑成有效对象（哪怕这一分支不读纹理）：`g_tex` 在 PS 里
-        // 被声明了，`t0` 悬空会让某些驱动解除引用并崩溃。这里重绑图集兜住。
-        if path_tris > 0 {
-            unsafe {
-                list.SetGraphicsRootDescriptorTable(0, self.srv_heap.gpu(self.atlas_srv_slot)?);
-                list.DrawIndexedInstanced(
-                    path_tris as u32 * 3,
-                    1,
-                    path_index_start,
-                    0,
-                    0,
-                );
+                list.DrawIndexedInstanced(index_count, 1, index_start, 0, 0);
             }
         }
-
-        // 图像批可能把 `t0` 留在最后一张图上。下一帧的 `record` 会重绑图集，所以不刻意
-        // 恢复 —— **但**这只在「命令列表的完整生命周期就是 `record` → `submit`」时成立。
-        // 若宿主日后复用同一条命令列表做别的绘制，这里就得补一次重绑。
-
         Ok(report)
     }
 }

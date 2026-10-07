@@ -330,7 +330,12 @@ fn render_and_readback(
             textures: &textures,
             damage: zephyra_core::frame::Damage::Full,
         })
-        .expect("记录绘制命令失败");
+        .unwrap_or_else(|e| {
+            // 失败时把调试层已存的消息全部倒出来 —— 否则只拿到一个
+            // `E_INVALIDARG`，而**到底是哪个字段非法**只在消息队列里。
+            gpu.drain_debug();
+            panic!("记录绘制命令失败: {e}");
+        });
 
     // 回读要求资源可拷贝，所以拷贝命令也**记录**进同一份列表。
     let staging = target
@@ -430,4 +435,126 @@ fn translucent_quad_composites_in_premultiplied_space_d3d12() {
             "a 应为 255（不透明底 + 半透明顶），实得 {p:?}"
         );
     }
+}
+
+/// D3D12 的混合状态**烤在 PSO 里**，所以"换混合模式"必然等于"换 PSO"。
+///
+/// # 为什么这条必须存在
+///
+/// D3D12 的 PSO 按 `(PS 变体, 混合模式, 采样数)` 三元组建并缓存。缓存的键漏了
+/// `mode`（或漏了 `samples`）时，**不报错** —— 只是第二个模式复用了第一个的
+/// PSO，画出来颜色不对。像素断言是唯一能拦住这类"键写错"的地方。
+///
+/// 背景中灰 + 源纯红，两个都走固定功能系数对（预乘空间）：
+///
+/// ```text
+///   Screen   = 1−(1−b)(1−s) = (1, 0.5, 0.5) → 255,128,128
+///   Modulate = Cs·Cd        = (0.5, 0, 0)   → 128,0,0
+/// ```
+/// 两者与默认 `SrcOver`（255,0,0）都不同，也互不相同。
+///
+/// ⚠ 别拿 `DstIn` 当判据：预乘空间里 `DstIn = Cd·as`，源不透明时它就是 `Cd`
+/// 本身 —— 结果等于"第二个四边形根本没画"，看起来像 PSO 没换，其实是算对了。
+#[test]
+fn blend_modes_switch_pso_on_d3d12() {
+    use zephyra_core::filter::BlendMode;
+    let cases: [(BlendMode, [i32; 3]); 2] = [
+        (BlendMode::Screen, [255, 128, 128]),
+        (BlendMode::Modulate, [128, 0, 0]),
+    ];
+    for (mode, want) in cases {
+        let s = SIZE as f32;
+        let mut list = DisplayList::new();
+        list.push(
+            zephyra_core::paint::SortKey {
+                layer: zephyra_core::paint::Layer::Background,
+                z: 0,
+                order: 0,
+            },
+            Command::Quad {
+                rect: zephyra_core::core::Rect::new(0.0, 0.0, s, s),
+                radius: zephyra_core::core::CornerRadius { radius: 0.0 },
+                fill: Color::rgb(0.5, 0.5, 0.5),
+                stroke: None,
+                filter: zephyra_core::filter::FilterChain::none(),
+                blend: BlendMode::default(),
+            },
+        );
+        list.push(
+            zephyra_core::paint::SortKey {
+                layer: zephyra_core::paint::Layer::Content,
+                z: 0,
+                order: 1,
+            },
+            Command::Quad {
+                rect: zephyra_core::core::Rect::new(0.0, 0.0, s, s),
+                radius: zephyra_core::core::CornerRadius { radius: 0.0 },
+                fill: Color::rgb(1.0, 0.0, 0.0),
+                stroke: None,
+                filter: zephyra_core::filter::FilterChain::none(),
+                blend: mode,
+            },
+        );
+        let (px, _) = render_and_readback(&list, Color::rgb(0.0, 0.0, 0.0));
+        let p = at_rgba(&px, SIZE / 2, SIZE / 2);
+        let got = [p[0] as i32, p[1] as i32, p[2] as i32];
+        let ok = (0..3).all(|i| (got[i] - want[i]).abs() <= 4);
+        assert!(
+            ok,
+            "{mode:?}（D3D12）应得 {:?}，实得 {got:?}（255,0,0 = PSO 没换成该模式的）",
+            want
+        );
+    }
+}
+
+/// 可分离 / 非可分离那 14 个模式在 D3D12 上**尚未**接线 `t1`（`g_dst` 的副本）。
+///
+/// # 为什么写一条"承认没做完"的测试
+///
+/// `record` 里对这 14 个模式**显式**退回 `SrcOver`，而不是绑上一个还没接好的
+/// `t1` 去画一个颜色错误的结果 —— 那比"没生效"更难排查。这条测试把当前状态
+/// 钉住：等 `t1` 接上后它就该**翻过来**改成断言真实效果，那时这条测试会失败，
+/// 正好提醒人们改断言，而不是悄悄留着一条失效的"退回"路径。
+#[test]
+fn separable_blends_fall_back_to_src_over_on_d3d12_until_dst_copy_is_wired() {
+    use zephyra_core::filter::BlendMode;
+    let s = SIZE as f32;
+    let mut list = DisplayList::new();
+    list.push(
+        zephyra_core::paint::SortKey {
+            layer: zephyra_core::paint::Layer::Background,
+            z: 0,
+            order: 0,
+        },
+        Command::Quad {
+            rect: zephyra_core::core::Rect::new(0.0, 0.0, s, s),
+            radius: zephyra_core::core::CornerRadius { radius: 0.0 },
+            fill: Color::rgb(0.5, 0.5, 0.5),
+            stroke: None,
+            filter: zephyra_core::filter::FilterChain::none(),
+            blend: BlendMode::default(),
+        },
+    );
+    list.push(
+        zephyra_core::paint::SortKey {
+            layer: zephyra_core::paint::Layer::Content,
+            z: 0,
+            order: 1,
+        },
+        Command::Quad {
+            rect: zephyra_core::core::Rect::new(0.0, 0.0, s, s),
+            radius: zephyra_core::core::CornerRadius { radius: 0.0 },
+            fill: Color::rgb(1.0, 0.0, 0.0),
+            stroke: None,
+            filter: zephyra_core::filter::FilterChain::none(),
+            blend: BlendMode::Darken,
+        },
+    );
+    let (px, _) = render_and_readback(&list, Color::rgb(0.0, 0.0, 0.0));
+    let p = at_rgba(&px, SIZE / 2, SIZE / 2);
+    assert!(
+        p[0] >= 252 && p[1] <= 3 && p[2] <= 3,
+        "Darken 在 D3D12 上应退回 SrcOver 得 (255,0,0)，实得 {p:?}。\
+         若它已经生效，请把这条测试翻过来改成断言真实效果"
+    );
 }

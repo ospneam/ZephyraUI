@@ -21,6 +21,7 @@
 
 #![cfg(windows)]
 
+use windows::core::Interface;
 use windows::Win32::Foundation::{E_FAIL, RECT};
 // ⚠ `D3D_PRIMITIVE_TOPOLOGY` 及其常量住在 `Direct3D`（D3D9 起共用的那套枚举），
 // **不在** `Direct3D11` 下，`IASetPrimitiveTopology` 的签名也收这个类型。所以
@@ -47,6 +48,7 @@ use windows::Win32::Graphics::Direct3D11::{
     D3D11_CPU_ACCESS_WRITE, D3D11_TEXTURE_ADDRESS_CLAMP, D3D11_USAGE_DEFAULT,
     D3D11_USAGE_DYNAMIC, D3D11_VIEWPORT,
     ID3D11BlendState, ID3D11Buffer, ID3D11DepthStencilView, ID3D11Device, ID3D11DeviceContext,
+
     ID3D11RasterizerState, ID3D11RenderTargetView, ID3D11SamplerState, ID3D11ShaderResourceView,
     ID3D11Texture2D,
 };
@@ -277,6 +279,8 @@ pub struct Renderer {
     ///
     /// [^r]: `zephyra_fx::quad::RenderReport`
     blends: Vec<Option<ID3D11BlendState>>,
+    /// 目标像素的单采样副本（PS 混合模式要读 dst）。见 [DstCopy]。
+    dst_copy: std::cell::RefCell<Option<DstCopy>>,
     rasterizer: ID3D11RasterizerState,
     sampler: ID3D11SamplerState,
     vertex_buffer: ID3D11Buffer,
@@ -376,6 +380,28 @@ pub struct RenderCtx<'a> {
     pub damage: Damage,
 }
 
+
+/// 目标像素的**单采样**副本。
+///
+/// # 为什么需要它
+///
+/// 可分离 / 非可分离混合模式必须读 `dst`，而 D3D11 **不能采样当前绑定的 RTV** ——
+/// 着色器读它得到的是未定义值（实测是黑），症状是「混合效果完全没发生」而不报错。
+///
+/// # 为什么是单采样
+///
+/// 交换链那条路是 MSAA（present 前 `resolve_msaa`）。MS 纹理**不能**直接
+/// `CopyResource` 到非 MS 纹理，只能 `ResolveSubresource` —— 那会对样本求平均，
+/// 于是这一段的边缘比别处略软。
+///
+/// 这是**近似**，不是静默的错：软化只发生在"用了 PS 混合模式的那一段"，
+/// 其余段仍走 MSAA 硬件。而且没有任何办法做得更好：要在 MSAA 目标上正确地读
+/// 逐样本的 `dst`，就得先 resolve，而 resolve 本身就是求平均。
+struct DstCopy {
+    tex: ID3D11Texture2D,
+    srv: ID3D11ShaderResourceView,
+    size: (u32, u32),
+}
 impl Renderer {
     /// 建管线状态、编译着色器、建图集纹理与顶点缓冲。
     ///
@@ -558,6 +584,7 @@ impl Renderer {
         Ok(Self {
             shaders,
             blends,
+            dst_copy: std::cell::RefCell::new(None),
             blend,
             rasterizer,
             sampler,
@@ -869,7 +896,7 @@ impl Renderer {
             // 把没验证过的结论写成排除依据，是纯粹的负资产。
             context.IASetInputLayout(&self.shaders.input_layout);
             context.VSSetShader(&self.shaders.vs, None);
-            context.PSSetShader(&self.shaders.ps, None);
+            context.PSSetShader(&self.shaders.ps[0], None);
             context.PSSetSamplers(0, Some(&[Some(self.sampler.clone())]));
             let stride = std::mem::size_of::<Vertex>() as u32;
             let offset = 0u32;
@@ -922,14 +949,59 @@ impl Renderer {
             if run.vertex_count == 0 {
                 continue;
             }
-            // 混合状态。`None` = 该模式还不能用系数表达（11 个可分离 + 4 个非可分离），
-            // 退回 `SrcOver` 并由 `RenderReport::unimplemented_blends` 记一笔。
+            // ⚠ 混合模式**逐段**决定两样东西：PS 变体与混合状态。这两样必须**成对**决定 ——
+            // 只换其一的后果是"模式看起来没生效"，而且没有任何错误。
             //
-            // ⚠ 退回而不是**跳过**：跳过会让元素凭空消失，比"效果没生效"更难排查。
-            let blend = match &self.blends[run.blend as usize] {
-                Some(b) => b,
-                None => &self.blend,
+            // | 模式            | PS 变体        | 混合状态        |
+            // |-----------------|----------------|-----------------|
+            // | 系数可表达 15 个 | `PSMain`        | 该模式的系数对     |
+            // | 可分离/非可分离  | 各自的合成变体  | **`Src`**（ONE/ZERO）|
+            //
+            // 第二行为什么是 `Src`：那些 PS 已经把 `dst` 算进去、写出了**最终**颜色，
+            // 固定功能方程只能"原样接受"。用 `SrcOver` 会再叠一次 ⇒ 整体过曝。
+            let mode = run.blend as usize;
+            let ps_variant = crate::shader::ps_for_blend_mode(mode);
+            let (ps_idx, blend, dst_srv) = match ps_variant {
+                // 系数可表达：PS 只算源色，混合交给固定功能方程。
+                // `None` = 后面不必再绑 `g_dst`（`PSMain` 不读它）。
+                None => (
+                    0usize,
+                    self.blends[mode].clone().unwrap_or_else(|| self.blend.clone()),
+                    None,
+                ),
+                // PS 合成模式：需要 `dst` 的副本，绑到 **t1**（`g_dst` 的槽位）。
+                Some(k) => match self.refresh_dst_copy(device, context, rtv, size) {
+                    Some(srv) => {
+                        // `blends[1]` 是 `BlendMode::Src` = `(One, Zero)`，正好是
+                        // "原样接受 PS 的输出"。
+                        (
+                            k,
+                            self.blends[1].clone().unwrap_or_else(|| self.blend.clone()),
+                            Some(srv),
+                        )
+                    }
+                    // 建不出目标副本 ⇒ 退回 `SrcOver` 而不是整帧崩。
+                    None => (0usize, self.blend.clone(), None),
+                },
             };
+            // 绑 `g_dst`。
+            //
+            // ⚠ 必须绑在 **每段** 之前而不是帧首一次：可分离 / 非可分离模式要读的
+            // `dst` 已经含**前面各段**的结果，只在帧首拷一次的话第二段起全都基于
+            // 帧首的目标算。`per_run_ps_switching_uses_the_updated_destination`
+            // 钉住这条。
+            //
+            // `None` 时也要显式解绑 t1：上一段用 PS 合成模式、这一段不用时，
+            // 残留的 SRV 会让绑定点错位（本段读 t0 就变成读上一段的目标）。
+            unsafe {
+                // `Some(&[…])` 里放**拥有所有权**的视图（D3D11 会 AddRef），
+                // 不是引用 —— 传引用会拿到 `Option<&ID3D11ShaderResourceView>`。
+                let t1: Option<ID3D11ShaderResourceView> = dst_srv.clone();
+                context.PSSetShaderResources(1, Some(&[t1]));
+            }
+            unsafe {
+                context.PSSetShader(&self.shaders.ps[ps_idx], None);
+            }
             // 纹理绑定。只有 `Command::Image` 逐段换绑定；矩形 / 字形 / 多边形记
             // `None`，绑图集兜住（片元着色器仍然声明了 `g_tex`，缺 SRV 时某些驱动
             // 会解除引用并崩溃 —— 这是本文件另一处实测踩过的静默失败）。
@@ -959,7 +1031,7 @@ impl Renderer {
                 )
             };
             unsafe {
-                context.OMSetBlendState(blend, None, 0xFFFF_FFFF);
+                context.OMSetBlendState(&blend, None, 0xFFFF_FFFF);
                 context.PSSetShaderResources(0, Some(&[Some(srv)]));
                 // `DrawIndexed` 而**不是** `DrawIndexedInstanced`：索引里已经逐四边形
                 // 加好了顶点基址（见 `quad::expand_indices`）。
@@ -967,6 +1039,84 @@ impl Renderer {
             }
         }
         report
+    }
+
+
+
+    /// 把当前 RTT 的内容取到一张可采样纹理，返回它的 SRV。
+    ///
+    /// 复用同一张纹理（按尺寸），所以稳态零分配。尺寸变了就重建 —— 那说明窗口
+    /// 改了大小，本就该重新分配。
+    ///
+    /// 建不出来（`None`）时调用方退回 `SrcOver`：宁可混合模式不生效，也不要整帧崩。
+    fn refresh_dst_copy(
+        &self,
+        device: &ID3D11Device,
+        context: &ID3D11DeviceContext,
+        rtv: &ID3D11RenderTargetView,
+        size: (u32, u32),
+    ) -> Option<ID3D11ShaderResourceView> {
+        use windows::Win32::Graphics::Direct3D11::{
+            D3D11_BIND_SHADER_RESOURCE, D3D11_RESOURCE_MISC_SHARED, D3D11_TEXTURE2D_DESC,
+            D3D11_USAGE_DEFAULT,
+        };
+        use windows::Win32::Graphics::Dxgi::Common::DXGI_SAMPLE_DESC;
+
+        if size.0 == 0 || size.1 == 0 {
+            return None;
+        }
+        // 目标的格式与采样数从**纹理**读，而不是从 RTV —— `ID3D11RenderTargetView`
+        // 在 windows 0.62 上没有 `GetDesc`。
+        //
+        // 格式必须一致，否则 `CopyResource` 拒绝（源与目标格式不同），而 SRV 的
+        // 格式还必须与纹理一致，否则采样结果整体错位。
+        let src = unsafe { rtv.GetResource() }.ok()?;
+        let src_tex: ID3D11Texture2D = src.cast().ok()?;
+        // ⚠ `ID3D11Texture2D::GetDesc` 在 windows 0.62 上是**出参**形式
+        // （`GetDesc(&mut desc)`），不是返回 `D3D11_TEXTURE2D_DESC`。
+        // 按后者写会编译成"调用了一个需要 1 个参数的方法"——错误信息完全不指向它。
+        let mut tex_desc = D3D11_TEXTURE2D_DESC::default();
+        unsafe { src_tex.GetDesc(&mut tex_desc) };
+
+        let mut slot = self.dst_copy.borrow_mut();
+        if slot.as_ref().is_none_or(|d| d.size != size) {
+            let desc = D3D11_TEXTURE2D_DESC {
+                Width: size.0,
+                Height: size.1,
+                MipLevels: 1,
+                ArraySize: 1,
+                Format: tex_desc.Format,
+                // **必须**单采样：MS 纹理不能当 `CopyDestination`。
+                SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+                Usage: D3D11_USAGE_DEFAULT,
+                BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
+                CPUAccessFlags: 0,
+                MiscFlags: D3D11_RESOURCE_MISC_SHARED.0 as u32,
+            };
+            let mut tex = None;
+            unsafe { device.CreateTexture2D(&desc, None, Some(&mut tex as *mut _)) }.ok()?;
+            let tex = tex?;
+            // 格式必须跟着纹理走 —— 见 `create_srv_with_format` 的文档：拿
+            // `R8G8B8A8` 去描述 `B8G8R8A8` 的纹理会让 `CreateShaderResourceView`
+            // 直接失败，而这个失败一路被 `.ok()` 吞掉，最终表现为"效果没生效"。
+            let srv = crate::texture::create_srv_with_format(device, &tex, tex_desc.Format).ok()?;
+            *slot = Some(DstCopy { tex, srv, size });
+        }
+        let d = slot.as_ref()?;
+
+        // 单采样目标 ⇒ 直接拷贝。
+        //
+        // MSAA 目标 ⇒ 必须 `ResolveSubresource`：`CopyResource` 在 MS→非 MS 上是
+        // **非法**的（D3D11 给 `E_INVALIDARG`；更糟的是某些驱动只警告就继续，于是
+        // 画面停在上一帧的内容上 —— 症状是"混合效果看起来生效了但慢一拍"）。
+        unsafe {
+            if tex_desc.SampleDesc.Count > 1 {
+                context.ResolveSubresource(&d.tex, 0, &src_tex, 0, tex_desc.Format);
+            } else {
+                context.CopyResource(&d.tex, &src_tex);
+            }
+        }
+        Some(d.srv.clone())
     }
 
     /// 把顶点写进缓冲并解除映射。
