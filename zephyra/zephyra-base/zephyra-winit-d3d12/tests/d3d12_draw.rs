@@ -298,3 +298,136 @@ fn color_hist(pixels: &[u8]) -> std::collections::BTreeMap<[u8; 4], usize> {
     }
     m
 }
+/// D3D12 的精简夹具：渲染一帧并回读像素。
+///
+/// # 为什么单独开一个而不是往那个巨型测试里塞
+///
+/// `d3d12_draw.rs` 原本只有一个测试，自己管帧生命周期 / MSAA 目标 / PSO / 覆盖率
+/// 阈值，是为"一次端到端冒烟"设计的。为一条断言复制那整套不成比例，但**没有**
+/// 像素级夹具就等于 D3D12 侧完全无法验证 —— 混合因子、clear 预乘这类东西错了
+/// 只有像素说得清。
+///
+/// 所以抽出一个只做"渲染 + 回读"的最小函数，其余断言各自独立。
+fn render_and_readback(
+    list: &DisplayList,
+    clear: Color,
+) -> (Vec<u8>, zephyra_winit_d3d12::RenderReport) {
+    let mut gpu = Gpu::new().expect("应当建得出 D3D12 设备");
+    gpu.begin_frame().expect("应当能开帧");
+    let target = Offscreen::new(&gpu.device, (SIZE, SIZE)).expect("应当建得出离屏目标");
+    // 采样数必须与单采样离屏目标一致。
+    let mut renderer = Renderer::new(&gpu.device, ATLAS_SIZE, 1).expect("应当建得出渲染器");
+    let textures = TextureTable::new();
+
+    let report = renderer
+        .record(zephyra_winit_d3d12::RenderCtx {
+            device: &gpu.device,
+            list: &gpu.list,
+            rtv: target.rtv,
+            display_list: list,
+            size: (SIZE, SIZE),
+            clear,
+            textures: &textures,
+            damage: zephyra_core::frame::Damage::Full,
+        })
+        .expect("记录绘制命令失败");
+
+    // 回读要求资源可拷贝，所以拷贝命令也**记录**进同一份列表。
+    let staging = target
+        .record_readback(&gpu.device, &gpu.list)
+        .expect("记录回读拷贝失败");
+    gpu.submit().expect("提交失败");
+    gpu.wait_gpu().expect("等 GPU 失败");
+    (Offscreen::map(&staging, (SIZE, SIZE)), report)
+}
+
+/// D3D12 的离屏目标是 **`R8G8B8A8_UNORM`** —— 与 D3D11 的 `B8G8R8A8` **顺序相反**。
+///
+/// 两个后端各写一遍断言时这里最容易搞错：按 D3D11 的直觉去读 D3D12，红蓝会对调，
+/// 于是"期望 128 的通道"读到的是另一个通道，断言看起来在管颜色、其实管错了。
+fn at_rgba(px: &[u8], x: u32, y: u32) -> [u8; 4] {
+    let i = (y as usize * SIZE as usize + x as usize) * 4;
+    [px[i], px[i + 1], px[i + 2], px[i + 3]]
+}
+
+/// 半透明 clear 色必须**预乘**后写进目标 —— D3D12 侧的独立验证。
+///
+/// D3D11 那边已经有 `clear_color_is_premultiplied`，但两个后端的 clear 是**各写一份**
+/// 的代码（`ClearRenderTargetView` 的签名与调用点都不同），所以必须各测一次。
+///
+/// 变异测试确认过：改掉 D3D12 的预乘而保留 D3D11 的，本测试会失败。
+#[test]
+fn clear_color_is_premultiplied_d3d12() {
+    // 空列表：什么都不画，只剩 clear。
+    let (px, _report) = render_and_readback(&DisplayList::new(), Color::rgba(1.0, 1.0, 1.0, 0.5));
+    for (x, y) in [(0u32, 0u32), (SIZE / 2, SIZE / 2), (SIZE - 1, SIZE - 1)] {
+        let p = at_rgba(&px, x, y);
+        assert!(
+            (p[0] as i32 - 128).abs() <= 2 && (p[1] as i32 - 128).abs() <= 2,
+            "clear(1,1,1,0.5) 预乘后 rgb 约 128（未预乘会是 255），实得 {p:?} @({x},{y})"
+        );
+        assert!(
+            (p[3] as i32 - 128).abs() <= 2,
+            "alpha 应仍是 128，实得 {p:?} @({x},{y})"
+        );
+    }
+}
+
+/// 半透明图元叠不透明背景，结果必须是**预乘 over** 的结果 —— 钉住因子必须是 `ONE`。
+///
+/// 与 D3D11 的同名测试逐字对应（含判据推导）。两个后端的混合状态各建一份
+/// （`CreateBlendState` vs PSO 的 `BlendState` 字段），所以也必须各测一次。
+#[test]
+fn translucent_quad_composites_in_premultiplied_space_d3d12() {
+    let s = SIZE as f32;
+    let mut list = DisplayList::new();
+    list.push(
+        zephyra_core::paint::SortKey {
+            layer: zephyra_core::paint::Layer::Background,
+            z: 0,
+            order: 0,
+        },
+        Command::Quad {
+            rect: zephyra_core::core::Rect::new(0.0, 0.0, s, s),
+            radius: zephyra_core::core::CornerRadius { radius: 0.0 },
+            fill: Color::rgb(0.0, 0.0, 1.0),
+            stroke: None,
+            filter: zephyra_core::filter::FilterChain::none(),
+            blend: zephyra_core::filter::BlendMode::default(),
+        },
+    );
+    list.push(
+        zephyra_core::paint::SortKey {
+            layer: zephyra_core::paint::Layer::Content,
+            z: 0,
+            order: 1,
+        },
+        Command::Quad {
+            rect: zephyra_core::core::Rect::new(0.0, 0.0, s, s),
+            radius: zephyra_core::core::CornerRadius { radius: 0.0 },
+            fill: Color::rgba(1.0, 1.0, 1.0, 0.5),
+            stroke: None,
+            filter: zephyra_core::filter::FilterChain::none(),
+            blend: zephyra_core::filter::BlendMode::default(),
+        },
+    );
+    let (px, report) = render_and_readback(&list, Color::rgb(0.0, 0.0, 0.0));
+    assert_eq!(report.quads, 2, "两个四边形都应当被展开");
+
+    for (x, y) in [(8u32, 8u32), (SIZE / 2, SIZE / 2), (SIZE - 9, SIZE - 9)] {
+        let p = at_rgba(&px, x, y);
+        // r/g = 0.5 纯白压在纯蓝上 ⇒ 128；b = 0.5 + 0.5·1 = 1.0 ⇒ 255；a ⇒ 255
+        assert!(
+            (p[0] as i32 - 128).abs() <= 3 && (p[1] as i32 - 128).abs() <= 3,
+            "r/g 应约 128（双重预乘会是 64），实得 {p:?} @({x},{y})"
+        );
+        assert!(
+            (p[2] as i32 - 255).abs() <= 2,
+            "b 应约 255（0.5 + 0.5·1），实得 {p:?} @({x},{y})"
+        );
+        assert!(
+            (p[3] as i32 - 255).abs() <= 2,
+            "a 应为 255（不透明底 + 半透明顶），实得 {p:?}"
+        );
+    }
+}
