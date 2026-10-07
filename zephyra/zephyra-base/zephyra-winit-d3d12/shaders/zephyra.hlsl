@@ -124,7 +124,10 @@ float4 PSMain(VSOut i) : SV_TARGET {
         // 叠 SDF 的边缘过渡，否则字会被啃一圈。
         float a = texel.a * i.color.a;
         clip(a - 0.0039);
-        return float4(i.color.rgb, a);
+        // 预乘空间：`i.color.rgb` 在顶点展开时已乘过 `i.color.a`（见 `quad.rs`），
+        // 这里再乘一次覆盖率 `texel.a`。漏掉这一步 rgb 与 a 不同步 —— 半透明笔画
+        // 会显得比它该有的更亮（叠加时目标被压暗得更少）。
+        return float4(i.color.rgb * texel.a, a);
     }
 
     // kind == 2：图像。采样当前绑定的纹理（每批一种）。
@@ -153,7 +156,9 @@ float4 PSMain(VSOut i) : SV_TARGET {
             a *= 1.0 - smoothstep(-px_img, px_img, d);
         }
         clip(a - 0.0039);
-        return float4(texel.rgb * i.color.rgb, a);
+        // 预乘空间：采样到的图像纹理是**直通 alpha**（R8G8B8A8），所以 rgb 要先乘自己的
+        // alpha；`i.color.rgb` 则已在顶点展开时乘过 tint 的 alpha（见 `quad.rs`）。
+        return float4(texel.rgb * texel.a * i.color.rgb, a);
     }
 
     // kind == 0：SDF 圆角矩形。
@@ -190,7 +195,7 @@ float4 PSMain(VSOut i) : SV_TARGET {
         sa *= outerFade;
 
         clip(sa - 0.0039);
-        return float4(i.color.rgb, i.color.a * sa);
+        return float4(i.color.rgb * sa, i.color.a * sa);
     }
-    return float4(i.color.rgb, i.color.a * alpha);
+    return float4(i.color.rgb * alpha, i.color.a * alpha);
 }

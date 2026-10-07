@@ -146,7 +146,22 @@ pub fn write_bmp(path: &str, px: &PixelRead, encode_srgb: bool) -> std::io::Resu
         // 按**像素**步进（4 字节），不是按 3 字节 —— 见上面两个 stride 的说明。
         let mut line = Vec::with_capacity(dst_stride);
         for p in row.chunks_exact(4) {
-            let [b, g, r, _a] = [p[0], p[1], p[2], p[3]];
+            let [b, g, r, a8] = [p[0], p[1], p[2], p[3]];
+            // 目标纹理是**预乘**的（见 `quad::Vertex::quad` 与两个渲染器的 clear），
+            // 而 BMP 要的是直通 alpha —— 所以先反预乘。
+            //
+            // ⚠ `a == 0` 时不能除：那一片像素的 rgb 是"预乘了 0"的结果，与颜色无关，
+            // 除出来是 NaN/无穷。这里按惯例取 0（全透明即无色）。
+            //
+            // 漏掉这一步的 Symptom：半透明的 UI 元素在贴出的图里**发暗** —— 而
+            // 几何、alpha、计数全都正常，看起来像"颜色算错了"。
+            let inv = if a8 == 0 {
+                0.0
+            } else {
+                255.0 / a8 as f32
+            };
+            let un = |c: u8| ((c as f32 * inv).min(255.0)).round() as u8;
+            let [r, g, b] = [un(r), un(g), un(b)];
             let [r, g, b] = if encode_srgb {
                 // 线性 → sRGB。近似用 `x^(1/2.2)`：精确的 sRGB 传输函数在低端有
                 // 分段，诊断用途下这个近似足够（误差 < 1/255）。

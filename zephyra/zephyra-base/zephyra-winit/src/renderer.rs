@@ -35,7 +35,7 @@ use windows::Win32::Graphics::Direct3D11::{
     // `D3D11_CULL_NONE` / `D3D11_COMPARISON_NEVER` / `D3D11_BLEND_ONE`。
     // 写记忆里的名字会得到"no associated item"错误。
     D3D11_BIND_VERTEX_BUFFER, D3D11_BIND_FLAG, D3D11_BLEND_DESC, D3D11_BLEND_INV_SRC_ALPHA,
-    D3D11_BLEND_ONE, D3D11_BLEND_OP_ADD, D3D11_BLEND_SRC_ALPHA, D3D11_BUFFER_DESC,
+    D3D11_BLEND_ONE, D3D11_BLEND_OP_ADD, D3D11_BUFFER_DESC,
     D3D11_COLOR_WRITE_ENABLE_ALL,
     D3D11_COMPARISON_NEVER, D3D11_CULL_NONE, D3D11_FILL_SOLID,
     D3D11_FILTER_MIN_MAG_MIP_LINEAR,
@@ -259,17 +259,19 @@ impl Renderer {
 
         // ---- 混合状态 ----
         //
-        // `Src/InvSrc = ALPHA/INV_SRC_ALPHA`，而 alpha 通道用
-        // `ONE/INV_SRC_ALPHA`：后者是"目标 alpha 已预乘"的正确组合 ——
-        // swapchain 用 `DXGI_ALPHA_MODE_PREMULTIPLIED`。alpha 也写成
-        // `ALPHA/INV_SRC_ALPHA` 会让半透明区域的 alpha 变成 `a*a`，表现为整屏发暗。
+        // **预乘 alpha**：顶点色在 `quad::Vertex::quad` 里已乘过自己的 alpha，
+        // 所以 `SrcOver` 的颜色因子是 `ONE`（不能再乘一次 `SRC_ALPHA`，否则
+        // 半透明区域会**双重预乘**，表现为整体发暗）。
+        //
+        // alpha 通道 `ONE/INV_SRC_ALPHA`：`a = as + (1-as)·ad`，这正是
+        // swapchain 用 `DXGI_ALPHA_MODE_PREMULTIPLIED` 时该有的形状。
         //
         // 0.62 的 `D3D11_BLEND_DESC` 是**每个渲染目标一个** `RenderTarget[8]` 数组
         // （C 里的 `RenderTarget[1]` 展开），且没有 `LogicOpEnable` 字段 ——
         // `LogicOpEnable` 在每个 RT 的描述里。
         let rt_blend = D3D11_RENDER_TARGET_BLEND_DESC {
             BlendEnable: windows::core::BOOL(1),
-            SrcBlend: D3D11_BLEND_SRC_ALPHA,
+            SrcBlend: D3D11_BLEND_ONE,
             DestBlend: D3D11_BLEND_INV_SRC_ALPHA,
             BlendOp: D3D11_BLEND_OP_ADD,
             SrcBlendAlpha: D3D11_BLEND_ONE,
@@ -658,9 +660,17 @@ impl Renderer {
             // 清屏色。`Color` 存的是**线性** 0..1，而 `ClearRenderTargetView` 要的
             // 也是线性 —— 这里不做任何编码转换。
             //
+            // ⚠ 但必须**预乘**：目标纹理从此与顶点色在同一个预乘空间里。漏掉这一步
+            // 的话，一个半透明的 clear 色会让整帧偏亮，且只有非 1.0 的 clear 色
+            // 才暴露 —— 而默认 clear 是全 1.0 或全 0.0，于是永远看不出来。
+            //
             // （诊断时把读回的像素按 sRGB 编码再显示，见 [`crate::write_bmp`]。那
             // 是**看图工具的约定**问题，与这里无关。）
-            context.ClearRenderTargetView(rtv, &[clear.r, clear.g, clear.b, clear.a]);
+            let ca = clear.a;
+            context.ClearRenderTargetView(
+                rtv,
+                &[clear.r * ca, clear.g * ca, clear.b * ca, ca],
+            );
             context.OMSetBlendState(&self.blend, None, 0xFFFF_FFFF);
             context.RSSetState(&self.rasterizer);
             // ⚠ `IASetInputLayout` **必须**在这里绑。

@@ -423,14 +423,17 @@ impl Renderer {
         elements: &[D3D12_INPUT_ELEMENT_DESC],
         samples: u32,
     ) -> Result<ID3D12PipelineState, SurfaceError> {
-        // 混合状态与 D3D11 版逐项一致：`Src/InvSrc = ALPHA/INV_SRC_ALPHA`，
-        // alpha 用 `ONE/INV_SRC_ALPHA`（预乘 alpha 的正确组合，交换链用
-        // `DXGI_ALPHA_MODE_PREMULTIPLIED`）。alpha 也写成 `ALPHA/INV_SRC_ALPHA` 会让
-        // 半透明区域的 alpha 变成 `a*a`，表现为整屏发暗。
+        // 混合状态与 D3D11 版**逐项一致**（两边各写一份，所以这里必须同步改）。
+        //
+        // **预乘 alpha**：顶点色在 `quad::Vertex::quad` 里已乘过自己的 alpha，所以
+        // `SrcOver` 的颜色因子是 `ONE` —— 再乘一次 `SRC_ALPHA` 就是双重预乘，
+        // 表现为半透明区域整体发暗。alpha 通道 `ONE/INV_SRC_ALPHA`：
+        // `a = as + (1-as)·ad`，这正是交换链用 `DXGI_ALPHA_MODE_PREMULTIPLIED`
+        // 时该有的形状。
         let rt_blend = D3D12_RENDER_TARGET_BLEND_DESC {
             BlendEnable: windows::core::BOOL(1),
             LogicOpEnable: windows::core::BOOL(0),
-            SrcBlend: D3D12_BLEND_SRC_ALPHA,
+            SrcBlend: D3D12_BLEND_ONE,
             DestBlend: D3D12_BLEND_INV_SRC_ALPHA,
             BlendOp: D3D12_BLEND_OP_ADD,
             SrcBlendAlpha: D3D12_BLEND_ONE,
@@ -1004,9 +1007,14 @@ impl Renderer {
         //
         // 清屏色。`Color` 存的是**线性** 0..1，而 `ClearRenderTargetView` 要的也是线性
         // —— 这里不做任何编码转换。
+        //
+        // ⚠ 但必须**预乘**，与 D3D11 版一致：目标纹理从此与顶点色在同一个预乘空间
+        // 里。漏掉时只有非 1.0 的 clear 色才会暴露，而默认 clear 是全 1.0 或全 0.0，
+        // 于是永远看不出来。
+        let ca = clear.a;
         unsafe {
             list.OMSetRenderTargets(1, Some(&rtv), false, None);
-            list.ClearRenderTargetView(rtv, &[clear.r, clear.g, clear.b, clear.a], None);
+            list.ClearRenderTargetView(rtv, &[clear.r * ca, clear.g * ca, clear.b * ca, ca], None);
         }
 
         // ---- 8. 绑定顶点/索引缓冲 ----

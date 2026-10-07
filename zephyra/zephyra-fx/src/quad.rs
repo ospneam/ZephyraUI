@@ -422,6 +422,21 @@ impl Vertex {
         kind: f32,
     ) -> [Vertex; 4] {
         let (w, h) = (px.0.max(1e-6), px.1.max(1e-6));
+        // **预乘 alpha**：`color` 进到这里是非预乘的（`Color::rgba` 原样存值），
+        // 而整条管线在**预乘空间**里合成。
+        //
+        // 为什么在这里做，而不是让混合状态去适配非预乘：混合系数表
+        // （[`zephyra_core::filter::BlendMode::as_coeff`]）给的是预乘空间的系数
+        // （Skia 同样如此）。顶点里若放非预乘颜色，SrcOver 就得用
+        // `SRC_ALPHA/INV_SRC_ALPHA`；而一旦要支持 Multiply 这类模式，混合因子就
+        // 不再有"先乘一次 alpha"的统一形式 —— 每个模式都得单独推一遍。
+        //
+        // 顺带把 E4.4/E4.5 的路铺好：模糊 / 投影的离屏合成**必须**在预乘空间里做，
+        // 否则半透明区域模糊后边缘发暗（预乘 alpha 的经典坑）。
+        //
+        // `a == 1` 时是恒等，所以绝大多数不透明图元的顶点一个字节都没变。
+        let ca = color[3];
+        let color = [color[0] * ca, color[1] * ca, color[2] * ca, ca];
         // `sdf` 类别需要 AA 余量；字形与图像自带边缘，不扩（扩了会把 uv 拉出图块）。
         //
         // 字形位图的抗锯齿是**烘进 alpha 里**的（`ab_glyph` 栅格化时就算好了），
@@ -492,6 +507,9 @@ impl Vertex {
     /// 不扩几何、不算距离场：三角化后的多边形没有解析距离，边缘 AA 靠 **MSAA**。
     /// 这与 [`crate::geom`] 的设计约定一致。
     pub fn path(position: [f32; 2], color: [f32; 4]) -> Vertex {
+        // 与 [`Self::quad`] 同一个理由：顶点色在**预乘空间**里，见那里的说明。
+        let ca = color[3];
+        let color = [color[0] * ca, color[1] * ca, color[2] * ca, ca];
         Vertex {
             position,
             local: [0.0; 2],
@@ -2702,6 +2720,57 @@ fn translate_also_applies_to_glyphs() {
         assert_eq!(report.quads, 2, "几何统计也不该变（1 矩形 + 1 图像；Path 计入 path_triangles）");
     }
 }
+
+/// 顶点色必须是**预乘**的：rgb 已经乘过自己的 alpha。
+    ///
+    /// # 为什么这条必须有测试
+    ///
+    /// `a == 1` 时预乘是恒等 —— 而 demo 与绝大多数测试都用不透明颜色，于是
+    /// "预乘了" 与 "没预乘" 在全部现有断言下**完全一样**。真正暴露问题的是
+    /// 半透明：GPU 上会双重预乘，整片偏暗，而几何、alpha、计数器全部正常。
+    ///
+    /// 也就是说：这条不测，E4.1 的混合因子表就是建在一个没人验证过的不变量上。
+    #[test]
+    fn vertex_color_is_premultiplied() {
+        let q = Vertex::from_rect(
+            Rect::new(0.0, 0.0, 10.0, 10.0),
+            (100.0, 100.0),
+            [0.4, 0.2, 0.8, 0.5],
+            [0.0, 0.0],
+        );
+        for v in &q {
+            assert!(
+                (v.color[0] - 0.2).abs() < 1e-6
+                    && (v.color[1] - 0.1).abs() < 1e-6
+                    && (v.color[2] - 0.4).abs() < 1e-6,
+                "rgb 必须已乘 alpha（0.4/0.2/0.8 × 0.5 = 0.2/0.1/0.4），实得 {:?}",
+                v.color
+            );
+            assert!(
+                (v.color[3] - 0.5).abs() < 1e-6,
+                "alpha 本身不能被乘：{:?}",
+                v.color
+            );
+        }
+        // 不透明时必须是恒等，否则这一层会把所有不透明图元也改掉。
+        let o = Vertex::from_rect(
+            Rect::new(0.0, 0.0, 10.0, 10.0),
+            (100.0, 100.0),
+            [0.4, 0.2, 0.8, 1.0],
+            [0.0, 0.0],
+        );
+        assert!((o[0].color[0] - 0.4).abs() < 1e-6, "a=1 时 rgb 不变");
+    }
+
+    /// [`Vertex::path`] 也必须预乘 —— 它不走 [`Vertex::quad`]，是**另一份**实现。
+    #[test]
+    fn path_vertex_color_is_premultiplied() {
+        let v = Vertex::path([0.0, 0.0], [0.4, 0.2, 0.8, 0.5]);
+        assert!((v.color[0] - 0.2).abs() < 1e-6, "实得 {:?}", v.color);
+        assert!((v.color[1] - 0.1).abs() < 1e-6);
+        assert!((v.color[2] - 0.4).abs() < 1e-6);
+        assert!((v.color[3] - 0.5).abs() < 1e-6);
+    }
 
 
 /// `kind` 落在着色器划定的**哪个分支** —— 也就是"这块像素会被画成什么"。

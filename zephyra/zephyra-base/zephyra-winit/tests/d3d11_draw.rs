@@ -46,7 +46,7 @@ const CLEAR: Color = Color::rgba(0.0, 0.0, 0.0, 1.0);
 /// # 为什么绕开窗口与交换链
 ///
 /// 交换链会引入 flip model、后缓冲计数、`Present` 时机、DComp 等一堆**与本测试
-/// 无关**的失败原因。离屏纹理是���己建的、不经过 DXGI 的渲染目标，于是出问题时
+/// 无关**的失败原因。离屏纹理是到己建的、不经过 DXGI 的渲染目标，于是出问题时
 /// 故障域只剩渲染器本身。
 #[test]
 fn 矩形会真的落到像素上() {
@@ -645,6 +645,214 @@ fn 直角图像的边缘不被压暗() {
         &dim[..dim.len().min(6)]
     );
 }
+
+/// 半透明图元叠在不透明背景上，结果必须是**预乘 over** 的结果。
+///
+/// # 这条钉住的是混合因子的 `ONE`
+///
+/// 顶点色已在 `quad::Vertex::quad` 里乘过自己的 alpha，所以 `SrcOver` 的颜色因子
+/// 必须是 `ONE`。若沿用 `SRC_ALPHA`，D3D 会**再乘一次** alpha：
+///
+/// ```text
+///   正确（ONE）        : 0.5·1.0 + 0.0·0.5 = 0.50   ⇒ 128
+///   双重预乘（SRC_ALPHA）: 0.5·1.0·0.5 = 0.25        ⇒  64
+/// ```
+///
+/// 而 SrcOver 在**非预乘**管线下的结果恰好也是 0.50 —— 也就是说这条测试同时排除
+/// 了两种错法，只接受"顶点预乘 + 因子 ONE"这一种组合。
+#[test]
+fn translucent_quad_composites_in_premultiplied_space() {
+    let Ok(gpu) = Gpu::new() else {
+        eprintln!("跳过：建不出 D3D11 设备");
+        return;
+    };
+    let (rtv, tex) = offscreen_target(&gpu);
+    let mut renderer = Renderer::new(&gpu.device).expect("渲染器应当能建出来");
+    let textures = TextureTable::new();
+
+    let s = SIZE as f32;
+    let mut list = DisplayList::new();
+    // 不透明蓝底
+    list.push(
+        SortKey {
+            layer: zephyra_core::paint::Layer::Background,
+            z: 0,
+            order: 0,
+        },
+        Command::Quad {
+            rect: Rect::new(0.0, 0.0, s, s),
+            radius: CornerRadius { radius: 0.0 },
+            fill: Color::rgb(0.0, 0.0, 1.0),
+            stroke: None,
+            filter: zephyra_core::filter::FilterChain::none(),
+            blend: zephyra_core::filter::BlendMode::default(),
+        },
+    );
+    // 50% 白覆盖全屏
+    list.push(
+        SortKey {
+            layer: zephyra_core::paint::Layer::Content,
+            z: 0,
+            order: 1,
+        },
+        Command::Quad {
+            rect: Rect::new(0.0, 0.0, s, s),
+            radius: CornerRadius { radius: 0.0 },
+            fill: Color::rgba(1.0, 1.0, 1.0, 0.5),
+            stroke: None,
+            filter: zephyra_core::filter::FilterChain::none(),
+            blend: zephyra_core::filter::BlendMode::default(),
+        },
+    );
+    renderer.render(RenderCtx {
+        context: &gpu.context,
+        device: &gpu.device,
+        rtv: &rtv,
+        list: &list,
+        size: (SIZE, SIZE),
+        clear: Color::rgb(0.0, 0.0, 0.0),
+        textures: &textures,
+        damage: zephyra_core::frame::Damage::Full,
+    });
+
+    let px = read_back(&gpu, &tex);
+    let at = |x: u32, y: u32| -> [u8; 4] {
+    // ⚠ 离屏 RT 是 `B8G8R8A8`，而 `Color` 是 RGBA —— **通道顺序是反的**。
+    // 按 RGB 去读会把红蓝对调，于是「期望 128 的那个通道」实际读的是另一个通道，
+    // 断言看起来在管颜色、其实管错了通道。
+
+        let i = (y as usize * SIZE as usize + x as usize) * 4;
+        [px[i + 2], px[i + 1], px[i], px[i + 3]] // 重排成 (r, g, b, a)
+    };
+    for (x, y) in [(8u32, 8u32), (SIZE / 2, SIZE / 2), (SIZE - 9, SIZE - 9)] {
+        let p = at(x, y);
+        // r/g = 0.5 纯白压在纯蓝上 ⇒ 128；b = 0.5 + 0.5 = 1.0 ⇒ 255；a 不透明 ⇒ 255
+        assert!(
+            (p[0] as i32 - 128).abs() <= 3 && (p[1] as i32 - 128).abs() <= 3,
+            "r/g 应约 128（双重预乘会是 64），实得 {p:?} @({x},{y})"
+        );
+        assert!(
+            (p[2] as i32 - 255).abs() <= 2,
+            "b 应约 255（0.5 + 0.5·1），实得 {p:?} @({x},{y})"
+        );
+        assert!(
+            (p[3] as i32 - 255).abs() <= 2,
+            "a 应为 255（不透明底 + 半透明顶 ⇒ 0.5 + 0.5），实得 {p:?}"
+        );
+    }
+}
+
+/// 着色器资产必须与源码同步。
+///
+/// # 为什么这条值得存在
+///
+/// GPU 加载的是**预编译的 `.bin`**，不是 `.hlsl`。所以「改了 `.hlsl` 但忘了重跑
+/// `fxc`」这件事**没有任何测试会失败** —— 画面照旧跑的是旧着色器，而所有断言都
+/// 针对那份旧代码的结果。症状是「我明明改了着色器，怎么没效果」，能查的方向有
+/// 一大堆（绑定、状态、输入布局），而真正的病因是**一个没执行的命令**。
+///
+/// 这不是假设：本次做预乘转换时，我用变异测试去改 `.hlsl`，结果 **SURVIVED** ——
+/// 正是这个原因。
+///
+/// 两条断言：
+/// 1. 两份 `.hlsl`（D3D11 与 D3D12）必须**逐字节相同**。两边各存一份，改了其中
+///    一份忘了另一份，同样是无声失败（两个后端画出不同的东西）。
+/// 2. `.bin` 的修改时间**不得早于** `.hlsl`。用 `>=` 而不是 `>`：全新 clone 里两者
+///    同一时刻落地，`>` 会误报。
+#[test]
+fn shader_assets_are_in_sync() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join("zephyra-winit");
+    let hlsl_a = root.join("shaders").join("zephyra.hlsl");
+    let hlsl_b = root
+        .parent()
+        .unwrap()
+        .join("zephyra-winit-d3d12")
+        .join("shaders")
+        .join("zephyra.hlsl");
+
+    let a = std::fs::read(&hlsl_a).expect("读得到 D3D11 的 hlsl");
+    let b = std::fs::read(&hlsl_b).expect("读得到 D3D12 的 hlsl");
+    assert_eq!(
+        a.len(),
+        b.len(),
+        "两份 zephyra.hlsl 长度不同 —— 有一份被改过而另一份没跟上"
+    );
+    for (i, (x, y)) in a.iter().zip(b.iter()).enumerate() {
+        assert_eq!(x, y, "两份 zephyra.hlsl 在第 {i} 个字节处分叉（第 4 行的 Viewstage 引用之类）");
+    }
+
+    for bin_name in ["zephyra.ps.bin", "zephyra.vs.bin"] {
+        let bin = root.join("shaders").join(bin_name);
+        let src_time = std::fs::metadata(&hlsl_a)
+            .expect("拿得到 hlsl 的修改时间")
+            .modified()
+            .expect("modified() 可用");
+        let bin_time = std::fs::metadata(&bin)
+            .unwrap_or_else(|e| panic!("读得到 {bin_name}：{e}"))
+            .modified()
+            .expect("modified() 可用");
+        assert!(
+            bin_time >= src_time,
+            "{bin_name} 比 zephyra.hlsl 旧 —— 改了着色器但忘了重新编译。\
+             命令：fxc /nologo /T ps_5_0 /E PSMain /Fo zephyra.ps.bin zephyra.hlsl（VS 用 vs_5_0 / VSMain）"
+        );
+    }
+}
+
+/// 半透明 clear 色必须**预乘**后写进目标。
+    ///
+    /// # 为什么这条能抓不到回归，而 SrcOver 抓不到
+    ///
+    /// 预乘与非预乘两种管线在 `SrcOver` 下**结果完全相同**（非预乘那一版靠
+    /// D3D 的 `SRC_ALPHA` 因子补上那一次乘法），所以任何画一个矩形的像素测试都
+    /// 分辨不出这次转换。clear 是唯一一处**没有混合方程兜底**的地方 ——
+    /// 它直接写进 RT，于是预乘与否立刻可见。
+    ///
+    /// 这也解释了为什么本次转换后 23 个 GPU 测试与 demo 基线**全部不变**：变化
+    /// 只在"非 SrcOver 的混合模式"与"半透明 clear"上可见，而前者要等 E4.1。
+    #[test]
+    fn clear_color_is_premultiplied() {
+        let Ok(gpu) = Gpu::new() else {
+            eprintln!("跳过：建不出 D3D11 设备");
+            return;
+        };
+        let (rtv, tex) = offscreen_target(&gpu);
+        let mut renderer = Renderer::new(&gpu.device).expect("渲染器应当能建出来");
+        let textures = TextureTable::new();
+
+        // 一条空列表：什么都不画，只剩 clear。
+        let list = DisplayList::new();
+        renderer.render(RenderCtx {
+            context: &gpu.context,
+            device: &gpu.device,
+            rtv: &rtv,
+            list: &list,
+            size: (SIZE, SIZE),
+            clear: Color::rgba(1.0, 1.0, 1.0, 0.5),
+            textures: &textures,
+            damage: zephyra_core::frame::Damage::Full,
+        });
+
+        let px = read_back(&gpu, &tex);
+        let at = |x: u32, y: u32| -> [u8; 4] {
+            let i = (y as usize * SIZE as usize + x as usize) * 4;
+            [px[i], px[i + 1], px[i + 2], px[i + 3]]
+        };
+        for (x, y) in [(0u32, 0u32), (SIZE / 2, SIZE / 2), (SIZE - 1, SIZE - 1)] {
+            let p = at(x, y);
+            assert!(
+                (p[0] as i32 - 128).abs() <= 2 && (p[1] as i32 - 128).abs() <= 2,
+                "clear(1,1,1,0.5) 预乘后 rgb 约为 128（未预乘会是 255），实得 {p:?} @({x},{y})"
+            );
+            assert!(
+                (p[3] as i32 - 128).abs() <= 2,
+                "alpha 应仍是 128，实得 {p:?} @({x},{y})"
+            );
+        }
+    }
 
 /// 建一张**内容确定**的纯白纹理，供图像圆角那两条测试用。
 ///
