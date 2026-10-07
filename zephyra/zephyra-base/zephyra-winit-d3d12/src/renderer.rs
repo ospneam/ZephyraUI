@@ -28,7 +28,7 @@ use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_R16_UINT;
 use crate::quad::{self, RenderReport, Vertex};
 use zephyra_core::filter::{BlendMode, Coeff};
 use crate::shader::{self, ShaderError, Shaders};
-use crate::surface::{create_resource, heap_props, DescriptorHeap, SurfaceError};
+use crate::surface::{create_resource, heap_props, texture_desc, DescriptorHeap, SurfaceError};
 
 /// 一张已上传的图像纹理。
 ///
@@ -58,6 +58,18 @@ struct UploadedTexture {
 /// `ID3D12Device` 由 [`crate::surface::Gpu`] 持有并按引用传入 —— 它是整个进程唯一的
 /// 一份。若渲染器自己存一份，就多出一条与 `Gpu` 并行的引用路径，「谁在用设备」会变得
 /// 无法回答（同 `zephyra-winit::renderer` 的取舍）。
+/// SRV 堆槽位总数：0 号图集 + 7 张图像纹理 + 1 张 `g_dst` 副本。
+pub const ATLAS_SLOTS: u32 = 9;
+
+/// `g_dst` 的懒建副本。
+///
+/// D3D12 的 SRV 是堆里的一个**槽位**而不是对象，所以这里只持有资源本体；
+/// 视图在 `refresh_dst_copy` 里建一次，之后直接用槽位。
+struct DstCopy {
+    resource: ID3D12Resource,
+    size: (u32, u32),
+}
+
 pub struct Renderer {
     root_signature: ID3D12RootSignature,
     /// PSO 缓存，键 = (PS 变体下标, 混合模式下标, MSAA 采样数)。
@@ -114,6 +126,8 @@ pub struct Renderer {
     textures: Vec<UploadedTexture>,
     /// 下一个可用的 SRV 槽位。0 号恒给图集（见 [`Renderer::new`]）。
     next_texture_slot: u32,
+    /// `g_dst`（目标副本）的懒建纹理，见 [`Renderer::refresh_dst_copy`]。
+    dst_copy: std::cell::RefCell<Option<DstCopy>>,
 }
 
 /// 上传堆上一块常驻映射的暂存缓冲。
@@ -196,6 +210,17 @@ pub struct RenderCtx<'a> {
     ///
     /// ⚠ 而且 D3D12 的 scissor 与视口**必须同时**设（见下面第 6 步）：只设视口忘了
     /// 裁剪，或反过来，都得到「什么都不画且零错误」。
+    /// 目标渲染目标的**资源**（不是 RTV 句柄 —— D3D12 的 RTV 拿不到资源）。
+    ///
+    /// 只有当本帧里出现可分离 / 非可分离混合模式（它们的 PS 要读 `dst`）时才用
+    /// 得上：宿主先把目标拷进一张单采样纹理，再当 SRV 绑到 `t1`。
+    /// `None` = 宿主没给 ⇒ 那 14 个模式退回 `SrcOver`（而不是画出一个颜色错误
+    /// 的结果）。
+    ///
+    /// # 为什么不是必填
+    ///
+    /// 绝大多数帧只用默认模式，让宿主为此多拿一个资源是纯粹的成本。
+    pub rt: Option<&'a ID3D12Resource>,
     pub damage: zephyra_core::frame::Damage,
 }
 
@@ -429,7 +454,9 @@ impl Renderer {
         // 1 个给图集（`t0` 恒绑它），剩下留给图像纹理。图集固定占 0 号，这样即使一个
         // 图像都没注册，`t0` 也绑着有效对象 —— 着色器在矩形分支不采样它，但「绑着
         // 一个无效 SRV」在某些驱动上会让后续采样返回未定义值。
-        const ATLAS_SLOTS: u32 = 8;
+        const ATLAS_SLOTS: u32 = 9;
+        // 第 0 号图集，1..=7 号图像纹理，最后一号留给 `g_dst` 的副本
+        // （可分离 / 非可分离混合模式要读它，见 `refresh_dst_copy`）。
         let srv_heap = DescriptorHeap::new_srv(device, ATLAS_SLOTS, true)
             .map_err(|e| ShaderError::Create("建 SRV 描述符堆", e))?;
 
@@ -488,6 +515,7 @@ impl Renderer {
             device: device.clone(),
             textures: Vec::new(),
             next_texture_slot: 1,
+            dst_copy: std::cell::RefCell::new(None),
             elements: shaders.elements,
             samples,
         })
@@ -728,6 +756,80 @@ impl Renderer {
                 )
             })
         }
+    }
+
+    /// 目标像素的**单采样**副本 —— 可分离 / 非可分离混合模式读它当 `dst`。
+    ///
+    /// # 为什么必须拷贝
+    ///
+    /// D3D12（与 D3D11 一样）**不能采样当前绑定的 RTV**。直接绑一个指向渲染
+    /// 目标的 SRV 得到的是未定义值，症状是「效果完全没发生」而零错误。
+    ///
+    /// # 为什么返回堆槽位而不是视图
+    ///
+    /// D3D12 的 SRV 不是对象而是堆里的一个**槽位** —— 与 D3D11 返回
+    /// `ID3D11ShaderResourceView` 不同。槽位在 `record` 里经
+    /// `SetGraphicsRootDescriptorTable(1, …)` 绑给 `t1`。
+    ///
+    /// `None` = 目标资源没给（`RenderCtx::rt` 为 `None`）或建不出来 ⇒ 调用方
+    /// 退回 `SrcOver`。宁可少个效果，也不要画出一个颜色错误的结果。
+    fn refresh_dst_copy(
+        &self,
+        device: &ID3D12Device,
+        list: &ID3D12GraphicsCommandList,
+        rt: Option<&ID3D12Resource>,
+        size: (u32, u32),
+    ) -> Option<u32> {
+        use windows::Win32::Graphics::Direct3D12::{
+            D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_COPY_SOURCE,
+            D3D12_RESOURCE_STATE_RENDER_TARGET,
+        };
+
+        const DST_SLOT: u32 = ATLAS_SLOTS - 1;
+        let rt = rt?;
+
+        let mut slot = self.dst_copy.borrow_mut();
+        if slot.as_ref().is_none_or(|d| d.size != size || size.0 == 0 || size.1 == 0) {
+            // 格式固定 R8G8B8A8_UNORM：与 `create_pso` 的 `RTVFormats[0]` 一致，也
+            // 与 `Offscreen` / 后缓冲一致。**SRV 格式必须与纹理一致**，否则采样
+            // 结果整体错位（红蓝对调是这一类错的典型表现）。
+            //
+            // 资源标志用 `NONE`：默认就允许被采样与拷贝；`ALLOW_RENDER_TARGET`
+            // 反而会**禁止**采样。初始状态 `COPY_DEST`，马上就要往里拷。
+            let dst = create_resource(
+                device,
+                &heap_props(D3D12_HEAP_TYPE_DEFAULT),
+                &texture_desc(size, D3D12_RESOURCE_FLAG_NONE),
+                D3D12_RESOURCE_STATE_COPY_DEST,
+            )
+            .ok()?;
+            unsafe {
+                device.CreateShaderResourceView(&dst, None, self.srv_heap.cpu(DST_SLOT).ok()?);
+            }
+            *slot = Some(DstCopy {
+                resource: dst,
+                size,
+            });
+        }
+        let d = slot.as_ref()?;
+
+        // 拷贝前后各一道屏障：源得是 `COPY_SOURCE`，拷完还得回 `RENDER_TARGET`，
+        // 否则后续绘制对目标的写入是非法的。漏掉第二道的症状特别会骗人 ——
+        // 调试层报的是「某次 OMSetRenderTargets 的目标状态不对」，让人往别的
+        // 地方找。
+        gpu_barrier(list, rt, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        unsafe {
+            list.CopyResource(&d.resource, rt);
+        }
+        gpu_barrier(list, rt, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
+        // 副本自身：COPY_DEST → PIXEL_SHADER_RESOURCE，之后才允许被采样。
+        gpu_barrier(
+            list,
+            &d.resource,
+            D3D12_RESOURCE_STATE_COPY_DEST,
+            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+        );
+        Some(DST_SLOT)
     }
 
     /// 取（必要时建）`(PS 变体, 混合模式, 采样数)` 对应的 PSO。
@@ -1083,6 +1185,7 @@ impl Renderer {
             size,
             clear,
             textures,
+            rt,
             damage,
         } = ctx;
 
@@ -1289,15 +1392,25 @@ impl Renderer {
                 continue;
             }
             let mode = run.blend as usize;
+            // 混合模式逐段决定两样东西：PS 变体与混合状态，**必须成对**换。
             let (ps_idx, pso_mode) = match shader::ps_for_blend_mode(mode) {
                 // 系数可表达：PS 只算源色，混合交给固定功能方程。
                 None => (0usize, mode),
-                // PS 合成模式：混合状态用 `Src`（`BlendMode::Src` = 1 号）。
-                // ⚠ `dst` 副本（`t1`）的接线尚未在此后端接上 —— 现在它读到的
-                // 是**未定义**内容。在接上之前，这 14 个模式不能宣称可用，
-                // 所以这里显式退回 `SrcOver` 并计入 `unimplemented_blends`，
-                // 而不是画出一个颜色错误的结果。
-                Some(_) => (0usize, zephyra_core::filter::BlendMode::SrcOver as usize),
+                // PS 合成模式：要读 `dst`，先取副本；取不到就退回 `SrcOver`。
+                Some(k) => match self.refresh_dst_copy(device, list, rt, size) {
+                    Some(dst_slot) => {
+                        // 副本绑到 `t1`（根签名第 1 个参数）。
+                        unsafe {
+                            list.SetGraphicsRootDescriptorTable(
+                                1,
+                                self.srv_heap.gpu(dst_slot)?,
+                            );
+                        }
+                        // PS 已写出最终颜色 ⇒ 混合状态用 `Src`（`BlendMode::Src` = 1 号）。
+                        (k, BlendMode::Src as usize)
+                    }
+                    None => (0usize, BlendMode::SrcOver as usize),
+                },
             };
             let pso = self.pso_for(device, self.elements.descs(), ps_idx, pso_mode, self.samples)?;
             // 纹理绑定。只有 `Command::Image` 逐段换；矩形 / 字形 / 多边形记

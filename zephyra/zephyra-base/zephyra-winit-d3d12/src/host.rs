@@ -408,6 +408,9 @@ impl<V: View> HostWindow<V> {
             }
         };
         let clear = self.theme.surface;
+        // 可分离 / 非可分离混合模式要读 `dst`，必须把后缓冲当**资源**传进去。
+        // 取失败时传 `None`：那 14 个模式会退回 `SrcOver`，画面仍然正确只是少了效果。
+        let rt = self.chain.back_buffer().ok();
         let report = match self.renderer.record(RenderCtx {
             device: &self.gpu.device,
             list: &self.gpu.list,
@@ -417,6 +420,7 @@ impl<V: View> HostWindow<V> {
             size: self.chain.size(),
             clear,
             textures: &self.textures,
+            rt: rt.as_ref(),
         }) {
             Ok(r) => r,
             Err(e) => {

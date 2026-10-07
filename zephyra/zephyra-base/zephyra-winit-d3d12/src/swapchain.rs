@@ -223,6 +223,17 @@ impl Swapchain {
     /// 宿主在建 PSO **之前**调它，把同一个值交给
     /// [`crate::renderer::Renderer::new`] —— 那是"PSO 与渲染目标必须一致"这条
     /// 硬约束的唯一对齐点（顺序不能反：PSO 建好就固定了）。
+    /// 当前可绘制的后缓冲资源（与 [`Self::rtv`] 同一资源）。
+    ///
+    /// # 为什么要把它暴露出去
+    ///
+    /// D3D12 的 `ID3D12RenderTargetView` **拿不到**背后那个资源（D3D11 的
+    /// `GetResource` 在 D3D12 上没有对应物）。而可分离 / 非可分离混合模式要读
+    /// `dst`，宿主得先把后缓冲拷进一张可采样纹理 —— 那就需要资源本体。
+    pub fn back_buffer(&self) -> Result<ID3D12Resource, SurfaceError> {
+        self.buffer(self.back_buffer_index())
+    }
+
     pub fn samples(&self) -> u32 {
         self.samples
     }

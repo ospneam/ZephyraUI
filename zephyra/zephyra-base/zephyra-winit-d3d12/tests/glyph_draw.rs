@@ -186,6 +186,7 @@ fn 字形_在GPU上与CPU参考图一致() {
             size: (SIZE, SIZE),
             clear: Color::rgba(0.0, 0.0, 0.0, 1.0),
             textures: &textures,
+            rt: None,
             damage: zephyra_core::frame::Damage::Full,
         })
         .expect("记录绘制命令失败");

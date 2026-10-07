@@ -315,6 +315,7 @@ fn render_and_read(
             size,
             clear: Color::rgba(0.0, 0.0, 0.0, 1.0),
             textures,
+            rt: chain.back_buffer().ok().as_ref(),
             // 整帧：这条测试验的是「几何有没有铺满视口」，不是 scissor。
             damage: zephyra_core::frame::Damage::Full,
         })

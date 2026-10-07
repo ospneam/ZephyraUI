@@ -206,6 +206,7 @@ fn d3d12_能把四边形画到像素上() {
             // 关于恒真式判据的说明。
             clear: Color::rgba(0.0, 0.0, 0.0, 1.0),
             textures: &textures,
+            rt: None,
             damage: zephyra_core::frame::Damage::Full,
         })
         .expect("记录绘制命令失败");
@@ -328,6 +329,8 @@ fn render_and_readback(
             size: (SIZE, SIZE),
             clear,
             textures: &textures,
+            // 可分离 / 非可分离混合模式要读 `dst`，把目标资源给进去。
+            rt: Some(&target.texture),
             damage: zephyra_core::frame::Damage::Full,
         })
         .unwrap_or_else(|e| {
@@ -507,16 +510,62 @@ fn blend_modes_switch_pso_on_d3d12() {
     }
 }
 
-/// 可分离 / 非可分离那 14 个模式在 D3D12 上**尚未**接线 `t1`（`g_dst` 的副本）。
+/// 同一个 `DisplayList` 里模式逐段不同 ⇒ `g_dst` 必须在**每段之前**刷新。
 ///
-/// # 为什么写一条"承认没做完"的测试
-///
-/// `record` 里对这 14 个模式**显式**退回 `SrcOver`，而不是绑上一个还没接好的
-/// `t1` 去画一个颜色错误的结果 —— 那比"没生效"更难排查。这条测试把当前状态
-/// 钉住：等 `t1` 接上后它就该**翻过来**改成断言真实效果，那时这条测试会失败，
-/// 正好提醒人们改断言，而不是悄悄留着一条失效的"退回"路径。
+/// 若副本只在帧首拷一次，段3 读到的 `dst` 是帧首的纯灰，绿通道会变成 128 ——
+/// 与 D3D11 那边 `per_run_ps_switching_uses_the_updated_destination` 的判据同源。
 #[test]
-fn separable_blends_fall_back_to_src_over_on_d3d12_until_dst_copy_is_wired() {
+fn per_run_dst_refresh_on_d3d12() {
+    use zephyra_core::filter::BlendMode;
+    let s = SIZE as f32;
+    let mut list = DisplayList::new();
+    let mut push = |order: u32,
+                    fill: Color,
+                    blend: BlendMode,
+                    layer: zephyra_core::paint::Layer| {
+        list.push(
+            zephyra_core::paint::SortKey { layer, z: 0, order },
+            Command::Quad {
+                rect: zephyra_core::core::Rect::new(0.0, 0.0, s, s),
+                radius: zephyra_core::core::CornerRadius { radius: 0.0 },
+                fill,
+                stroke: None,
+                filter: zephyra_core::filter::FilterChain::none(),
+                blend,
+            },
+        );
+    };
+    push(0, Color::rgb(0.5, 0.5, 0.5), BlendMode::default(), zephyra_core::paint::Layer::Background);
+    push(1, Color::rgb(1.0, 0.0, 0.0), BlendMode::Darken, zephyra_core::paint::Layer::Content);
+    push(2, Color::rgb(0.0, 0.0, 1.0), BlendMode::Screen, zephyra_core::paint::Layer::Overlay);
+    list.sort();
+
+    let (px, _) = render_and_readback(&list, Color::rgb(0.0, 0.0, 0.0));
+    let p = at_rgba(&px, SIZE / 2, SIZE / 2);
+    assert!(
+        (p[0] as i32 - 128).abs() <= 4 && p[1] <= 4 && p[2] >= 252,
+        "两段非默认模式应依次生效（期望 128,0,255），实得 {p:?}。\
+         绿若为 128 = `g_dst` 只在帧首拷了一次"
+    );
+}
+
+/// 可分离 / 非可分离那 14 个模式在 D3D12 上也必须**真的**生效。
+///
+/// # 判据为什么与 D3D11 相同却要再写一遍
+///
+/// 两个后端从**同一份** `.hlsl` 与**同一份** `DisplayList` 出发，但
+/// `g_dst` 的拷贝、`t1` 的绑定、PSO 的选择是各写各的。任何一边漂移（漏绑
+/// `t1`、PSO 用了 `SrcOver`、副本格式与 RT 不一致）都只会在这边暴露 ——
+/// 共享代码的正确性不能替代两边各自的像素证据。
+///
+/// 背景中灰 + 源纯红，`Darken` 在预乘空间下的期望：
+///
+/// ```text
+///   B = min(Cd, Cs) = (0.5, 0, 0) → 128,0,0
+///   退化 SrcOver     → 255,0,0
+/// ```
+#[test]
+fn separable_blends_are_applied_on_d3d12() {
     use zephyra_core::filter::BlendMode;
     let s = SIZE as f32;
     let mut list = DisplayList::new();
@@ -553,8 +602,9 @@ fn separable_blends_fall_back_to_src_over_on_d3d12_until_dst_copy_is_wired() {
     let (px, _) = render_and_readback(&list, Color::rgb(0.0, 0.0, 0.0));
     let p = at_rgba(&px, SIZE / 2, SIZE / 2);
     assert!(
-        p[0] >= 252 && p[1] <= 3 && p[2] <= 3,
-        "Darken 在 D3D12 上应退回 SrcOver 得 (255,0,0)，实得 {p:?}。\
-         若它已经生效，请把这条测试翻过来改成断言真实效果"
+        (p[0] as i32 - 128).abs() <= 4 && p[1] <= 4 && p[2] <= 4,
+        "Darken 在 D3D12 上应生效得 (128,0,0)，实得 {p:?}。\
+         若是 (255,0,0) = 退回了 SrcOver —— 检查 `RenderCtx::rt` 是否给了、\
+         `refresh_dst_copy` 是否成功、PSO 是否配了 `Src`"
     );
 }
