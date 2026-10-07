@@ -34,8 +34,11 @@ use windows::Win32::Graphics::Direct3D11::{
     // 枚举类型是 `D3D11_FILL_MODE`，常量却是 `D3D11_FILL_SOLID`。同理
     // `D3D11_CULL_NONE` / `D3D11_COMPARISON_NEVER` / `D3D11_BLEND_ONE`。
     // 写记忆里的名字会得到"no associated item"错误。
-    D3D11_BIND_VERTEX_BUFFER, D3D11_BIND_FLAG, D3D11_BLEND_DESC, D3D11_BLEND_INV_SRC_ALPHA,
-    D3D11_BLEND_ONE, D3D11_BLEND_OP_ADD, D3D11_BUFFER_DESC,
+    D3D11_BIND_VERTEX_BUFFER, D3D11_BIND_FLAG, D3D11_BLEND, D3D11_BLEND_DESC,
+    D3D11_BLEND_DEST_ALPHA, D3D11_BLEND_DEST_COLOR, D3D11_BLEND_INV_DEST_ALPHA, D3D11_BLEND_INV_DEST_COLOR,
+    D3D11_BLEND_INV_SRC_ALPHA, D3D11_BLEND_INV_SRC_COLOR, D3D11_BLEND_ONE,
+    D3D11_BLEND_SRC_ALPHA, D3D11_BLEND_SRC_COLOR, D3D11_BLEND_ZERO,
+    D3D11_BLEND_OP_ADD, D3D11_BUFFER_DESC,
     D3D11_COLOR_WRITE_ENABLE_ALL,
     D3D11_COMPARISON_NEVER, D3D11_CULL_NONE, D3D11_FILL_SOLID,
     D3D11_FILTER_MIN_MAG_MIP_LINEAR,
@@ -49,6 +52,7 @@ use windows::Win32::Graphics::Direct3D11::{
 };
 
 use zephyra_core::core::Color;
+use zephyra_core::filter::{BlendMode, Coeff};
 use zephyra_core::frame::Damage;
 use zephyra_core::paint::DisplayList;
 
@@ -136,6 +140,120 @@ fn create_vertex_buffer(
     create_dynamic_buffer(device, capacity, D3D11_BIND_VERTEX_BUFFER)
 }
 
+/// `Coeff` → D3D11 的**颜色**混合因子。
+///
+/// **穷尽**匹配：漏一个变体就是编译错误，而手抄因子表的版本漏一条只是某个模式
+/// 静默画错。逐项与 Skia `SkBlendMode_AsCoeff` 的 `kCoeffs` 对齐。
+fn d3d11_factor(c: Coeff) -> D3D11_BLEND {
+    match c {
+        Coeff::Zero => D3D11_BLEND_ZERO,
+        Coeff::One => D3D11_BLEND_ONE,
+        Coeff::SrcColor => D3D11_BLEND_SRC_COLOR,
+        Coeff::OneMinusSrcColor => D3D11_BLEND_INV_SRC_COLOR,
+        Coeff::DstColor => D3D11_BLEND_DEST_COLOR,
+        Coeff::OneMinusDstColor => D3D11_BLEND_INV_DEST_COLOR,
+        Coeff::SrcAlpha => D3D11_BLEND_SRC_ALPHA,
+        Coeff::OneMinusSrcAlpha => D3D11_BLEND_INV_SRC_ALPHA,
+        Coeff::DstAlpha => D3D11_BLEND_DEST_ALPHA,
+        Coeff::OneMinusDstAlpha => D3D11_BLEND_INV_DEST_ALPHA,
+    }
+}
+
+/// `Coeff` → D3D11 的 **alpha 通道**混合因子。
+///
+/// # ⚠ 不能直接复用 [`d3d11_factor`] —— D3D11 **不允许**在 alpha 通道上用颜色因子
+///
+/// `CreateBlendState` 对 `SrcBlendAlpha` / `DestBlendAlpha` 只接受
+/// `ZERO` / `ONE` / `SRC_ALPHA` / `INV_SRC_ALPHA` / `DEST_ALPHA` / `INV_DEST_ALPHA`。
+/// 填 `SRC_COLOR` 会得到 `E_INVALIDARG`（0x80070057）。
+///
+/// 这个坑是实测撞出来的：`Modulate (0, Cs)` 与 `Screen (1, 1−Cs)` 是 15 个系数
+/// 模式里**唯二**用到颜色因子的，于是恰好是它们建不出来。症状很难定位 ——
+/// `Renderer::new` 整个失败，报错只说"参数错误"，不会告诉你是哪个字段。
+///
+/// # 正确的映射：颜色系数换成它的 alpha 对偶
+///
+/// `Cs → as`、`1−Cs → 1−as`、`Cd → ad`、`1−Cd → 1−ad`，其余原样。
+/// 这不是近似，而是 Porter-Duff 代数在预乘空间下的正确结果。逐个核对 15 个模式：
+///
+/// ```text
+///   Clear    (0,0)        → a = 0                  ✓
+///   Src      (1,0)        → a = as                 ✓
+///   Dst      (0,1)        → a = ad                 ✓
+///   SrcOver  (1,1−as)     → a = as+(1−as)·ad        ✓
+///   DstOver  (1−ad,1)     → a = (1−ad)·as+ad        ✓
+///   SrcIn    (ad,0)       → a = as·ad               ✓（预乘）
+///   DstIn    (0,as)       → a = ad·as               ✓
+///   SrcOut   (1−ad,0)     → a = as·(1−ad)           ✓
+///   DstOut   (0,1−as)     → a = ad·(1−as)           ✓
+///   SrcATop  (ad,1−as)    → a = as·ad+(1−as)·ad     ✓
+///   DstATop  (1−ad,as)    → a = (1−ad)·as+ad·as     ✓
+///   Xor      (1−ad,1−as)  → a = as·(1−ad)+ad·(1−as) ✓
+///   Plus     (1,1)        → a = as+ad               ✓
+///   Modulate (0,Cs)       → a = ad·as               ✓
+///   Screen   (1,1−Cs)     → a = as+ad·(1−as)        ✓
+/// ```
+fn d3d11_alpha_factor(c: Coeff) -> D3D11_BLEND {
+    match c {
+        Coeff::Zero => D3D11_BLEND_ZERO,
+        Coeff::One => D3D11_BLEND_ONE,
+        // 颜色系数 → alpha 对偶。见本函数的文档。
+        Coeff::SrcColor => D3D11_BLEND_SRC_ALPHA,
+        Coeff::OneMinusSrcColor => D3D11_BLEND_INV_SRC_ALPHA,
+        Coeff::DstColor => D3D11_BLEND_DEST_ALPHA,
+        Coeff::OneMinusDstColor => D3D11_BLEND_INV_DEST_ALPHA,
+        Coeff::SrcAlpha => D3D11_BLEND_SRC_ALPHA,
+        Coeff::OneMinusSrcAlpha => D3D11_BLEND_INV_SRC_ALPHA,
+        Coeff::DstAlpha => D3D11_BLEND_DEST_ALPHA,
+        Coeff::OneMinusDstAlpha => D3D11_BLEND_INV_DEST_ALPHA,
+    }
+}
+
+/// 按**声明顺序**取第 `i` 个混合模式。
+///
+/// 下标就是 `BlendMode as usize`，所以这是零成本的身份映射 —— 存在的意义只是
+/// 能在不写出 29 个分支的前提下遍历整张表。
+///
+/// ⚠ 它依赖枚举的声明顺序，而 `LAST_COEFF_MODE` / `LAST_SEPARABLE_MODE` 也是用
+/// `<=` 定义的，所以顺序本身就是契约：`zephyra-fx` 里的
+/// `unimplemented_blends_counts_only_modes_without_coeffs` 逐项对照 29 个名字，
+/// 顺序被改就会失败。
+fn mode_by_index(i: usize) -> BlendMode {
+    /// 与 `filter.rs` 的 `pub enum BlendMode` **逐项同名同序**。
+    const ALL: [BlendMode; BlendMode::COUNT] = [
+        BlendMode::Clear,
+        BlendMode::Src,
+        BlendMode::Dst,
+        BlendMode::SrcOver,
+        BlendMode::DstOver,
+        BlendMode::SrcIn,
+        BlendMode::DstIn,
+        BlendMode::SrcOut,
+        BlendMode::DstOut,
+        BlendMode::SrcATop,
+        BlendMode::DstATop,
+        BlendMode::Xor,
+        BlendMode::Plus,
+        BlendMode::Modulate,
+        BlendMode::Screen,
+        BlendMode::Overlay,
+        BlendMode::Darken,
+        BlendMode::Lighten,
+        BlendMode::ColorDodge,
+        BlendMode::ColorBurn,
+        BlendMode::HardLight,
+        BlendMode::SoftLight,
+        BlendMode::Difference,
+        BlendMode::Exclusion,
+        BlendMode::Multiply,
+        BlendMode::Hue,
+        BlendMode::Saturation,
+        BlendMode::Color,
+        BlendMode::Luminosity,
+    ];
+    ALL[i]
+}
+
 /// 渲染器：持有 D3D11 管线状态与常驻资源，回放 `DisplayList`。
 ///
 /// 设备与上下文**不归**本结构所有，而是由 [`crate::HostWindow`] 持有并按引用传入
@@ -145,6 +263,20 @@ fn create_vertex_buffer(
 pub struct Renderer {
     shaders: Shaders,
     blend: ID3D11BlendState,
+    /// 每个混合模式一个 `ID3D11BlendState`，下标即 `BlendMode as usize`。
+    ///
+    /// `None` = 该模式还不能用系数表达，退回 [`Self::blend`]（`SrcOver`）并计入
+    /// [`RenderReport::unimplemented_blends`][^r]。能用系数表达的 15 个
+    /// （`Clear`..`Screen`）都有实体。
+    ///
+    /// # 为什么由 `as_coeff()` **推导**而不是手抄 29 条因子表
+    ///
+    /// 手抄的那份要靠人肉对齐 Skia 的 `kCoeffs`，抄错一条就是某个混合模式静默
+    /// 画错 —— 而且**没有任何测试会失败**（几何、alpha、计数器全都正常）。推导则
+    /// 只需要一个 `Coeff → D3D11_BLEND` 的枚举映射，那是有编译器检查的穷尽匹配。
+    ///
+    /// [^r]: `zephyra_fx::quad::RenderReport`
+    blends: Vec<Option<ID3D11BlendState>>,
     rasterizer: ID3D11RasterizerState,
     sampler: ID3D11SamplerState,
     vertex_buffer: ID3D11Buffer,
@@ -287,6 +419,48 @@ impl Renderer {
         };
         let blend = create_state!("BlendState", device, CreateBlendState, &blend_desc);
 
+        // ---- 每个混合模式一个混合状态 ----
+        //
+        // 由 `BlendMode::as_coeff()` **推导**，不手抄因子表（理由见 `blends` 字段）。
+        //
+        // ⚠ `SrcOver` 由系数生成的结果与上面手写的那份**逐字段相同**
+        // （`(One, OneMinusSrcAlpha)` ⇒ `ONE/INV_SRC_ALPHA`，alpha 通道同理），
+        // 所以默认路径的像素一个都没变 —— 这条一致性是本表正确性的旁证。
+        let mut blends: Vec<Option<ID3D11BlendState>> = Vec::with_capacity(BlendMode::COUNT);
+        for i in 0..BlendMode::COUNT {
+            let Some((src, dst)) = mode_by_index(i).as_coeff() else {
+                // 不能用系数表达 ⇒ 留空，回放时退回 `SrcOver`。
+                blends.push(None);
+                continue;
+            };
+            let desc = D3D11_BLEND_DESC {
+                AlphaToCoverageEnable: windows::core::BOOL(0),
+                IndependentBlendEnable: windows::core::BOOL(0),
+                RenderTarget: [D3D11_RENDER_TARGET_BLEND_DESC {
+                    BlendEnable: windows::core::BOOL(1),
+                    SrcBlend: d3d11_factor(src),
+                    DestBlend: d3d11_factor(dst),
+                    BlendOp: D3D11_BLEND_OP_ADD,
+                    // alpha 通道用**同一对系数的 alpha 对偶**，不是同一对系数本身
+                    // —— D3D11 不允许 alpha 通道用颜色因子，见
+                    // [`d3d11_alpha_factor`]。
+                    SrcBlendAlpha: d3d11_alpha_factor(src),
+                    DestBlendAlpha: d3d11_alpha_factor(dst),
+                    BlendOpAlpha: D3D11_BLEND_OP_ADD,
+                    RenderTargetWriteMask: D3D11_COLOR_WRITE_ENABLE_ALL.0 as u8,
+                }; 8],
+            };
+            // 15 个系数模式按 D3D11 规范都**必须**建得出来；建不出来就是本函数
+            // 映射写错了，那是该炸的时候 —— 静默退化成 `SrcOver` 只会让某个模式
+            // 悄悄画错。
+            blends.push(Some(create_state!(
+                "BlendState",
+                device,
+                CreateBlendState,
+                &desc
+            )));
+        }
+
         // ---- 光栅化状态 ----
         //
         // 关掉背面剔除：圆角 SDF 在边缘处产生的三角形可能退化，剔除会让圆角出现
@@ -383,6 +557,7 @@ impl Renderer {
 
         Ok(Self {
             shaders,
+            blends,
             blend,
             rasterizer,
             sampler,
@@ -491,7 +666,8 @@ impl Renderer {
 
         // ---- 1. 展开成顶点流 ----
         let batch = quad::expand(list, size, |name| textures.contains(name));
-        let (all, image_first, _path_first) = batch.flatten();
+        let (all, _image_first, path_first) = batch.flatten();
+        let runs = batch.runs;
         let mut report = batch.report;
         report.vertex_bytes = (all.len() * std::mem::size_of::<Vertex>()) as u64;
 
@@ -733,71 +909,63 @@ impl Renderer {
         }
 
         // `DrawIndexed` 而**不是** `DrawIndexedInstanced`：索引里已经逐四边形加好了
-        // 顶点基址（`quad::expand_indices`），所以这就是 N 个图元的一次普通绘制。
+// ---- 4. 逐段回放：一段一次 draw ----
         //
-        // 用实例化 + 单份索引会画出 N 份**重叠的同一个**四边形 —— 不报错，症状是
-        // 画面只剩那个全屏背景色（因为第一个恰好就是背景）。这是本渲染器踩过的
-        // 最隐蔽的一个 bug，理由见 [`quad::expand_indices`]。
-        let solid_quads = (batch.solid.len() / 4) as u32;
-
-        // ---- 4. 矩形 + 字形：一次 draw ----
+        // 为什么按 [`quad::DrawRun`] 走而不是把 solid / images / paths 三段写死：
+        // 混合模式是**渲染管线状态**，一次 draw 只能有一种。两段相邻的图元若混合
+        // 模式不同，就必须分成两次 draw —— 而三段写死的写法表达不了这件事，
+        // 只能给整帧套一个状态（症状是"有一个的效果没生效"，而所有计数都正常）。
         //
-        // 它们不采样纹理（`kind == 0` 那条分支根本不看 `g_tex`），但片元着色器仍然
-        // 声明了 `g_tex`，所以 SRV 必须绑着一个**有效**对象 —— 否则 D3D11 在某些
-        // 驱动上会解除引用并崩溃。用图集兜住。
-        if solid_quads > 0 {
-            unsafe {
-                context.PSSetShaderResources(0, Some(&[Some(self.atlas_srv.clone())]));
-                // `IndexCount = solid_quads * 6`：索引已逐四边形展开，所以一次普通
-                // 绘制就画完全部矩形与字形（见 `quad::expand_indices` 的说明，
-                // 为什么不能用实例化）。                // "索引/顶点链路本身"与"多批次合批"分开排查。
-                context.DrawIndexed(solid_quads * 6, 0, 0);
-            }
-        }
-
-        // ---- 5. 图像：每种纹理一批 ----
-        //
-        // 一批一次 draw，因为一次 draw 只能绑一张 SRV。批内是 `DisplayList` 的
-        // 连续切片（顺序由 `quad::expand` 保证），所以把不连续的同纹理合批会改变
-        // 可见结果 —— 半透明图像最明显。
-        // 索引区间而非顶点区间：索引已逐四边形展开，图像批在索引流里的起点是
-        // `image_first * 6`，长度是 `(n/4) * 6`。
-        //
-        // `cursor` 是**顶点**计数（`batch.batches` 里记的是顶点数），换算成
-        // 四边形再乘 6 得到索引偏移 —— 混用这两个单位是本文件里最容易搞错的地方，
-        // 因为错的时候 `StartIndexLocation` 仍是个合法值，只是不报错地画错位置。
-        let mut cursor_quads = image_first / 4;
-        for (name, n) in &batch.batches {
-            if *n == 0 {
+        // `runs` 的不变量是「恰好划分整条顶点流」，所以循环覆盖全部几何，既不漏
+        // 也不重叠。见 `quad::DrawRun` 的文档。
+        for run in &runs {
+            if run.vertex_count == 0 {
                 continue;
             }
-            // 顶点收集阶段已过滤掉未注册纹理，所以这里必然查得到。
-            let Some(srv) = textures.srv(name) else {
-                continue;
+            // 混合状态。`None` = 该模式还不能用系数表达（11 个可分离 + 4 个非可分离），
+            // 退回 `SrcOver` 并由 `RenderReport::unimplemented_blends` 记一笔。
+            //
+            // ⚠ 退回而不是**跳过**：跳过会让元素凭空消失，比"效果没生效"更难排查。
+            let blend = match &self.blends[run.blend as usize] {
+                Some(b) => b,
+                None => &self.blend,
             };
-            let quads = *n / 4;
+            // 纹理绑定。只有 `Command::Image` 逐段换绑定；矩形 / 字形 / 多边形记
+            // `None`，绑图集兜住（片元着色器仍然声明了 `g_tex`，缺 SRV 时某些驱动
+            // 会解除引用并崩溃 —— 这是本文件另一处实测踩过的静默失败）。
+            let srv = match &run.texture {
+                Some(name) => match textures.srv(name) {
+                    Some(s) => s,
+                    // 顶点收集阶段已过滤掉未注册纹理，所以这里本不该发生。
+                    None => continue,
+                },
+                None => self.atlas_srv.clone(),
+            };
+            // 索引区间。
+            //
+            // ⚠ 两种单位在这里交汇：`runs` 记的是**顶点**下标，而 `DrawIndexed` 要的是
+            // **索引**下标。四边形 4 顶点 ↔ 6 索引，所以要 `× 6 / ÷ 4`；多边形则是
+            // 1:1，且它的索引区在 `path_index_start` 之后。混用这两个单位时
+            // `StartIndexLocation` 仍是个合法值 —— 只是不报错地画错位置。
+            let (index_start, index_count) = if run.first_vertex >= path_first {
+                (
+                    path_index_start + (run.first_vertex - path_first),
+                    run.vertex_count,
+                )
+            } else {
+                (
+                    (run.first_vertex / 4) * 6,
+                    (run.vertex_count / 4) * 6,
+                )
+            };
             unsafe {
-                context.PSSetShaderResources(0, Some(&[Some(srv.clone())]));
-                context.DrawIndexed(quads * 6, cursor_quads * 6, 0);
-            }
-            cursor_quads += quads;
-        }
-
-        // ---- 6. 多边形：一次 draw ----
-        //
-        // 独立于上面两段的原因：顶点数不是 4 的倍数，索引规则也不同
-        // （见 `quad::expand_indices_with_paths`）。
-        //
-        // ⚠ 不采样纹理，但仍要绑一张有效 SRV —— `g_tex` 在 PS 里被声明了，
-        // 某些驱动会在 SRV 缺失时解除引用并崩溃（见上面 solid 那段的同类注释）。
-        // 绑图集即可，反正这一分支根本不读它。
-        if path_tris > 0 {
-            unsafe {
-                context.PSSetShaderResources(0, Some(&[Some(self.atlas_srv.clone())]));
-                context.DrawIndexed(path_tris as u32 * 3, path_index_start, 0);
+                context.OMSetBlendState(blend, None, 0xFFFF_FFFF);
+                context.PSSetShaderResources(0, Some(&[Some(srv)]));
+                // `DrawIndexed` 而**不是** `DrawIndexedInstanced`：索引里已经逐四边形
+                // 加好了顶点基址（见 `quad::expand_indices`）。
+                context.DrawIndexed(index_count, index_start, 0);
             }
         }
-
         report
     }
 

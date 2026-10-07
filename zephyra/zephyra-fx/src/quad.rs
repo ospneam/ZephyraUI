@@ -546,6 +546,13 @@ pub struct RenderReport {
     /// 与 [`Self::unimplemented_filters`] 同理：混合模式要由后端换混合状态，
     /// 几何展开层看不到它。
     pub unimplemented_blends: usize,
+    ///
+    /// # 它数的是"**还差多少**"，不是"有几个非默认模式"
+    ///
+    /// 能用系数对表达的 15 个混合模式（`Clear`..`Screen`）可以直接映射成 D3D 的混合
+    /// 因子，不需要片元着色器配合；再往后的 14 个才需要 PS 变体。判据是
+    /// [`as_coeff`](zephyra_core::filter::BlendMode::as_coeff)，见
+    /// [`blend_is_unimplemented`]。
     /// 本次写入的顶点字节数。
     ///
     /// ⚠ **`expand` 不填这个字段** —— 它由渲染器在顶点流算出来之后写入（见
@@ -1074,7 +1081,7 @@ pub fn expand_translated_into(
                 if !filter.is_identity() {
                     out.report.unimplemented_filters += 1;
                 }
-                if *blend != zephyra_core::filter::BlendMode::default() {
+                if blend_is_unimplemented(*blend) {
                     out.report.unimplemented_blends += 1;
                 }
                 let (stroke_color, stroke_w) = match stroke {
@@ -1150,7 +1157,7 @@ pub fn expand_translated_into(
                 if !filter.is_identity() {
                     out.report.unimplemented_filters += 1;
                 }
-                if *blend != zephyra_core::filter::BlendMode::default() {
+                if blend_is_unimplemented(*blend) {
                     out.report.unimplemented_blends += 1;
                 }
                 let rect = intersect(shift(*dst), clip.unwrap_or(shift(*dst)));
@@ -1179,7 +1186,7 @@ pub fn expand_translated_into(
                 if !filter.is_identity() {
                     out.report.unimplemented_filters += 1;
                 }
-                if *blend != zephyra_core::filter::BlendMode::default() {
+                if blend_is_unimplemented(*blend) {
                     out.report.unimplemented_blends += 1;
                 }
                 if color.a <= 0.0 || glyphs.is_empty() {
@@ -1222,7 +1229,7 @@ pub fn expand_translated_into(
                 if !filter.is_identity() {
                     out.report.unimplemented_filters += 1;
                 }
-                if *blend != zephyra_core::filter::BlendMode::default() {
+                if blend_is_unimplemented(*blend) {
                     out.report.unimplemented_blends += 1;
                 }
                 if fill.a <= 0.0 || vertices.is_empty() {
@@ -1444,6 +1451,24 @@ pub fn shift_rect(r: Rect, t: Point) -> Rect {
         return r;
     }
     Rect::new(r.x + t.x, r.y + t.y, r.width, r.height)
+}
+
+/// 该混合模式是否**尚未**能在 GPU 上表达。
+///
+/// 判据是 [`as_coeff`](zephyra_core::filter::BlendMode::as_coeff)：能用系数对表达的
+/// 那 15 个（`Clear`..`Screen`）可以直接映射成 `D3D11_BLEND_*` / `D3D12_BLEND_*`，
+/// 不需要片元着色器配合。再往后的 14 个（11 个可分离 + 4 个非可分离）需要 PS 变体
+/// 或 `SetLum` / `SetSat`。
+///
+/// # 为什么判据从"非默认"改成这个
+///
+/// 原来是 `blend != default`，于是 [`RenderReport::unimplemented_blends`] 的含义是
+/// "本帧有几个非默认混合模式" —— 那是**用法**的统计，不是**进度**的统计。而它的
+/// 文档写着"某个非零值表示'效果被静默忽略'"，两种含义对不上。
+///
+/// 改成"还不能表达"之后它就成了 E4.1 的判据：那 15 个做完，这个数对它们归零。
+fn blend_is_unimplemented(b: zephyra_core::filter::BlendMode) -> bool {
+    b != zephyra_core::filter::BlendMode::default() && b.as_coeff().is_none()
 }
 
 /// 两个矩形求交（裁剪用）。
@@ -2718,6 +2743,70 @@ fn translate_also_applies_to_glyphs() {
             );
         }
         assert_eq!(report.quads, 2, "几何统计也不该变（1 矩形 + 1 图像；Path 计入 path_triangles）");
+    }
+
+
+/// `unimplemented_blends` 只数**还不能表达**的混合模式 —— E4.1 的判据。
+    ///
+    /// 逐个跑**全部 29 个**而不是抽样：判据是"整张表"，抽样只能证明抽样的那几个，
+    /// 而漏掉一个模式的后果正是"那个模式静默失效"。
+    #[test]
+    fn unimplemented_blends_counts_only_modes_without_coeffs() {
+        use zephyra_core::filter::BlendMode;
+        // 按 `filter.rs` 里枚举的**声明顺序**逐项列出 —— 顺序本身就是契约的一部分
+        // （`LAST_COEFF_MODE` / `LAST_SEPARABLE_MODE` 都是靠 `<=` 定义的）。
+        let all: [BlendMode; 29] = [
+            BlendMode::Clear,        //  0
+            BlendMode::Src,          //  1
+            BlendMode::Dst,          //  2
+            BlendMode::SrcOver,      //  3  ← 默认
+            BlendMode::DstOver,      //  4
+            BlendMode::SrcIn,        //  5
+            BlendMode::DstIn,        //  6
+            BlendMode::SrcOut,       //  7
+            BlendMode::DstOut,       //  8
+            BlendMode::SrcATop,      //  9
+            BlendMode::DstATop,      // 10
+            BlendMode::Xor,          // 11
+            BlendMode::Plus,         // 12
+            BlendMode::Modulate,     // 13
+            BlendMode::Screen,       // 14  ← 最后一个系数可表达的
+            BlendMode::Overlay,      // 15
+            BlendMode::Darken,       // 16
+            BlendMode::Lighten,      // 17
+            BlendMode::ColorDodge,   // 18
+            BlendMode::ColorBurn,    // 19
+            BlendMode::HardLight,    // 20
+            BlendMode::SoftLight,    // 21
+            BlendMode::Difference,   // 22
+            BlendMode::Exclusion,    // 23
+            BlendMode::Multiply,     // 24  ← 最后一个可分离的
+            BlendMode::Hue,          // 25
+            BlendMode::Saturation,   // 26
+            BlendMode::Color,        // 27
+            BlendMode::Luminosity,   // 28
+        ];
+        assert_eq!(all.len(), BlendMode::COUNT, "枚举个数与 COUNT 不符");
+
+        for (i, &m) in all.iter().enumerate() {
+            let b = expand(
+                &list_of(vec![Command::Quad {
+                    rect: Rect::new(0.0, 0.0, 10.0, 10.0),
+                    radius: zephyra_core::core::CornerRadius { radius: 0.0 },
+                    fill: Color::rgb(1.0, 1.0, 1.0),
+                    stroke: None,
+                    filter: zephyra_core::filter::FilterChain::none(),
+                    blend: m,
+                }]),
+                (100, 100),
+                |_| true,
+            );
+            let expect = if m.as_coeff().is_some() { 0 } else { 1 };
+            assert_eq!(
+                b.report.unimplemented_blends, expect,
+                "{m:?}（下标 {i}）：能系数表达 ⇒ 不该计入；不能 ⇒ 该计入"
+            );
+        }
     }
 }
 

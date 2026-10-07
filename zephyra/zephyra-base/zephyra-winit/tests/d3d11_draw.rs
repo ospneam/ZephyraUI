@@ -802,6 +802,392 @@ fn shader_assets_are_in_sync() {
     }
 }
 
+
+/// 纯色背景 + 带指定混合模式的纯色前景。
+///
+/// ⚠ 只能挑**系数可表达**的那 15 个（`Clear`..`Screen`）。`Multiply` / `Overlay` 这类
+/// 属于「可分离」那批，需要片元着色器变体（E4.2），现在会**故意**退回 `SrcOver` ——
+/// 拿它写测试会得到"混合没生效"的结论，而那其实是预期行为。
+fn blend_probe(mode: zephyra_core::filter::BlendMode) -> DisplayList {
+    let s = SIZE as f32;
+    let mut list = DisplayList::new();
+    list.push(
+        SortKey {
+            layer: zephyra_core::paint::Layer::Background,
+            z: 0,
+            order: 0,
+        },
+        Command::Quad {
+            rect: Rect::new(0.0, 0.0, s, s),
+            radius: CornerRadius { radius: 0.0 },
+            // 中灰：与红色相乘得"红的一半"，与相加得 (255,128,128)，都和 SrcOver 差得开。
+            fill: Color::rgb(0.5, 0.5, 0.5),
+            stroke: None,
+            filter: zephyra_core::filter::FilterChain::none(),
+            blend: zephyra_core::filter::BlendMode::default(),
+        },
+    );
+    list.push(
+        SortKey {
+            layer: zephyra_core::paint::Layer::Content,
+            z: 0,
+            order: 1,
+        },
+        Command::Quad {
+            rect: Rect::new(0.0, 0.0, s, s),
+            radius: CornerRadius { radius: 0.0 },
+            fill: Color::rgb(1.0, 0.0, 0.0),
+            stroke: None,
+            filter: zephyra_core::filter::FilterChain::none(),
+            blend: mode,
+        },
+    );
+    list.sort();
+    list
+}
+
+/// 把一条列表渲染到离屏并回读。
+fn render_probe(list: &DisplayList) -> Vec<u8> {
+    render_probe_with(list, Color::rgb(0.0, 0.0, 0.0))
+}
+
+/// 同上，但 clear 色可指定。
+///
+/// ⚠ clear 默认是**不透明**黑（alpha=1），所以画布的 dst alpha 恒为 1 ——
+/// 那样任何 s·ad 形式的 alpha 判据都会退化成 s，两种映射分不开。要测
+/// alpha 因子就得让 clear 的 alpha 为 0。
+fn render_probe_with(list: &DisplayList, clear: Color) -> Vec<u8> {
+    let Ok(gpu) = Gpu::new() else {
+        panic!("建不出 D3D11 设备");
+    };
+    let (rtv, tex) = offscreen_target(&gpu);
+    let mut renderer = Renderer::new(&gpu.device).expect("渲染器应当能建出来");
+    let textures = TextureTable::new();
+    renderer.render(RenderCtx {
+        context: &gpu.context,
+        device: &gpu.device,
+        rtv: &rtv,
+        list,
+        size: (SIZE, SIZE),
+        clear,
+        textures: &textures,
+        damage: zephyra_core::frame::Damage::Full,
+    });
+    read_back(&gpu, &tex)
+}
+
+/// 离屏 RT 是 **BGRA**，`Color` 是 RGBA —— 重排成 `(r, g, b, a)` 再断言。
+fn probe_at(px: &[u8], x: u32, y: u32) -> [u8; 4] {
+    let i = (y as usize * SIZE as usize + x as usize) * 4;
+    [px[i + 2], px[i + 1], px[i], px[i + 3]]
+}
+
+/// 三个采样点：左上、中心、右下（避开抗锯齿带）。
+const PROBE_POINTS: [(u32, u32); 3] = [(8, 8), (32, 32), (55, 55)];
+
+/// `Modulate (0, Cs)` 必须真的逐通道相乘。
+///
+/// # 为什么这条能区分它与"没生效"
+///
+/// 背景 50% 灰、源纯红：
+///
+/// ```text
+///   Modulate  1.0·0.5 = 0.5 ⇒ 128      要的行为
+///   SrcOver   纯红覆盖 ⇒ 255           效果没生效 / 被静默忽略
+/// ```
+///
+/// 两者差得很开，所以这条断言**不可能**在"混合状态没生效"时也通过 —— 而后者正是
+/// E4.1 之前的状态。
+#[test]
+fn modulate_blend_is_applied_on_gpu() {
+    let px = render_probe(&blend_probe(zephyra_core::filter::BlendMode::Modulate));
+    for (x, y) in PROBE_POINTS {
+        let p = probe_at(&px, x, y);
+        assert!(
+            (p[0] as i32 - 128).abs() <= 3,
+            "Modulate 下红通道应是 0.5（128）；SrcOver 会是 255 —— 实得 {p:?} @({x},{y})"
+        );
+        assert!(
+            p[1] <= 3 && p[2] <= 3,
+            "绿蓝应被乘成 0，实得 {p:?} @({x},{y})"
+        );
+    }
+}
+
+/// `Plus (1, 1)` 必须真的相加（并被钳到 1）。
+///
+/// 选它是因为结果**只可能**来自加法：`(255, 128, 128)`。SrcOver 会给纯红 `(255,0,0)`，
+/// Modulate 给 `(128,0,0)` —— 三者两两不同，所以这条断言对"用错系数"也敏感。
+#[test]
+fn plus_blend_is_applied_on_gpu() {
+    let px = render_probe(&blend_probe(zephyra_core::filter::BlendMode::Plus));
+    for (x, y) in PROBE_POINTS {
+        let p = probe_at(&px, x, y);
+        assert!(
+            p[0] >= 252 && (p[1] as i32 - 128).abs() <= 3 && (p[2] as i32 - 128).abs() <= 3,
+            "Plus 应得 (255,128,128)：红溢出、绿蓝相加。实得 {p:?} @({x},{y})"
+        );
+    }
+}
+
+/// `Clear` 必须把目标清成全零（含 alpha）—— 它是唯一**不读** `dst` 的模式。
+#[test]
+fn clear_blend_zeroes_the_target() {
+    let px = render_probe(&blend_probe(zephyra_core::filter::BlendMode::Clear));
+    for (x, y) in PROBE_POINTS {
+        assert_eq!(
+            probe_at(&px, x, y),
+            [0, 0, 0, 0],
+            "Clear 之后应是全 0（含 alpha）@({x},{y})"
+        );
+    }
+}
+
+/// `Dst (0, 1)` 只保留目标 —— 前景被完全丢弃。
+///
+/// 与 `Src` 合起来钉住两端：`Src` 得纯源色、`Dst` 得纯背景色。两条一起就说明
+/// 系数表的两端没被写反（写反的话这两条会**互换**，各自单独都能通过一半）。
+#[test]
+fn src_and_dst_blends_are_distinct() {
+    let src = render_probe(&blend_probe(zephyra_core::filter::BlendMode::Src));
+    let dst = render_probe(&blend_probe(zephyra_core::filter::BlendMode::Dst));
+    let (sp, dp) = (probe_at(&src, 32, 32), probe_at(&dst, 32, 32));
+    assert!(
+        sp[0] >= 252 && sp[1] <= 3 && sp[2] <= 3,
+        "Src 应得纯红 (255,0,0)，实得 {sp:?}"
+    );
+    assert!(
+        (dp[0] as i32 - 128).abs() <= 3 && (dp[1] as i32 - 128).abs() <= 3,
+        "Dst 应得背景灰 (128,128,128)，实得 {dp:?}"
+    );
+}
+
+/// 相邻几段混合模式不同 ⇒ 逐段换状态，每一段的效果都要生效。
+///
+/// # 这条钉住的是 E3 那条接缝
+///
+/// 以前绘制循环把三段写死、整帧套一个混合状态，"两段不同模式"这个情形根本表达不了。
+/// 现在按 `runs` 走，所以这一条同时验证：GPU 结果正确、`runs` 的切分在真实回放里
+/// 真的被用上、以及**顺序**没被打乱（重排会改变半透明叠加的可见结果，所以本实现
+/// 只合并相邻段、绝不重排）。
+#[test]
+fn adjacent_runs_with_different_blends_all_apply_in_order() {
+    let s = SIZE as f32;
+    let mut list = DisplayList::new();
+    let mut push = |order: u32,
+                    fill: Color,
+                    blend: zephyra_core::filter::BlendMode,
+                    layer: zephyra_core::paint::Layer| {
+        list.push(
+            SortKey {
+                layer,
+                z: 0,
+                order,
+            },
+            Command::Quad {
+                rect: Rect::new(0.0, 0.0, s, s),
+                radius: CornerRadius { radius: 0.0 },
+                fill,
+                stroke: None,
+                filter: zephyra_core::filter::FilterChain::none(),
+                blend,
+            },
+        );
+    };
+    // 灰底 → Modulate 红 ⇒ (0.5,0,0) → Plus 绿 ⇒ (0.5,1,0) ⇒ (128,255,0)
+    push(0, Color::rgb(0.5, 0.5, 0.5), zephyra_core::filter::BlendMode::default(), zephyra_core::paint::Layer::Background);
+    push(1, Color::rgb(1.0, 0.0, 0.0), zephyra_core::filter::BlendMode::Modulate, zephyra_core::paint::Layer::Content);
+    push(2, Color::rgb(0.0, 1.0, 0.0), zephyra_core::filter::BlendMode::Plus, zephyra_core::paint::Layer::Overlay);
+    list.sort();
+
+    let px = render_probe(&list);
+    let p = probe_at(&px, 32, 32);
+    assert!(
+        (p[0] as i32 - 128).abs() <= 3 && p[1] >= 252 && p[2] <= 3,
+        "三段应当依次生效、顺序不变，最终是 (128,255,0)。\
+         若中间那两段被整帧的 SrcOver 吃掉，会得到 (0,255,0) 或 (255,0,0)。实得 {p:?}"
+    );
+}
+
+/// 尚不能表达的混合模式必须**退回 SrcOver**，且**照常画**。
+///
+/// # 为什么这条重要
+///
+/// 退化方式选"退回 SrcOver"而不是"跳过这一段"：跳过会让元素凭空消失，而"效果没
+/// 生效"至少有迹可循（画出来颜色不对）。这是 fx 层早就定下的约定
+/// （`RenderReport::unimplemented_*` 那段注释），这里把它钉住。
+#[test]
+fn unsupported_blend_falls_back_to_src_over_and_still_draws() {
+    // `Multiply` 属于「可分离」那批（E4.2 才做），现在必然退回。
+    let px = render_probe(&blend_probe(zephyra_core::filter::BlendMode::Multiply));
+    let p = probe_at(&px, 32, 32);
+    assert!(
+        p[0] >= 252 && p[1] <= 3 && p[2] <= 3,
+        "Multiply 尚未实现，应退回 SrcOver 得纯红 (255,0,0) —— \
+         元素必须**画出来**，不能被跳过。实得 {p:?}"
+    );
+}
+
+/// `Modulate` 的 **alpha 通道**必须走 alpha 对偶（`Cs → as`），不是颜色系数。
+///
+/// # 为什么这条单独存在
+///
+/// `Modulate (0, Cs)` 是 15 个系数模式里**唯一**用到 `SrcColor` 的，所以只有它的
+/// alpha 因子会经过 [`d3d11_alpha_factor`] 那个映射。而 RGB 断言**看不到**这个映射
+/// 写没写错 —— 两边算出来的颜色一模一样。
+///
+/// 判据要**半透明背景**才分得开：
+///
+/// ```text
+///   背景 alpha = 0.5，源 alpha = 1
+///   正确  a = 0·as + as·ad = 0.5·1 = 0.5 ⇒ 128
+///   错(ONE) a = 0·as + 1·ad = 1·0.5     = 1.0 ⇒ 255
+/// ```
+///
+/// 背景与源都不透明时两者都是 1，所以那条 RGB 测试怎么写都抓不到。
+#[test]
+fn modulate_alpha_uses_the_alpha_analogue_not_the_color_factor() {
+    let s = SIZE as f32;
+    let mut list = DisplayList::new();
+    // 半透明灰底：压在黑 clear 上 ⇒ 合成后 alpha = 0.5
+    list.push(
+        SortKey {
+            layer: zephyra_core::paint::Layer::Background,
+            z: 0,
+            order: 0,
+        },
+        Command::Quad {
+            rect: Rect::new(0.0, 0.0, s, s),
+            radius: CornerRadius { radius: 0.0 },
+            fill: Color::rgba(0.5, 0.5, 0.5, 0.5),
+            stroke: None,
+            filter: zephyra_core::filter::FilterChain::none(),
+            blend: zephyra_core::filter::BlendMode::default(),
+        },
+    );
+    // 不透明红，Modulate
+    list.push(
+        SortKey {
+            layer: zephyra_core::paint::Layer::Content,
+            z: 0,
+            order: 1,
+        },
+        Command::Quad {
+            rect: Rect::new(0.0, 0.0, s, s),
+            radius: CornerRadius { radius: 0.0 },
+            // 源必须**半透明**：as=1 时 s·ad 与 d 数值相同，两种映射分不开。
+            fill: Color::rgba(1.0, 0.0, 0.0, 0.5),
+            stroke: None,
+            filter: zephyra_core::filter::FilterChain::none(),
+            blend: zephyra_core::filter::BlendMode::Modulate,
+        },
+    );
+    list.sort();
+
+    // clear 与源都必须**半透明**：`as == 1` 时 `as·ad` 与 `ad` 数值相同，
+    // 两种 alpha 映射分不开；`ad == 1`（不透明 clear）同理。
+    let px = render_probe_with(&list, Color::rgba(0.0, 0.0, 0.0, 0.0));
+    let p = probe_at(&px, 32, 32);
+    assert!(
+        (p[3] as i32 - 64).abs() <= 4,
+        "Modulate 的 alpha 应是 as·ad = 0.5·0.5 = 0.25（64）；\
+         若 alpha 通道把 SrcColor 当成 ONE，就会得到 ad = 0.5（128）。实得 {p:?}"
+    );
+    // 颜色侧顺带复核。期望 32：半透明灰在**预乘**空间里是 0.25，压在透明 clear 上
+    // 之后 dst 仍是 0.25；半透明红预乘后是 0.5，相乘得 0.125。
+    assert!(
+        (p[0] as i32 - 32).abs() <= 4 && p[1] <= 4 && p[2] <= 4,
+        "颜色侧应是 (32,0,0)（源 0.5 红 × 底 0.25 灰），实得 {p:?}"
+    );
+}
+
+/// 多边形（`Command::Path`）必须真的画出来。
+///
+/// # 这条钉住的是索引基址换算
+///
+/// `runs` 记的是**顶点**下标，而多边形的索引区在 `path_index_start` **之后**，
+/// 且顶点↔索引是 1:1（不像四边形要 `×6/÷4`）。这一支只被图标用，而图标在
+/// 单测里从不进 GPU 测试 —— 于是"漏加 `path_index_start`"这种错误**没有任何测试
+/// 会失败**：顶点照样上传、统计照样正常，只是多边形不出现。
+#[test]
+fn path_geometry_is_rendered() {
+    use std::sync::Arc;
+    let s = SIZE as f32;
+    // 一个铺满大半屏的三角形，顶点按逆时针给（`signed_area2` 非零即可）。
+    let verts: Arc<[zephyra_core::paint::Vertex]> = Arc::from(vec![
+        zephyra_core::paint::Vertex {
+            position: zephyra_core::core::Point {
+                x: s * 0.1,
+                y: s * 0.1,
+            },
+            uv: zephyra_core::core::Point { x: 0.0, y: 0.0 },
+        },
+        zephyra_core::paint::Vertex {
+            position: zephyra_core::core::Point {
+                x: s * 0.9,
+                y: s * 0.1,
+            },
+            uv: zephyra_core::core::Point { x: 0.0, y: 0.0 },
+        },
+        zephyra_core::paint::Vertex {
+            position: zephyra_core::core::Point {
+                x: s * 0.1,
+                y: s * 0.9,
+            },
+            uv: zephyra_core::core::Point { x: 0.0, y: 0.0 },
+        },
+    ]);
+    let mut list = DisplayList::new();
+    // ⚠ 必须先有一个四边形：多边形的索引起点是 path_index_start，而它等于前面
+    // 四边形的索引总数。列表里只有多边形时它是 0，于是
+    // 「漏加 path_index_start」这个错误**数值上等价于正确写法**，测不出来。
+    list.push(
+        SortKey {
+            layer: zephyra_core::paint::Layer::Background,
+            z: 0,
+            order: 0,
+        },
+        Command::Quad {
+            rect: Rect::new(0.0, 0.0, s, s),
+            radius: CornerRadius { radius: 0.0 },
+            // 必须**不透明**：fill.a == 0 的四边形会被 ill.a <= 0.0 直接跳过，
+            // 于是索引流里仍然没有四边形，path_index_start 还是 0。
+            fill: Color::rgb(0.0, 0.0, 1.0),
+            stroke: None,
+            filter: zephyra_core::filter::FilterChain::none(),
+            blend: zephyra_core::filter::BlendMode::default(),
+        },
+    );
+    list.push(
+        SortKey {
+            layer: zephyra_core::paint::Layer::Content,
+            z: 0,
+            order: 1,
+        },
+        Command::Path {
+            vertices: verts,
+            fill: Color::rgb(0.0, 1.0, 0.0),
+            filter: zephyra_core::filter::FilterChain::none(),
+            blend: zephyra_core::filter::BlendMode::default(),
+        },
+    );
+    list.sort();
+
+    let px = render_probe_with(&list, Color::rgba(0.0, 0.0, 0.0, 0.0));
+    // 三角形内部（约 1/3 处）必须是绿的；外部必须仍是透明。
+    let inside = probe_at(&px, 22, 22);
+    assert!(
+        inside[1] >= 200 && inside[0] <= 40 && inside[2] <= 40,
+        "三角形内部应是纯绿，实得 {inside:?}"
+    );
+    let outside = probe_at(&px, 58, 58);
+    assert_eq!(
+        outside,
+        [0, 0, 255, 255],
+        "三角形外应是不透明蓝底（索引区间算错时这里会被三角形盖住）"
+    );
+}
+
 /// 半透明 clear 色必须**预乘**后写进目标。
     ///
     /// # 为什么这条能抓不到回归，而 SrcOver 抓不到
