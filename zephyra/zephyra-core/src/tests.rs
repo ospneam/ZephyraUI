@@ -1052,6 +1052,7 @@ mod effect_contract {
     use crate::element::Element;
     use crate::filter::{BlendMode, Filter, FilterChain};
     use crate::id::NodeTag;
+    use crate::icon::{IconSet, IconSource};
     use crate::layout::layout;
     use crate::node::Node;
     use crate::paint::{render, Command, DisplayList};
@@ -1109,6 +1110,170 @@ mod effect_contract {
         assert_eq!(filters.len(), 1, "只有根节点一条 Quad");
         assert!(!filters[0].is_identity(), "blur 必须传下去");
         assert_eq!(filters[0].outsets().left, 6.0, "σ=2 ⇒ 3σ = 6");
+    }
+
+    /// 走完 声明 → 布局 → 渲染，且带上图标集。
+    fn render_with_icons(element: &Element, icons: &'static IconSet) -> DisplayList {
+        let theme = Theme::dark();
+        let engine = engine();
+        let ctx = Context::with_engine(&theme, &engine).with_icons(icons);
+        let mut node = Node::from_element(element);
+        layout(
+            &mut node,
+            Rect::new(0.0, 0.0, 200.0, 100.0),
+            ctx,
+        );
+        let mut list = DisplayList::new();
+        render(&node, ctx, &mut list);
+        list
+    }
+
+    /// `bounds_of_vertices` 的直接单测。
+///
+/// ⚠ 顶点顺序是刻意选的：**首顶点在内部**，后两个才是包围盒的对角。
+///
+/// 为什么端到端那条（`带滤镜的矢量图标产出离屏需求`）替代不了这条：它走真实图标
+/// 的三角化网格，而那个网格的**首顶点恰好是极值角点** —— 于是「忘了更新 max 边」
+/// 这个变异算出来的结果与正确答案**恰好相同**，测试一直显示绿色却什么也没验证。
+/// 这个洞是**变异测试抓出来的**，不是看代码想出来的。
+#[test]
+fn 顶点紧包围盒_首顶点落在内部() {
+    use crate::paint::{bounds_of_vertices, Vertex};
+    let v = |x: f32, y: f32| Vertex {
+        position: Point::new(x, y),
+        uv: Point::new(0.0, 0.0),
+    };
+    assert_eq!(
+        bounds_of_vertices(&[v(20.0, 30.0), v(10.0, 20.0), v(33.0, 47.0)]),
+        Rect::new(10.0, 20.0, 23.0, 27.0),
+        "min 与 max 必须分别由不同顶点得出；首顶点在内部时这条才有意义"
+    );
+    // x 与 y 刻意不是整数对齐：x/w 与 y/h 必须**分别**来自 min 与 max，混了会露馅
+    assert_eq!(
+        bounds_of_vertices(&[v(20.0, 30.0), v(10.0, 20.0), v(33.0, 47.0)]).width,
+        23.0,
+        "宽 = max.x − min.x，不能取反"
+    );
+    assert_eq!(
+        bounds_of_vertices(&[v(7.0, 9.0)]),
+        Rect::new(7.0, 9.0, 0.0, 0.0),
+        "单顶点 = 零尺寸矩形，原点在该顶点"
+    );
+    assert_eq!(
+        bounds_of_vertices(&[]),
+        Rect::new(0.0, 0.0, 0.0, 0.0),
+        "空列表 = 零尺寸（与 union_of_quads 同一约定，不用 Option）"
+    );
+}
+
+/// 带滤镜的矢量图标产出离屏需求。
+    ///
+    /// 「矢量图标 + 投影/模糊被静默忽略」就是这个缺口：以前 `Path` 分支直接
+    /// `continue`，于是图标照常画、只是不开离屏，效果没发生也不报任何错。
+    #[test]
+    fn 带滤镜的矢量图标产出离屏需求() {
+        // 方框只占 24×24 view_box 的中间（8..16），所以三角化后的紧包围盒
+        // **明显小于**元素自身的 24×24 —— 让「误用布局矩形」的实现露馅。
+        let icons: &'static IconSet = Box::leak(Box::new(
+            IconSet::new().with("sq", IconSource::Path("M8 8L16 8L16 16L8 16Z")),
+        ));
+        let chain = FilterChain::single(Filter::Blur {
+            sigma_x: 2.0,
+            sigma_y: 2.0,
+        });
+        // ⚠ 图标必须**嵌在**根容器里：根节点自身会被拉伸铺满可用区，图标直接当根
+        // 时拿到的是 100×100 而不是声明的 24×24（这个坑我自己踩了一次）。
+        let icon = Element::new(NodeTag::Container)
+            .with_key("icon")
+            .with(
+                &crate::props::ICON_NAME,
+                PropertyValue::static_str("sq"),
+            )
+            .with(&crate::props::WIDTH, PropertyValue::float(24.0))
+            .with(&crate::props::HEIGHT, PropertyValue::float(24.0))
+            .with(&crate::props::FILTER, PropertyValue::filter(chain.clone()));
+        let root = Element::new(NodeTag::Container)
+            .with_key("root")
+            .with_children([icon]);
+
+        let list = render_with_icons(&root, icons);
+        // 前提：这条命令真的降级成了 Path（而不是 Quad/被丢弃）。
+        let verts = list
+            .iter()
+            .find_map(|i| match &i.command {
+                Command::Path { vertices, .. } => Some(vertices.clone()),
+                _ => None,
+            })
+            .expect("带 ICON_NAME 的元素应产出 Command::Path");
+        assert!(verts.len() >= 3, "三角化至少 3 个顶点，实得 {}", verts.len());
+
+        let reqs = list.offscreen_requirements();
+        assert_eq!(
+            reqs.len(),
+            1,
+            "带滤镜的 Path 必须产出离屏需求，否则效果被静默忽略"
+        );
+
+        // ⚠ 这里断言**字面量**而不是拿 `bounds_of_vertices`（或测试内的第二份实现）
+        // 来当判据。两个原因：
+        //
+        // 1. 拿被测函数给自己当判据，就是本仓已经栽过两次的恒真测试。
+        // 2. 更隐蔽的一种：图标的三角化结果**首顶点恰好可能是极值角点**，于是
+        //    「忘了更新 max 边」这种变异算出来的结果与正确答案**恰好相同** ——
+        //    顶点顺序一变测试就失效，却一直显示绿色。字面量与顶点顺序无关。
+        //
+        // 推导：view_box 24×24、元素 24×24 ⇒ `scale = 1`、`ox = oy = 0`；
+        // path 跨 8..16 ⇒ 顶点跨 8..16 ⇒ 紧包围盒 = (8,8) 尺寸 8×8。
+        // σ=2 ⇒ 四边各扩 6 ⇒ bounds = (2,2) 尺寸 20×20。
+        assert_eq!(
+            reqs[0].content,
+            Rect::new(8.0, 8.0, 8.0, 8.0),
+            "紧包围盒必须恰好等于顶点范围 8..16 —— 既不是布局矩形 0..24，\
+             也不是退化矩形（首顶点恰好是极值角点时 '忘了 max' 会伪装成对）"
+        );
+        assert_eq!(
+            reqs[0].bounds,
+            Rect::new(2.0, 2.0, 20.0, 20.0),
+            "bounds = content + 3σ（σ=2 ⇒ 每边 6）"
+        );
+        // 顶点确实落在 content 里（防止上面两条因为 content 算错而"自洽地"通过）
+        assert!(
+            verts.iter().all(|v| {
+                let p = v.position;
+                p.x >= 8.0 && p.x <= 16.0 && p.y >= 8.0 && p.y <= 16.0
+            }),
+            "前提核对：所有顶点应落在 8..16 内，实得 {:?}",
+            verts.iter().map(|v| v.position).collect::<Vec<_>>()
+        );
+    }
+
+    /// 不带滤镜的图标不开离屏 —— 图标是最常见的命令，不能给它加 RT 开销。
+    #[test]
+    fn 不带滤镜的矢量图标不开离屏() {
+        let icons: &'static IconSet = Box::leak(Box::new(
+            IconSet::new().with("sq", IconSource::Path("M8 8L16 8L16 16L8 16Z")),
+        ));
+        let e = Element::new(NodeTag::Container)
+            .with_key("icon")
+            .with(
+                &crate::props::ICON_NAME,
+                PropertyValue::static_str("sq"),
+            )
+            .with(&crate::props::WIDTH, PropertyValue::float(24.0))
+            .with(&crate::props::HEIGHT, PropertyValue::float(24.0));
+        let root = Element::new(NodeTag::Container)
+            .with_key("root")
+            .with_children([e]);
+        let list = render_with_icons(&root, icons);
+        assert!(
+            list.iter()
+                .any(|i| matches!(&i.command, Command::Path { .. })),
+            "前提：不带滤镜时也应当产出 Path（否则本测试是恒真的）"
+        );
+        assert!(
+            list.offscreen_requirements().is_empty(),
+            "恒等滤镜的图标不该开 RT，否则每个图标每帧多一次 RT 绑定"
+        );
     }
 
     /// 不设滤镜时是空链 —— 这是零回归的前提（否则每条命令都要开 RT）。

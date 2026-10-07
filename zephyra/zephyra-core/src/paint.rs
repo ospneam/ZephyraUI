@@ -321,9 +321,15 @@ impl DisplayList {
                     // 独立一块，视觉上完全不是"这段文字被模糊了"）。
                     (filter, union_of_quads(glyphs))
                 }
-                // ⚠️ 已知缺口：Path 的顶点没有包围盒字段，需要额外遍历才能得到，
-                // 这里没做 —— 于是带滤镜的 Path 不产出离屏需求，效果被静默忽略。
-                Command::Path { .. } | Command::PushClip(_) | Command::PopClip => continue,
+                // Path 没有包围盒**字段**，但顶点里就带着位置 —— 遍历一次即得紧包围盒。
+                //
+                // 用**紧**包围盒而不是节点的布局矩形：三角化的结果不会铺满布局矩形
+                // （图标的空白边角、外接圆与图形的差集），按布局矩形算会让每张 RT
+                // 白白大一圈；按紧包围盒算，包围盒相同的两条 Path 还能复用同一张 RT。
+                Command::Path { vertices, filter, .. } => {
+                    (filter, bounds_of_vertices(vertices))
+                }
+                Command::PushClip(_) | Command::PopClip => continue,
             };
             if filter.is_identity() {
                 continue;
@@ -378,7 +384,11 @@ pub struct OffscreenRequirement {
 ///
 /// 空列表返回零尺寸矩形（不是 `None`）——调用方拿到后自然画不出东西，
 /// 而 `Option` 会逼每个调用点都写一遍 `if let`。
-fn union_of_quads(glyphs: &[GlyphQuad]) -> Rect {
+///
+/// `pub` 是为了让 fx 的 `plan_offscreens` **调用同一份实现**而不是抄一份：
+/// 两条路径必须给出相同答案（见 `zephyra-fx::offscreen` 的模块文档），
+/// 抄一份就等于把「必须相同」变成「碰巧相同」。
+pub fn union_of_quads(glyphs: &[GlyphQuad]) -> Rect {
     let mut it = glyphs.iter();
     let Some(first) = it.next() else {
         return Rect::new(0.0, 0.0, 0.0, 0.0);
@@ -394,6 +404,39 @@ fn union_of_quads(glyphs: &[GlyphQuad]) -> Rect {
         y0 = y0.min(g.dst.y);
         x1 = x1.max(g.dst.right());
         y1 = y1.max(g.dst.bottom());
+    }
+    Rect::new(x0, y0, x1 - x0, y1 - y0)
+}
+
+/// 一批顶点的紧包围盒。
+///
+/// 与 [`union_of_quads`] 同一约定：空列表返回零尺寸矩形而非 `None`。
+///
+/// # 为什么遍历而不是在 `Command::Path` 上缓存一个包围盒字段
+///
+/// 缓存的代价是**每条命令**都多 8 字节，而包围盒只在带滤镜时才被读到 —— 图标
+/// 里绝大多数命令 `filter` 是恒等链，这条字段对它们永远是死重量。遍历的代价
+/// 则是有条件的（`filter.is_identity()` 时根本不进），且 CPU 侧本来就要多遍
+/// 遍历同一批顶点（三角化、展开、光栅化）。
+///
+/// # NaN
+///
+/// `f32::min`/`max` 忽略 NaN（返回非 NaN 的那个），所以**个别**坏顶点会被静默
+/// 跳过，不会污染结果；全部顶点都是 NaN 时返回 NaN 矩形 —— 与"一个 NaN 的
+/// `Command::Quad::rect`"同样的下场。有意不特判：那需要一个"哪些顶点算数"的
+/// 策略，而这套策略在别处（Quad/Image/Text 的矩形）并不存在，特判只会让
+/// Path 成为唯一一条路径不同的命令。
+pub fn bounds_of_vertices(vertices: &[Vertex]) -> Rect {
+    let Some(first) = vertices.first() else {
+        return Rect::new(0.0, 0.0, 0.0, 0.0);
+    };
+    let (mut x0, mut y0) = (first.position.x, first.position.y);
+    let (mut x1, mut y1) = (x0, y0);
+    for v in &vertices[1..] {
+        x0 = x0.min(v.position.x);
+        y0 = y0.min(v.position.y);
+        x1 = x1.max(v.position.x);
+        y1 = y1.max(v.position.y);
     }
     Rect::new(x0, y0, x1 - x0, y1 - y0)
 }

@@ -29,7 +29,7 @@
 
 use zephyra_core::core::Rect;
 use zephyra_core::filter::FilterChain;
-use zephyra_core::paint::{Command, DisplayList};
+use zephyra_core::paint::{bounds_of_vertices, union_of_quads, Command, DisplayList};
 
 /// 一张离屏纹理的规划。
 ///
@@ -96,34 +96,15 @@ fn split_filter_and_content(cmd: &Command) -> Option<(&FilterChain, Rect)> {
         Command::Image { dst, filter, .. } => Some((filter, *dst)),
         Command::Text {
             glyphs, filter, ..
-        } => Some((filter, union_of_glyphs(glyphs))),
-        // ⚠️ **已知缺口**：Path 的顶点是三角化后的 mesh，本层没有它的包围盒，
-        // 所以这里返回 `None` —— 后果是**带滤镜 / 阴影的图标会被静默忽略**
-        // （`quad::expand` 照常画它，只是不开离屏，于是效果没发生、也不报错）。
+        } => Some((filter, union_of_quads(glyphs))),
+        // Path 没有包围盒**字段**，但顶点带位置 —— 遍历一次即得紧包围盒。
         //
-        // 这不是设计决定，是没接。补起来很小：包围盒 = 所有顶点的 min/max。
-        // 在补上之前，「矢量图标 + 投影」这个组合不要指望生效。
-        Command::Path { .. } | Command::PushClip(_) | Command::PopClip => None,
+        // 用**紧**包围盒而非布局矩形：三角化的结果不会铺满布局矩形（图标的空白
+        // 边角、外接圆与图形的差集），按布局矩形算会让 RT 白白大一圈；按紧包围盒
+        // 算，包围盒相同的两条 Path 还能共用同一张 RT（上面按 `bounds` 去重那段）。
+        Command::Path { vertices, filter, .. } => Some((filter, bounds_of_vertices(vertices))),
+        Command::PushClip(_) | Command::PopClip => None,
     }
-}
-
-/// 一批字形四边形的并集。
-///
-/// 空列表给零尺寸矩形而不是 `Option` —— 调用方拿到零矩形后自然开不出可用的 RT，
-/// 而 `Option` 会逼每个调用点写一遍 `if let`。
-fn union_of_glyphs(glyphs: &[zephyra_core::paint::GlyphQuad]) -> Rect {
-    let Some(first) = glyphs.first() else {
-        return Rect::new(0.0, 0.0, 0.0, 0.0);
-    };
-    let (mut x0, mut y0) = (first.dst.x, first.dst.y);
-    let (mut x1, mut y1) = (first.dst.right(), first.dst.bottom());
-    for g in &glyphs[1..] {
-        x0 = x0.min(g.dst.x);
-        y0 = y0.min(g.dst.y);
-        x1 = x1.max(g.dst.right());
-        y1 = y1.max(g.dst.bottom());
-    }
-    Rect::new(x0, y0, x1 - x0, y1 - y0)
 }
 
 /// 本帧有多少条命令的混合模式不是默认值。
@@ -171,6 +152,22 @@ mod tests {
             sigma_x: s,
             sigma_y: s,
         })
+    }
+
+    fn path(filter: FilterChain, blend: BlendMode, pts: &[(f32, f32)]) -> Command {
+        Command::Path {
+            vertices: std::sync::Arc::from(
+                pts.iter()
+                    .map(|&(x, y)| zephyra_core::paint::Vertex {
+                        position: Point::new(x, y),
+                        uv: Point::new(0.0, 0.0),
+                    })
+                    .collect::<Vec<_>>(),
+            ),
+            fill: Color::rgb(1.0, 1.0, 1.0),
+            filter,
+            blend,
+        }
     }
 
     fn list_of(cmds: Vec<Command>) -> DisplayList {
@@ -356,6 +353,75 @@ mod tests {
             "第{} 条应是带滤镜的命令，实际是 {:?}",
             plans[0].command_index,
             target.command
+        );
+    }
+
+    /// 带滤镜的 Path 产出离屏需求，区域 = **顶点的紧包围盒** + outset。
+    ///
+    /// 这是「矢量图标 + 投影被静默忽略」那个缺口的回归测试：以前这里直接返回
+    /// `None`，于是 `quad::expand` 照常画图标、只是不开离屏，效果没发生也不报错。
+    #[test]
+    fn 带滤镜的_path_按紧包围盒产出离屏需求() {
+        // ⚠ 顶点顺序是刻意选的：**首顶点在内部**，后两个才是包围盒的对角。
+        // 于是「拿首顶点当 min/max」「只遍历一部分」「忘了 min」这几类实现都会
+        // 算出不同的数 —— 这个测试对它们敏感。
+        let cmd = path(
+            blur(2.0),
+            BlendMode::default(),
+            &[(20.0, 30.0), (10.0, 20.0), (33.0, 47.0)],
+        );
+        let plans = plan_offscreens(&list_of(vec![cmd]));
+        assert_eq!(plans.len(), 1, "带滤镜的 Path 必须开离屏，否则效果被静默忽略");
+        // 紧包围盒 = (10,20)–(33,47)。刻意不是任何"整数对齐"的矩形，
+        // 这样 x/w 与 y/h 必须**分别**由 min 与 max 得出，混了就会露馅。
+        assert_eq!(
+            plans[0].content,
+            Rect::new(10.0, 20.0, 23.0, 27.0),
+            "content 必须是顶点紧包围盒，而不是布局矩形"
+        );
+        // σ=2 ⇒ 四边各扩 3σ=6。
+        assert_eq!(
+            plans[0].bounds,
+            Rect::new(4.0, 14.0, 35.0, 39.0),
+            "bounds = content + outset：23+12 / 27+12"
+        );
+    }
+
+    /// 无滤镜的 Path 不开离屏 —— 这是图标最常见的路径，必须零开销。
+    #[test]
+    fn 无滤镜的_path_不开离屏() {
+        let l = list_of(vec![
+            path(
+                FilterChain::none(),
+                BlendMode::default(),
+                &[(0.0, 0.0), (10.0, 10.0)],
+            ),
+            path(blur(0.0), BlendMode::default(), &[(0.0, 0.0), (10.0, 10.0)]),
+        ]);
+        assert!(
+            plan_offscreens(&l).is_empty(),
+            "恒等链与 σ=0 的 Path 都不该开 RT，否则每个图标每帧多一次 RT 绑定"
+        );
+    }
+
+    /// 空顶点列表给出**零尺寸**而不是崩掉。
+    ///
+    /// 这里刻意不断言"不产生需求"：空 Text 走的是同一条路（`union_of_quads`
+    /// 同样返回零矩形），要改就得两层一起改、且连带 Text/Quad/Image 的语义。
+    /// 真正的零尺寸护栏属于**执行侧**（E4 绑 RT 时），届时对所有命令类型统一处理，
+    /// 而不是在这里给 Path 单独开一个特例。
+    #[test]
+    fn 空_path_给零尺寸而不是崩掉() {
+        let plans = plan_offscreens(&list_of(vec![path(
+            blur(2.0),
+            BlendMode::default(),
+            &[],
+        )]));
+        assert_eq!(plans.len(), 1);
+        assert_eq!(
+            plans[0].content,
+            Rect::new(0.0, 0.0, 0.0, 0.0),
+            "空顶点 = 零尺寸内容，调用方自然开不出 RT"
         );
     }
 }
