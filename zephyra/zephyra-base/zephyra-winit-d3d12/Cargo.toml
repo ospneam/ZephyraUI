@@ -1,0 +1,69 @@
+[package]
+name = "zephyra-winit-d3d12"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+rust-version = "1.87"
+description = "ZephyraUI 的 D3D12 渲染后端"
+
+# 为什么独立于 `zephyra-winit`
+#
+# D3D11 与 D3D12 是**两套 API**，不是同一套 API 的两个版本：描述符堆、根签名、
+# 命令列表、PSO、显式资源屏障 —— D3D12 的每个概念在 D3D11 里都没有对应物，而
+# D3D11 的隐式上下文状态在 D3D12 里被彻底取消。
+#
+# 把它们塞进一个 crate 意味着两种写法永远在一个文件里互相干扰：`#[cfg]` 分支会
+# 淹没真正的逻辑，而两个后端各自的"静默不画"类 bug 会长得一模一样、难以区分。
+#
+# 所以这里是**完全独立的 crate**：
+#
+# - 不依赖 `zephyra-winit`，反之亦然；
+# - 共同依赖的只有 `zephyra-core`（核心：`DisplayList` / `Color` / `Rect`）与
+#   `zephyra-fx`（效果器层：顶点展开 / 图集 / CPU 光栅 / 资源复用）。
+#
+# 关于 `zephyra-fx`：后端无关的那一半原先在本 crate 与 `zephyra-winit` 里各有一份
+# **逐字节相同**的副本。当时的理由是"两个后端保持独立编译边界"——**那个论证是错的**，
+# 代价不是"改一处忘一处"，而是 DX12 后端**根本没有字体、没有纹理、也没法做 CPU
+# 侧诊断**（`text` / `texture` / `cpu_raster` / `cpu_only` 全都只存在于 D3D11 那个
+# crate 里，因为它们被放在了"D3D11 后端"里，尽管一个 GPU 类型都不碰）。
+#
+# 抽出之后两个后端仍然互不依赖，只是**共同依赖**它 ——
+# 契约一致性不再靠"记得同步两份"，而是只有一份可不同步。
+#
+# 它现在住在 `zephyra/zephyra-fx`（与 base 并列而非其子目录），因为它一个系统
+# API 都不碰 —— 判据是「能不能在无 GPU 环境里写单测」。
+#
+# 选哪个由宿主的特性开关决定，同一个二进制里只会有一个后端被编译进来。
+
+[dependencies]
+# 只依赖核心与共享渲染层。`DisplayList`、`Color`、`Rect` 来自 `zephyra-core`；
+# 顶点展开、字形图集、纹理名字表、CPU 光栅器来自 `zephyra-fx`。
+zephyra-core = { path = "../../zephyra-core", version = "0.1.0" }
+zephyra-fx = { path = "../../zephyra-fx" }
+# 呈现路径。与 `zephyra-winit`（D3D11）共用同一个 crate，于是两个后端的
+# swapchain 参数与 DComp 挂树逻辑天然一致 —— 少一份「两个后端悄悄不一致」的余地。
+zephyra-dcomp = { path = "../zephyra-dcomp" }
+# 窗口与事件。**版本必须与 `zephyra-winit` 一致（都是 0.30）**：两个后端要与同一份
+# 应用代码的宿主接口对得上，`ApplicationHandler` 的类型必须是同一个。
+winit = "0.30"
+# 从 winit 窗口取裸 HWND（`Window::window_handle()` 返回它）。
+raw-window-handle = "0.6"
+bytemuck = { version = "1", features = ["derive"] }
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Direct3D12",
+    "Win32_Graphics_Dxgi",
+    "Win32_Graphics_Dxgi_Common",
+    "Win32_Security",
+    "Win32_System_Threading",
+] }
+
+[lib]
+# D3D12 只有 Windows 有。与 `zephyra-winit` 同理：整个 crate 用 `#![cfg(windows)]`
+# 而不是零散地 cfg 每一个 item。
+path = "src/lib.rs"
+
+[dev-dependencies]
+# 测试要自己建 composition swapchain，所以也需要 `SwapchainDesc` 这个参数类型。
+zephyra-dcomp = { path = "../zephyra-dcomp" }

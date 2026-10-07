@@ -80,11 +80,11 @@ Element ──diff──▶ Node ──style──▶ 具体值 ──layout─�
 ```text
 控件层（未实现）        Button / Slider / ToggleSwitch …
    ↓ 构造 Element、设属性
-通用层 crates/zephyra   property / theme / tree / layout / paint / filter / hit / input / icon
+通用层 zephyra/zephyra-core   property / theme / tree / layout / paint / filter / hit / input / icon
    ↓ DisplayList（纯数据契约，可序列化可断言）
-效果器层 crates/zephyra-fx   顶点展开 / 字形图集 / CPU 光栅 / 资源复用策略
+效果器层 zephyra/zephyra-fx   顶点展开 / 字形图集 / CPU 光栅 / 资源复用策略
    ↓ 顶点流 + 中立的资源需求
-base crates/base        D3D11 / D3D12 / DComp / 摄像头
+base zephyra/zephyra-base        D3D11 / D3D12 / DComp / 摄像头
    ↓
 操作系统                 Win32 / DirectComposition / Wayland / X11 / v4l2 …
 ```
@@ -108,10 +108,10 @@ Skia 从不把执行放core —— `Blur` 在 core 只是描述，真正跑 pass
 
 ### base 层：凡是要问操作系统才能回答的事
 
-`crates/base/` 回答窗口怎么开、事件怎么收、GPU 设备从哪来、最后怎么上屏。
+`zephyra/zephyra-base/` 回答窗口怎么开、事件怎么收、GPU 设备从哪来、最后怎么上屏。
 它**不**回答「画什么」。
 
-三条契约（详见 [`crates/base/README.md`](../crates/base/README.md)）：
+三条契约（详见 [`zephyra/zephyra-base/README.md`](../zephyra/zephyra-base/README.md)）：
 
 1. **消费 `DisplayList`**，而不是产出它 —— 核心从不 import 任何宿主类型；
 2. **不得决定画什么** —— 换 base 实现后同一棵元素树必须产出逐字节相同的
@@ -130,7 +130,7 @@ Skia 从不把执行放core —— `Blur` 在 core 只是描述，真正跑 pass
 后端，后两者因为设备代码与 `unsafe` 不该被无差别构建编译。
 
 `zephyra-dcomp` 需要 `unsafe` 与 `windows` 依赖，与通用层的零依赖 /
-`forbid(unsafe_code)` 两条约束都冲突。它也**不依赖 `zephyra`**：
+`forbid(unsafe_code)` 两条约束都冲突。它也**不依赖 `zephyra-core`**：
 DirectComposition 与 DXGI 是 Win32 词汇，与 UI 无关。由宿主 crate 同时依赖两者接线。
 
 ## 保留式 vs 即时式
@@ -146,7 +146,7 @@ DirectComposition 与 DXGI 是 Win32 词汇，与 UI 无关。由宿主 crate �
 
 ## 当前状态
 
-骨架阶段。模块边界与契约已定并有测试覆盖（`cargo test -p zephyra` 共 304 条
+骨架阶段。模块边界与契约已定并有测试覆盖（`cargo test -p zephyra-core` 共 304 条
 断言、`-p zephyra-fx` 另有 64 条，都不需要 GPU）；控件库与模板系统**未实现**。
 
 `examples/foundation` 是验收标准而非演示 —— 它断言的是契约：

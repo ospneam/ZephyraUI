@@ -2054,10 +2054,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b9cc00251562a284751c9973bace760d86c0276c471b4be569fe6b068ee97a56"
 
 [[package]]
-name = "zephyra"
-version = "0.1.0"
-
-[[package]]
 name = "zephyra-camera"
 version = "0.1.0"
 dependencies = [
@@ -2065,6 +2061,10 @@ dependencies = [
  "log",
  "nokhwa",
 ]
+
+[[package]]
+name = "zephyra-core"
+version = "0.1.0"
 
 [[package]]
 name = "zephyra-dcomp"
@@ -2079,7 +2079,7 @@ name = "zephyra-foundation"
 version = "0.1.0"
 dependencies = [
  "winit",
- "zephyra",
+ "zephyra-core",
  "zephyra-fx",
  "zephyra-winit",
  "zephyra-winit-d3d12",
@@ -2091,7 +2091,7 @@ version = "0.1.0"
 dependencies = [
  "ab_glyph",
  "bytemuck",
- "zephyra",
+ "zephyra-core",
 ]
 
 [[package]]
@@ -2103,7 +2103,7 @@ dependencies = [
  "raw-window-handle",
  "windows",
  "winit",
- "zephyra",
+ "zephyra-core",
  "zephyra-dcomp",
  "zephyra-fx",
 ]
@@ -2116,7 +2116,7 @@ dependencies = [
  "raw-window-handle",
  "windows",
  "winit",
- "zephyra",
+ "zephyra-core",
  "zephyra-dcomp",
  "zephyra-fx",
 ]

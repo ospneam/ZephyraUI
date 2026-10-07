@@ -10,7 +10,7 @@
 ## 仓库结构
 
 ```text
-crates/
+zephyra/
   zephyra/         通用层：零依赖，#![forbid(unsafe_code)]
     core.rs        几何与排版基元（Rect / Thickness / Color / Spacing / Length）
     property.rs    属性系统：定义、存储、继承、变更优先级
@@ -62,10 +62,10 @@ UI 编程模型采用**保留式声明**（代码描述元素树，不用 XAML�
 ```bash
 # 纯 CPU：契约断言，不需要 GPU、不需要窗口
 cargo run -p zephyra-foundation                           # 地基验收
-cargo test -p zephyra                                     # 304 条契约断言
+cargo test -p zephyra-core                                     # 304 条契约断言
 cargo test -p zephyra-fx                                  # 64 条，纯 CPU
 cargo test -p zephyra-foundation --test demo_interaction  # hover/press 端到端
-cargo tree -p zephyra --depth 1# 应只输出 zephyra 自身
+cargo tree -p zephyra-core --depth 1# 应只输出 zephyra-core 自身
 
 # 真开窗口：需要 GPU
 cargo run -p zephyra-foundation --bin demo                # 窗口示例
@@ -81,7 +81,7 @@ cargo test -p zephyra-dcomp --test smoke                 # 需要真实窗口 + 
 倒数第四条是本框架**唯一不可让步的架构约束**：通用层一旦 import 了宿主类型，
 宿主迁移时就得连它一起搬。若你看到它开始输出依赖，说明这条被破坏了。
 
-`crates/base/` 下的 `zephyra-camera` 与 `zephyra-dcomp` 在 workspace `members` 里
+`zephyra/zephyra-base/` 下的 `zephyra-camera` 与 `zephyra-dcomp` 在 workspace `members` 里
 但**不在** `default-members` 里，所以无差别的 `cargo build` / `cargo test` 既不
 编译设备代码、也不编译 unsafe 代码 —— 「选择编译」落在 Cargo 层面，比在源码里
 `#[cfg]` 一大块更细，因为连依赖解析都省掉了。
@@ -91,11 +91,11 @@ cargo test -p zephyra-dcomp --test smoke                 # 需要真实窗口 + 
 ```text
 控件层（未实现）        Button / Slider / ToggleSwitch …
    ↓ 构造 Element、设属性
-通用层 crates/zephyra property / theme / element / node / diff / layout / paint / filter / geom / hit / input / icon / frame
+通用层 zephyra/zephyra-core property / theme / element / node / diff / layout / paint / filter / geom / hit / input / icon / frame
    ↓ DisplayList（纯数据契约，可序列化可断言）
-效果器层 crates/zephyra-fx 顶点展开 / 字形图集 / CPU 光栅 / 离屏规划
+效果器层 zephyra/zephyra-fx 顶点展开 / 字形图集 / CPU 光栅 / 离屏规划
    ↓ 顶点流 + 中立的资源需求
-base crates/base       D3D11 / D3D12 / DComp / 摄像头
+base zephyra/zephyra-base       D3D11 / D3D12 / DComp / 摄像头
    ↓
 操作系统                Win32 / DirectComposition / Wayland / X11 / v4l2 …
 ```
@@ -103,7 +103,7 @@ base crates/base       D3D11 / D3D12 / DComp / 摄像头
 依赖方向单向：**base 消费 `DisplayList`，通用层与效果器层都不知道 base 存在。**
 判据很硬—— 换一个 base 实现（D3D11 ↔ D3D12，DXGI 传统路径 ↔ DirectComposition，或
 Windows ↔ Wayland），同一棵元素树必须产出逐字节相同的 `DisplayList`。详见
-[`crates/base/README.md`](crates/base/README.md)。
+[`zephyra/zephyra-base/README.md`](zephyra/zephyra-base/README.md)。
 
 ## 与 Viewstage 的关系
 
@@ -121,7 +121,7 @@ Viewstage（`Viewstage-Rust`）是本框架的第一个消费者。它的渲染�
 这些 crate 构成了 ZephyraUI 将来的**渲染底座**。其中图标栅格化与纹理缓存最终
 也应并入本仓；现暂留 Viewstage，因为它与该仓的应用层还耦合在一起。
 
-`viewcomp` 是唯一例外：它已迁入本仓成为 `crates/base/zephyra-dcomp`（DirectComposition
+`viewcomp` 是唯一例外：它已迁入本仓成为 `zephyra/zephyra-base/zephyra-dcomp`（DirectComposition
 是 Win32 词汇，与 UI 无关，因此它属于 base 层而非某个具体宿主）。两边目前并存同一份
 实现，本仓侧验证稳定后会让 Viewstage 切换依赖 ——
 见 [`docs/migration-seam.md`](docs/migration-seam.md)。

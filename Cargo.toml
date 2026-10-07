@@ -1,23 +1,23 @@
 [workspace]
 resolver = "2"
-# `crates/` 分三层，依赖方向单向（上层不知道下层存在）：
+# `zephyra/` 分三层，依赖方向单向（上层不知道下层存在）：
 #
-#   zephyra        通用层（零依赖）：画什么 —— property/tree/layout/paint/input/icon
+#   zephyra-core   通用层（零依赖）：画什么 —— property/tree/layout/paint/input/icon
 #      ↓ DisplayList（纯数据、可序列化、可断言）
 #   zephyra-fx     效果器层：怎么把描述变成像素 —— 顶点展开/字形图集/光栅/资源复用
 #      ↓ 顶点流 + 中立的资源需求
-#   base/          系统适配层：与操作系统直接打交道 —— D3D11 / D3D12 / DComp / 摄像头
+#   zephyra-base/  系统适配层：与操作系统直接打交道 —— D3D11 / D3D12 / DComp / 摄像头
 #
 # 效果器层与 base 并列而非放进 base，理由与 Skia 把 `src/effects` 放在与 `src/core`
 # 并列处相同：效果**描述**是纯数据、零系统依赖，而效果**执行**才需要 GPU。
 # 前者能进 core 与效果器层，后者必须留在 base。
 members = [
-    "crates/zephyra",
-    "crates/zephyra-fx",
-    "crates/base/zephyra-winit",
-    "crates/base/zephyra-winit-d3d12",
-    "crates/base/zephyra-camera",
-    "crates/base/zephyra-dcomp",
+    "zephyra/zephyra-core",
+    "zephyra/zephyra-fx",
+    "zephyra/zephyra-base/zephyra-winit",
+    "zephyra/zephyra-base/zephyra-winit-d3d12",
+    "zephyra/zephyra-base/zephyra-camera",
+    "zephyra/zephyra-base/zephyra-dcomp",
     "examples",
 ]
 # `zephyra-camera` 与 `zephyra-dcomp` 进 members 但**不进** default-members：它们是
@@ -31,7 +31,12 @@ members = [
 # `zephyra-winit-d3d12` 同样不在 default-members，理由基本相同：它是 D3D12 后端，与
 # `zephyra-winit`（D3D11）是**两个独立 crate**，同一个二进制里只应有一个后端。
 # 无差别构建时两个都编，既慢，又让"这次改动影响了哪个后端"变得不清楚。用 `-p` 选。
-default-members = ["crates/zephyra", "crates/zephyra-fx", "crates/base/zephyra-winit", "examples"]
+default-members = [
+    "zephyra/zephyra-core",
+    "zephyra/zephyra-fx",
+    "zephyra/zephyra-base/zephyra-winit",
+    "examples",
+]
 
 [workspace.package]
 version = "0.1.0"

@@ -6,13 +6,13 @@ edition = "2021"
 publish = false
 
 [dependencies]
-zephyra = { path = "../crates/zephyra" }
+zephyra-core = { path = "../zephyra/zephyra-core" }
 # 后端无关的渲染层。`--dump-cpu` 那条路（`CpuHost`、图集、顶点流）**不需要任何 GPU
 # 后端**，而 `zephyra-winit` / `zephyra-winit-d3d12` 只是把这一层重新导出了一遍。
 #
 # 直接依赖它而不是走再导出：`--dump-cpu` 的意义就是「不开窗口也能验证整条链」，
 # 而一旦它依赖某个后端 crate，那条路就会跟着后端一起坏 —— 那正好是它要躲开的东西。
-zephyra-fx = { path = "../crates/zephyra-fx" }
+zephyra-fx = { path = "../zephyra/zephyra-fx" }
 # 演示宿主：真开窗口 + GPU 渲染。
 #
 # # 只有一个后端会被编进来
@@ -21,8 +21,8 @@ zephyra-fx = { path = "../crates/zephyra-fx" }
 # 画面一空就分不清是哪个后端的静默失效，而这两种要查的完全不同。
 #
 # 默认 `d3d12`：它的外壳与呈现链路已逐档验证（见 `zephyra-winit-d3d12/tests/`）。
-zephyra-winit-d3d12 = { path = "../crates/base/zephyra-winit-d3d12", optional = true }
-zephyra-winit = { path = "../crates/base/zephyra-winit", optional = true }
+zephyra-winit-d3d12 = { path = "../zephyra/zephyra-base/zephyra-winit-d3d12", optional = true }
+zephyra-winit = { path = "../zephyra/zephyra-base/zephyra-winit", optional = true }
 # `Bootstrap` 自举宿主时要实现 `ApplicationHandler`，所以本 crate 直接依赖 winit ——
 # 而不是走 `zephyra_winit::winit` / `zephyra_winit_d3d12::winit` 的再导出。
 #

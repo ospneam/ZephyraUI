@@ -1,8 +1,8 @@
-//! 地基验收示例：把一棵节点树降为 [`zephyra::paint::DisplayList`]。
+//! 地基验收示例：把一棵节点树降为 [`zephyra_core::paint::DisplayList`]。
 //!
 //! 这是 ZephyraUI 骨架阶段的**验收标准**——不是演示，而是契约的可执行陈述：
 //!
-//! 1. 核心**零依赖**（`cargo tree -p zephyra` 为空）；
+//! 1. 核心**零依赖**（`cargo tree -p zephyra-core` 为空）；
 //! 2. 一棵声明树能落地成节点树；
 //! 3. 节点树能降级为 `DisplayList`，且 `DisplayList` 已按 `(layer, z, order)`
 //!    **稳定**排序；
@@ -11,17 +11,17 @@
 //!
 //! 用 `cargo run -p zephyra-foundation` 运行。
 
-use zephyra::core::Rect;
-use zephyra::paint::{Command, DisplayList, Layer, SortKey};
-use zephyra::property::{PropertyKey, PropertyValue};
-use zephyra::props;
-use zephyra::theme::{roles, Theme, ThemeVariant};
-use zephyra::context::Context;
-use zephyra::diff::{diff, DiffStats};
-use zephyra::element::Element;
-use zephyra::id::NodeTag;
-use zephyra::node::{Dirty, Node};
-use zephyra::paint::render;
+use zephyra_core::core::Rect;
+use zephyra_core::paint::{Command, DisplayList, Layer, SortKey};
+use zephyra_core::property::{PropertyKey, PropertyValue};
+use zephyra_core::props;
+use zephyra_core::theme::{roles, Theme, ThemeVariant};
+use zephyra_core::context::Context;
+use zephyra_core::diff::{diff, DiffStats};
+use zephyra_core::element::Element;
+use zephyra_core::id::NodeTag;
+use zephyra_core::node::{Dirty, Node};
+use zephyra_core::paint::render;
 
 /// 内容前景色（语义名 → 主题角色）。
 const CONTENT: &PropertyKey = &PropertyKey::new("Content", PropertyValue::float(0.0));
@@ -65,7 +65,7 @@ fn assert_sorted_strictly(list: &DisplayList) {
 
 fn main() {
     // ---- 1. 零依赖 ----
-    // `cargo tree -p zephyra` 应无输出。这条断言无法在运行时自证，
+    // `cargo tree -p zephyra-core` 应无输出。这条断言无法在运行时自证，
     // 故由 CI 检查；此处仅在文档中标注。
 
     // ---- 2. 声明 → 节点 ----
@@ -84,7 +84,7 @@ fn main() {
     let bounds = Rect::new(0.0, 0.0, 800.0, 600.0);
     let theme = Theme::dark();
     let ctx = Context::new(&theme);
-    zephyra::layout::layout(&mut node, bounds, ctx);
+    zephyra_core::layout::layout(&mut node, bounds, ctx);
 
     let mut list = DisplayList::new();
     render(&node, ctx, &mut list);
@@ -107,7 +107,7 @@ fn main() {
     //
     // 先走一遍「布局 + 渲染」并清脏——真实宿主每帧末尾都做这一步。不清的话脏
     // 标记只增不减，本帧要不要重排的判断就失去意义。
-    zephyra::node::clear_dirty(&mut node);
+    zephyra_core::node::clear_dirty(&mut node);
     let stats: DiffStats = diff(&mut node, &ui_element());
     assert!(
         stats.is_noop(),
@@ -119,7 +119,7 @@ fn main() {
         .with_key("root")
         .with(
             CONTENT,
-            PropertyValue::color(zephyra::theme::Theme::dark().content),
+            PropertyValue::color(zephyra_core::theme::Theme::dark().content),
         )
         .with_children([
             Element::new(NodeTag::Text).with_key("title"),

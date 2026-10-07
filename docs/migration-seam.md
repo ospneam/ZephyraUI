@@ -2,30 +2,30 @@
 
 ## 这份文件的定位
 
-本框架只有**一个**宿主实现：`crates/base/zephyra-winit`（D3D11）与其姊妹后端
-`crates/base/zephyra-winit-d3d12`。但 base 层的存在意义就是"凡是要问操作系统才能
+本框架只有**一个**宿主实现：`zephyra/zephyra-base/zephyra-winit`（D3D11）与其姊妹后端
+`zephyra/zephyra-base/zephyra-winit-d3d12`。但 base 层的存在意义就是"凡是要问操作系统才能
 回答的事都可以换实现"，所以这份文件的作用是：
 
 > 把**换一个 base 实现时必须改动的地方**全部列出来，让清单可穷举，而不是"到时候再看"。
 
 判据贯穿全篇：
 
-> **如果某个改动需要修改 `crates/zephyra/` 或 `crates/zephyra-fx/`，说明迁移缝漏了。**
+> **如果某个改动需要修改 `zephyra/zephyra-core/` 或 `zephyra/zephyra-fx/`，说明迁移缝漏了。**
 
 当前状态下这条判据成立：核心零依赖、效果器层零系统 API。
 
 ```bash
-$ cargo tree -p zephyra --depth 1
+$ cargo tree -p zephyra-core --depth 1
 zephyra v0.1.0
 ```
 
-建议把它做成 CI 检查（`cargo tree -p zephyra --depth 1 | wc -l` 应为 1）。
+建议把它做成 CI 检查（`cargo tree -p zephyra-core --depth 1 | wc -l` 应为 1）。
 
 ## 已被移除的宿主：iced
 
 本框架**曾经**有一个 iced 宿主作为过渡期方案，那条路线已经放弃：
 
-- `zephyra-iced` 已从 workspace 移除，`crates/zephyra-iced/` 空占位目录已删除；
+- `zephyra-iced` 已从 workspace 移除，`zephyra/zephyra-core-iced/` 空占位目录已删除；
 - `Cargo.lock` 中不再有 `iced` / `iced_winit` / `iced_graphics` 任何条目；
 - 渲染不走 `wgpu`，而是直接用 **D3D11 / D3D12 + DirectComposition**。
 
@@ -33,7 +33,7 @@ zephyra v0.1.0
 落到 D3D，过渡宿主带来的迁移清单是纯负债：它列出的每一项在落地时都要重写一遍，而
 清单本身还会因为过时（描述一条不走的路线）误导后来者。
 
-`crates/zephyra/src/input/mod.rs` 与 `icon/mod.rs` 里仍提到 iced，那两处是**不变量
+`zephyra/zephyra-core/src/input/mod.rs` 与 `icon/mod.rs` 里仍提到 iced，那两处是**不变量
 说明**——"同一个两指捏合要同时服务于不同宿主的事件"、"栅格化不放在核心里"——用的是
 具体例子而非依赖，保留它们是为了让约束可读。
 
@@ -123,7 +123,7 @@ crate 意味着两种写法永远在同一批文件里互相干扰，`#[cfg]` �
 
 另有一条两边都踩过的：退化矩形（`right <= left`）会让 scissor **什么都不画**且零错误。
 所以算出来的矩形若退化，必须回退到全屏。像素级判据见
-`crates/base/zephyra-winit/tests/d3d11_draw.rs::帧内_scissor_只影响脏区`。
+`zephyra/zephyra-base/zephyra-winit/tests/d3d11_draw.rs::帧内_scissor_只影响脏区`。
 
 ### 4. 效果（filter / blend）
 
@@ -182,19 +182,19 @@ D3D11/D3D12 的模型决定的，不是可以绕过的选择。
 
 ## 不需要改的部分（已确认）
 
-- `zephyra` 全部模块（`core` / `property` / `props` / `theme` / `id` / `element` /
+- `zephyra-core` 全部模块（`core` / `property` / `props` / `theme` / `id` / `element` /
   `node` / `diff` / `context` / `style` / `filter` / `layout` / `paint` / `hit` /
   `input` / `icon`）—— 零依赖，`forbid(unsafe_code)`，与宿主无关。
 - `zephyra-fx` 全部模块 —— 一个系统 API 都不碰，`forbid(unsafe_code)`。
 - `zephyra::text` 的 **trait 定义**（实现会换，签名不变）。
 - `zephyra-dcomp` 与宿主的关系：它只管上屏，不碰 `DisplayList` 的内容，因此换呈现
-  路径不影响核心。它也**不依赖 `zephyra`**——DComp 与 DXGI 是 Win32 词汇，由宿主
+  路径不影响核心。它也**不依赖 `zephyra-core`**——DComp 与 DXGI 是 Win32 词汇，由宿主
   crate 同时依赖两者接线。
 
 ## 与 Viewstage 的关系
 
 Viewstage 是本框架的第一个消费者，它的渲染层已经从应用中抽出。`viewcomp` 是唯一
-已经迁入本仓的（成为 `crates/base/zephyra-dcomp`），两边目前并存同一份实现，本仓侧
+已经迁入本仓的（成为 `zephyra/zephyra-base/zephyra-dcomp`），两边目前并存同一份实现，本仓侧
 验证稳定后让 Viewstage 切换依赖。其余 crate（`viewink` / `viewgfx` / `viewframe` /
 `viewcamera` / `viewicon`）仍留在 Viewstage 仓。
 

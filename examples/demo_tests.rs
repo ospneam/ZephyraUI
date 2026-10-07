@@ -10,22 +10,22 @@
 //! - 移出后不清 hover → 高亮粘在旧按钮上；
 //! - press 视觉不跟随 capture → 按下后拖出控件，界面还停在按下态。
 
-use zephyra::core::{Rect, UvRect};
-use zephyra::input::{
+use zephyra_core::core::{Rect, UvRect};
+use zephyra_core::input::{
     InputRouter, PointerEvent, PointerPhase, PointerSource, RoutedEvent, RoutedEvents,
 };
-use zephyra::layout::{AlignItems, Direction};
-use zephyra::paint::{Command, DisplayList};
-use zephyra::property::PropertyValue;
-use zephyra::props;
-use zephyra::theme::{roles, Theme};
-use zephyra::context::Context;
-use zephyra::diff::diff;
-use zephyra::element::Element;
-use zephyra::id::{ElementKey, NodeTag};
-use zephyra::layout::layout;
-use zephyra::node::{clear_dirty, Node};
-use zephyra::paint::render;
+use zephyra_core::layout::{AlignItems, Direction};
+use zephyra_core::paint::{Command, DisplayList};
+use zephyra_core::property::PropertyValue;
+use zephyra_core::props;
+use zephyra_core::theme::{roles, Theme};
+use zephyra_core::context::Context;
+use zephyra_core::diff::diff;
+use zephyra_core::element::Element;
+use zephyra_core::id::{ElementKey, NodeTag};
+use zephyra_core::layout::layout;
+use zephyra_core::node::{clear_dirty, Node};
+use zephyra_core::paint::render;
 
 /// 降级成命令列表（只取命令，不取排序键）。
 fn commands(node: &Node) -> Vec<Command> {

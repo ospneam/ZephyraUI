@@ -1,7 +1,7 @@
 //! 宿主示例：一个真开窗口的 ZephyraUI 应用。
 //!
 //! 演示**保留式声明**的核心收益：状态与纹理跨帧留存，只有真正变化的子树被重排 /
-//! 重绘。窗口里看到的每一个像素都由 [`zephyra::paint::DisplayList`] 描述 ——
+//! 重绘。窗口里看到的每一个像素都由 [`zephyra_core::paint::DisplayList`] 描述 ——
 //! 本示例**不做任何绘制决策**，它只负责把元素树交给宿主。
 //!
 //! # 画面里有什么
@@ -16,12 +16,12 @@
 //!
 //! # 文字画不出来（已知缺口）
 //!
-//! [`zephyra::paint::Command::Text`] 目前**零生产者**：核心的 `props.rs` 还没有任何
+//! [`zephyra_core::paint::Command::Text`] 目前**零生产者**：核心的 `props.rs` 还没有任何
 //! 文本属性键，`render_rec` 遇到 `NodeTag::Text` 不产出命令。所以示例用色块示意
 //! 文字的位置与宽度 —— 那些色块的尺寸就是真实文字块的尺寸，一旦文本层接进
 //! `render_rec`，换掉颜色即可，布局一行不用改。
 //!
-//! 这不是示例偷懒，是核心的真实边界。见 `crates/base/README.md` 的「还缺什么」。
+//! 这不是示例偷懒，是核心的真实边界。见 `zephyra/zephyra-base/README.md` 的「还缺什么」。
 //!
 //! # 运行
 //!
@@ -30,14 +30,14 @@
 //! ZEPHYRA_TRACE=1 cargo run -p zephyra-foundation --bin demo   # 每帧统计
 //! ```
 
-use zephyra::core::{Spacing, UvRect};
-use zephyra::layout::{AlignItems, Direction, MainAxisAlign};
-use zephyra::property::{PropertyKey, PropertyValue};
-use zephyra::props;
-use zephyra::theme::roles;
-use zephyra::context::Context;
-use zephyra::element::Element;
-use zephyra::id::{ElementKey, NodeTag};
+use zephyra_core::core::{Spacing, UvRect};
+use zephyra_core::layout::{AlignItems, Direction, MainAxisAlign};
+use zephyra_core::property::{PropertyKey, PropertyValue};
+use zephyra_core::props;
+use zephyra_core::theme::roles;
+use zephyra_core::context::Context;
+use zephyra_core::element::Element;
+use zephyra_core::id::{ElementKey, NodeTag};
 
 /// 分配计数探针（诊断用，不是产品代码 —— 见该文件头的警告）。
 mod alloc_probe;
@@ -256,7 +256,7 @@ fn icon_role(hovered: bool, pressed: bool) -> &'static str {
 /// 图像内容区：一组真实纹理的图标。
 ///
 /// 纹理在启动阶段（`Bootstrap` 的 `resumed`）里注册一次，之后每帧只引用句柄。核心全程只看到
-/// [`zephyra::paint::TextureRef`] 这个字符串 —— 它不认识 GPU 纹理。
+/// [`zephyra_core::paint::TextureRef`] 这个字符串 —— 它不认识 GPU 纹理。
 fn icons() -> Element {
     Element::new(NodeTag::Container)
         .with_key("icons")
@@ -711,7 +711,7 @@ fn dump_cpu() {
     let mut path_cmds = 0usize;
     let mut path_tris = 0usize;
     for item in host.list().iter() {
-        if let zephyra::paint::Command::Path { vertices, .. } = &item.command {
+        if let zephyra_core::paint::Command::Path { vertices, .. } = &item.command {
             path_cmds += 1;
             path_tris += vertices.len() / 3;
         }
@@ -734,7 +734,7 @@ fn dump_cpu() {
         a.capacity_px
     );
 
-    let clear = zephyra::core::Color::rgba(0.0, 0.0, 0.0, 1.0);
+    let clear = zephyra_core::core::Color::rgba(0.0, 0.0, 0.0, 1.0);
     let canvas = host.render_cpu(clear);
 
     // 「有多少像素与**底色**不同」—— 这是"有没有东西被画上去"最直接的判据。
