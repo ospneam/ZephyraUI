@@ -93,6 +93,8 @@ mod input_tests;
 #[cfg(test)]
 mod layout_tests;
 #[cfg(test)]
+mod layout_classification_tests;
+#[cfg(test)]
 mod paint_tests;
 #[cfg(test)]
 mod tests;

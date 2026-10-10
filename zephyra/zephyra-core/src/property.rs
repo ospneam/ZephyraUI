@@ -374,6 +374,21 @@ pub fn name_affects_layout(name: &str) -> bool {
         || matches!(
             name,
             "Margin" | "Padding" | "Width" | "Height" | "Size" | "Collapsed"
+                // ↓ 弹性布局三项。`arrange` 读 `node.cross_align(ctx)` 与
+                //   `node.stack(ctx)`（后者带 `direction` + `main_align`），
+                //   所以改这三个键必须重排。漏掉的后果同下面三项。
+                | "Direction"
+                | "CrossAlign"
+                | "MainAlign"
+                // ↓ 文本三个键。`measure` 通过 `node.text_size(ctx)` 读它们，而
+                //   `text_size` 内部取 `text_style()`（字号 + 行高）与
+                //   `text_max_width()`（换行宽度），三者都进 `engine.shape(...)`。
+                //   漏掉的后果是「改了字号却拿到 `Dirty::Paint` 而不是
+                //   `Dirty::Layout`」→ 不重排 → 盒子还是旧尺寸、字形按新字号画
+                //   → 文字压到邻居上，零报错。
+                | "Text.Size"
+                | "Text.LineHeight"
+                | "Text.MaxWidth"
         )
 }
 
