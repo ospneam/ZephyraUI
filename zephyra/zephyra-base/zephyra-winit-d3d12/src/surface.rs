@@ -226,7 +226,7 @@ impl Gpu {
 
         let factory: windows::Win32::Graphics::Dxgi::IDXGIFactory4 =
             unsafe { CreateDXGIFactory1() }.map_err(SurfaceError::factory)?;
-        let adapter: IDXGIAdapter1 = unsafe { factory.EnumAdapters1(0) }.map_err(|_| {
+        let adapter = pick_adapter(&factory).map_err(|_| {
             // 「没有更多适配器」返回 DXGI_ERROR_NOT_FOUND —— 这台机器一个适配器都没有。
             // 用它自己的消息比笼统的「建设备失败」有用得多。
             SurfaceError::new(
@@ -1019,6 +1019,83 @@ pub fn create_resource(
     })
 }
 
+/// 挑一个能用的适配器。
+///
+/// # 为什么不能直接拿 `EnumAdapters1(0)`
+///
+/// DXGI 的枚举顺序**不是**「独显优先」，而是驱动注册顺序。装了虚拟显示适配器
+/// （远程桌面 / 投屏 / 串流软件都会注册一个）之后，0 号往往正是它。
+///
+/// 本项目在这台机器上实测：0 号是 `GameViewer Virtual Display Adapter`（软件虚拟
+/// 显示设备，没有真正的 GPU 后端），**任何用到离屏 RT 的帧都会把设备搞挂** ——
+/// `GetDeviceRemovedReason()` 返回 `DXGI_ERROR_DEVICE_HUNG`。而同一份代码在 1 号
+/// （NVIDIA）上跑得完全正常。
+///
+/// 症状极具欺骗性：像素**完全正确**，`submit` 与 `wait_gpu` 都返回成功，只是设备在
+/// 帧尾被摘掉；所以「单看一帧」永远看不出问题，只有**下一帧新建设备**时报
+/// `D3D12CreateDevice` 失败才暴露。
+///
+/// # 规则
+///
+/// 1. `$env:ZEPHYRA_ADAPTER = <序号>` 直接指定（排查用，不做下面的筛选）；
+/// 2. 否则按「**有独显显存** > **非软件** > 第一个」的顺序取第一个满足的：
+///    - 跳过 [`DXGI_ADAPTER_FLAG_SOFTWARE`]（那就是 WARP）；
+///    - 跳过 `DedicatedVideoMemory == 0` 的 —— 虚拟显示适配器（投屏 / 串流 / 远程桌面
+///      都会注册一个）报的正是 0，而集显在部分驱动上也报 0，所以这条**只是排序偏好**，
+///      不是硬性排除；
+/// 3. 一个都没满足就退回第一个非软件适配器，再不行就退回 0 号（让报错来自
+///    `D3D12CreateDevice`，而不是一句「找不到适配器」）。
+///
+/// 本机实测（`GameViewer Virtual Display Adapter` + NVIDIA MX330 + Intel UHD）：
+/// 2 号会挂、1 号正常、0 号（虚拟显示适配器）也挂。
+fn pick_adapter(
+    factory: &windows::Win32::Graphics::Dxgi::IDXGIFactory4,
+) -> Result<IDXGIAdapter1, windows::core::Error> {
+    if let Some(idx) = std::env::var("ZEPHYRA_ADAPTER")
+        .ok()
+        .and_then(|v| v.parse::<u32>().ok())
+    {
+        return unsafe { factory.EnumAdapters1(idx) };
+    }
+    let mut first = None::<IDXGIAdapter1>;
+    let mut first_hw = None::<IDXGIAdapter1>;
+    // 取**独显显存最大**的那一个，而不是第一个显存 > 0 的 —— 虚拟显示适配器有时也会
+    // 报一个非零但很小的数值（它可能借用系统内存），按顺序挑就会挑中它。
+    let mut best_vram = 0usize;
+    let mut best = None::<IDXGIAdapter1>;
+    for i in 0.. {
+        let Ok(adapter) = (unsafe { factory.EnumAdapters1(i) }) else {
+            break;
+        };
+        if first.is_none() {
+            first = Some(adapter.clone());
+        }
+        // 拿不到描述就当它不是软件适配器 —— 保守地继续用，总比直接放弃好。
+        let (is_software, vram) = match unsafe { adapter.GetDesc1() } {
+            Ok(d) => (
+                d.Flags
+                    & windows::Win32::Graphics::Dxgi::DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32
+                    != 0,
+                d.DedicatedVideoMemory,
+            ),
+            Err(_) => (false, 0),
+        };
+        if is_software {
+            continue;
+        }
+        if first_hw.is_none() {
+            first_hw = Some(adapter.clone());
+        }
+        if vram > best_vram {
+            best_vram = vram;
+            best = Some(adapter);
+        }
+    }
+    best.or(first_hw)
+        .or(first)
+        .ok_or_else(|| windows::core::Error::new(DXGI_ERROR_NOT_FOUND, "枚举不到适配器"))
+}
+
 /// 建交换链 / 访问设备资源时的错误。
 #[derive(Debug)]
 pub struct SurfaceError {
@@ -1041,6 +1118,24 @@ impl SurfaceError {
 
     pub fn factory(source: windows::core::Error) -> Self {
         Self::new("CreateDXGIFactory1", source)
+    }
+
+    /// 一个**自己造成的**非法用法错误（与 `windows::core::Error` 无关）。
+    ///
+    /// # 为什么不复用 `Self::new`
+    ///
+    /// `Self::new` 的 `source` 是 `windows::core::Error` —— 它只装得下「某个 API 返回了
+    /// 某个 HRESULT」。而「上传暂存区不够」「描述符槽位越界」这类错误**没有任何 API
+    /// 失败**，硬塞一个假 HRESULT 会让日志里出现一条与真实原因无关的 `E_FAIL`，
+    /// 排查时反而要多跳一步确认它是不是真的 API 失败。
+    pub fn invalid(what: impl Into<String>) -> Self {
+        Self {
+            what: what.into(),
+            source: windows::core::Error::new(
+                windows::Win32::Foundation::E_FAIL,
+                "调用方用错了 API，不是 D3D12 调用失败",
+            ),
+        }
     }
 }
 
