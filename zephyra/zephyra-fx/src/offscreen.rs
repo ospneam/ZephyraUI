@@ -29,7 +29,62 @@
 
 use zephyra_core::core::Rect;
 use zephyra_core::filter::FilterChain;
-use zephyra_core::paint::{Command, DisplayList, command_content_rect, command_filter};
+use zephyra_core::paint::{Command, DisplayList, SortKey, command_content_rect, command_filter};
+
+/// 一帧的回放计划：普通段与离屏段按 `DisplayList` 顺序**交替**。
+///
+/// # 为什么放在这里而不是两个后端各写一份
+///
+/// 这是"合成顺序必须等于绘制顺序"这条规则的**唯一**实现。两边各切一次的话，
+/// 早晚有一边把离屏段排到了末尾 —— 而症状只是"某个元素的阴影被卡片背景盖住了"，
+/// 不报任何错。
+#[derive(Debug, Clone, PartialEq)]
+pub enum Segment {
+    /// 一段**不含**滤镜命令的普通图元（`DisplayList` 下标区间，半开）。
+    ///
+    /// 空区间也会产出（见 [`plan_segments`]），因为那样"段数 = 滤镜命令数 + 1"
+    /// 是一条可以直接断言的不变量。
+    Plain(std::ops::Range<usize>),
+    /// 一条要走离屏 pass 的命令（按 `DisplayList` 下标定位）。
+    Offscreen {
+        /// 在 `DisplayList` 里的下标。
+        index: usize,
+        /// 已经算好的计划（避免二次解析）。
+        pass: OffscreenPass,
+        /// 合成之后要不要把原命令再照常画一遍（投影为 `true`）。
+        redraw: bool,
+        /// 原命令的排序键 —— 造单条列表时要它，否则离屏内容的 `SortKey` 会是
+        /// 编造的默认值，而 `sort()` 的稳定性依赖真实键。
+        key: SortKey,
+    },
+}
+
+/// 把一帧切成 [`Segment`] 序列。
+///
+/// # 为什么空段也要产出
+///
+/// 不产出空段的话，"整帧只有一条滤镜命令"会得到 `vec![Offscreen]`，段数与滤镜
+/// 命令数的关系变成"有时 +1 有时不 +"—— 而那条关系正是测试里最方便断言的不变量。
+/// 产出空段换来的是 `segments.len() == 带滤镜命令数 + 1` 恒成立。
+pub fn plan_segments(list: &DisplayList) -> Vec<Segment> {
+    let mut out: Vec<Segment> = Vec::new();
+    let mut start = 0usize;
+    for (i, item) in list.iter().enumerate() {
+        let Some(pass) = plan_pass(&item.command) else {
+            continue;
+        };
+        out.push(Segment::Plain(start..i));
+        out.push(Segment::Offscreen {
+            index: i,
+            redraw: pass.redraw_original,
+            pass,
+            key: item.key,
+        });
+        start = i + 1;
+    }
+    out.push(Segment::Plain(start..list.len()));
+    out
+}
 
 /// 一张离屏纹理的规划。
 ///

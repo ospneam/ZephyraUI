@@ -257,63 +257,9 @@ fn mode_by_index(i: usize) -> BlendMode {
 }
 
 use zephyra_core::core::Point;
-use zephyra_core::paint::{Item, SortKey};
+use zephyra_core::paint::Item;
 
 use zephyra_fx::offscreen::{self, OffscreenPass};
-
-/// 一帧的回放计划：普通段与离屏段按 `DisplayList` 顺序交替。
-///
-/// # 为什么是「交替」而不是「先全部离屏，再全部普通」
-///
-/// 合成顺序必须等于绘制顺序。一个画在卡片上的模糊文字若在卡片背景**之后**
-/// 才合成，就会被背景盖住 —— 看起来"滤镜没生效"，而所有计数都正常。
-///
-/// 反过来若先跑完所有离屏再画普通段，离屏结果会落到**所有**普通图元之下，
-/// 于是同一张卡片的背景会盖住它自己的阴影。两种顺序都只错一半，所以只能
-/// 按段交替。
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) enum Segment {
-    /// 一段**不含**滤镜命令的普通图元（`DisplayList` 下标区间，半开）。
-    Plain(std::ops::Range<usize>),
-    /// 一条要走离屏 pass 的命令（按 `DisplayList` 下标定位）。
-    Offscreen {
-        index: usize,
-        /// 已经算好的计划（避免二次解析）。
-        pass: OffscreenPass,
-        /// 合成之后要不要把原命令再照常画一遍（投影为 `true`）。
-        redraw: bool,
-        key: SortKey,
-    },
-}
-
-/// 把一帧切成 `Segment` 序列。
-///
-/// # 为什么空段也要产出
-///
-/// 不产出空段的话，"整帧只有一条滤镜命令"会得到 `vec![Offscreen]`，前面的
-/// `Plain(0..0)` 消失 —— 少调用一次 `draw_range` 本身无害，但会让
-/// 「本帧有没有普通几何」这个判断依赖段的数量，测试里很难断言。产出空段换来
-/// 的是「段数 = 滤镜命令数 + 1」这条可以直接断言的不变量。
-pub(crate) fn plan_segments(list: &DisplayList) -> Vec<Segment> {
-    let mut out: Vec<Segment> = Vec::new();
-    let mut start = 0usize;
-    for (i, item) in list.iter().enumerate() {
-        let Some(pass) = offscreen::plan_pass(&item.command) else {
-            continue;
-        };
-        out.push(Segment::Plain(start..i));
-        let redraw = pass.redraw_original;
-        out.push(Segment::Offscreen {
-            index: i,
-            pass,
-            redraw,
-            key: item.key,
-        });
-        start = i + 1;
-    }
-    out.push(Segment::Plain(start..list.len()));
-    out
-}
 
 /// 离屏内容要平移多少（= `-origin + offset`，与 [`OffscreenPass::translate`] 一致）。
 ///
@@ -988,10 +934,10 @@ pub fn render(&mut self, ctx: RenderCtx<'_>) -> RenderReport {
         // 合成顺序必须等于绘制顺序。先跑完所有离屏的话，离屏结果会落到**所有**
         // 普通图元之下 —— 同一张卡片的背景会盖住它自己的阴影；而反过来（普通段
         // 先跑完）则模糊文字会被卡片背景盖住。两种顺序都只对一半，所以只能交替。
-        let segments = plan_segments(list);
+        let segments = zephyra_fx::offscreen::plan_segments(list);
         let has_offscreen = segments
             .iter()
-            .any(|s| matches!(s, Segment::Offscreen { .. }));
+            .any(|s| matches!(s, zephyra_fx::offscreen::Segment::Offscreen { .. }));
 
         let mut report = RenderReport::default();
         let env = SegmentEnv {
@@ -1023,14 +969,14 @@ pub fn render(&mut self, ctx: RenderCtx<'_>) -> RenderReport {
         // ---- 2. 逐段回放 ----
         for seg in segments {
             match seg {
-                Segment::Plain(range) => {
+                zephyra_fx::offscreen::Segment::Plain(range) => {
                     if range.is_empty() {
                         continue;
                     }
                     let r = self.draw_range(&env, list, &range);
                     report.absorb(r);
                 }
-                Segment::Offscreen {
+                zephyra_fx::offscreen::Segment::Offscreen {
                     index,
                     pass,
                     redraw,
