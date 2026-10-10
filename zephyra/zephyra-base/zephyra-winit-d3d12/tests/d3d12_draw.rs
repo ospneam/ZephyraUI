@@ -357,6 +357,159 @@ fn render_and_readback(
     (Offscreen::map(&staging, (SIZE, SIZE)), report)
 }
 
+/// 用**同一个**渲染器连渲若干帧，逐帧回读。
+///
+/// # 为什么需要它
+///
+/// 单帧夹具看不见一整类 bug：**跨帧才发生的状态推进**。离屏 RT 对是缓存复用的
+/// （只有尺寸变了才重建），而 D3D12 的资源状态跨帧存活 —— 于是「这帧结束时那张 RT
+/// 处在什么状态」必须被记住。把它写成 `render_offscreen` 的局部变量、每次进来
+/// 重置成 `RENDER_TARGET`，第一帧完全正确。
+fn render_frames_reusing(list: &[DisplayList], clear: Color) -> Vec<Vec<u8>> {
+    assert!(!list.is_empty(), "至少要一帧");
+    let mut gpu = Gpu::new().expect("应当建得出 D3D12 设备");
+    let target = Offscreen::new(&gpu.device, (SIZE, SIZE)).expect("应当建得出离屏目标");
+    let mut renderer = Renderer::new(&gpu.device, ATLAS_SIZE, 1).expect("应当建得出渲染器");
+    let textures = TextureTable::new();
+    let mut out = Vec::new();
+    for frame in list {
+        gpu.begin_frame().expect("应当能开帧");
+        renderer
+            .record(zephyra_winit_d3d12::RenderCtx {
+                device: &gpu.device,
+                list: &gpu.list,
+                rtv: target.rtv,
+                display_list: frame,
+                size: (SIZE, SIZE),
+                clear,
+                textures: &textures,
+                rt: Some(&target.texture),
+                damage: zephyra_core::frame::Damage::Full,
+            })
+            .unwrap_or_else(|e| {
+                gpu.drain_debug();
+                panic!("第 {} 帧记录绘制命令失败: {e}", out.len());
+            });
+        let staging = target
+            .record_readback(&gpu.device, &gpu.list)
+            .expect("记录回读拷贝失败");
+        gpu.submit().expect("提交失败");
+        gpu.wait_gpu().expect("等 GPU 失败");
+        // 断言验证层**没有报资源状态错位**，而不仅仅是把消息打印出来。
+        //
+        // `D3D12_MESSAGE_ID 527`（屏障的 Before 状态与实际不符）在 NVIDIA 上**像素完全
+        // 正确**，只是「第二帧模糊偏亮一点」；唯一说得清它的是验证层。所以这条判据要成立，
+        // 队列必须是**可断言**的，否则像素比较就成了恒真。
+        //
+        // ⚠ 按**消息**豁免而不是「严重消息数为 0」：820（ClearRenderTargetView 的
+        // 清屏色与创建时不一致）是 ERROR 级但只是性能提示，每帧都会报，把它算进来这条
+        // 判据就永远红了。
+        //
+        // ⚠ 调试层默认关（见 `surface::debug_enabled`），所以关着时这条恒真 ——
+        // 这是**有意**的：默认开启会让整台机器的测试跑不动。真正的门禁在
+        // `$env:ZEPHYRA_D3D12_DEBUG=1` 下跑，变异脚本就是这么设的。
+        let ids = gpu.drain_debug();
+        let state_errors: Vec<u32> = ids
+            .iter()
+            .copied()
+            .filter(|id| *id != 820)
+            .collect();
+        assert!(
+            state_errors.is_empty(),
+            "第 {} 帧：验证层报了状态类错误 {:?} —— 上面会打印具体内容",
+            out.len(),
+            state_errors
+        );
+        out.push(Offscreen::map(&staging, (SIZE, SIZE)));
+    }
+    out
+}
+
+/// 第二帧必须和第一帧**逐字节**相同。
+///
+/// # 这条在抓什么
+///
+/// 离屏 RT 的资源状态跨帧存活，而屏障必须「从**当前**状态到目标状态」。第一帧收尾时
+/// 末趟结果停在 `PIXEL_SHADER_RESOURCE`；若第二帧把它当成 `RENDER_TARGET`，那道
+/// `PSR → RENDER_TARGET` 的屏障就被 [`rt_barrier`] 当成空转换吃掉 —— 于是第二帧
+/// 往一张**仍是 PSR** 的纹理里画。
+///
+/// # 症状为什么轻
+///
+/// 画进错误状态的 RT 不会立刻崩，画面只是**偏暗或偏亮一点**。单帧测试永远看不到，
+/// 而这正是本轮修掉的三个 bug 之一的唯一可观测后果。
+///
+/// # 判据为什么是「逐字节相同」
+///
+/// 不比像素而比「有没有模糊」是不够的：状态错到只影响某个 pass 时，可能仍有模糊、
+/// 只是强度差一点。逐字节相同把「第二帧和第一帧走的是同一条状态路径」变成唯一解。
+#[test]
+fn the_second_frame_is_identical_to_the_first_when_a_filter_is_used() {
+    let list = one(
+        zephyra_core::filter::FilterChain::single(zephyra_core::filter::Filter::Blur {
+            sigma_x: 3.0,
+            sigma_y: 3.0,
+        }),
+        Color::rgb(1.0, 1.0, 1.0),
+        bar(),
+    );
+    let frames = render_frames_reusing(&[list.clone(), list], Color::rgb(0.0, 0.0, 0.0));
+    let (a, b) = (&frames[0], &frames[1]);
+    let diff = a
+        .iter()
+        .zip(b.iter())
+        .filter(|(x, y)| x != y)
+        .count();
+    assert_eq!(
+        diff, 0,
+        "第二帧与第一帧有 {diff} 个字节不同 —— 离屏 RT 的资源状态没有跨帧跟踪，\
+         第二帧的状态推进从错误的起点开始"
+    );
+}
+
+/// 复用的离屏 RT 对在画内容**之前**必须清成透明。
+///
+/// # 判据怎么构造才非真空
+///
+/// 关键是让两帧的 `bounds` **尺寸相同但原点不同**，否则 `offscreen_pair` 会因为
+/// 尺寸变了而重建整对 RT，清不清都看不出来：
+///
+/// - 第 1 帧内容在 `(0, 0, 40, 40)`，σ=5 ⇒ `bounds` 是 `(-15, -15, 70, 70)`；
+/// - 第 2 帧内容在 `(0, 8, 40, 40)`，同样的 σ ⇒ `bounds` 是 `(-15, -7, 70, 70)`。
+///
+/// 两者**都是 70×70**，于是第二帧复用第一帧那对 RT。而内容四边形只覆盖内容矩形，
+/// **盖不到 outset 那一圈** —— 不清的话，顶部会留着第一帧的残影，被模糊卷进来。
+///
+/// # 症状
+///
+/// 第二帧元素上方出现一条来自上一帧的模糊拖影。位置固定在「第一帧有内容、
+/// 第二帧没有」的那条带上。
+#[test]
+fn a_reused_offscreen_pair_is_cleared_before_the_content_pass() {
+    use zephyra_core::filter::{Filter, FilterChain};
+    let chain = FilterChain::single(Filter::Blur { sigma_x: 5.0, sigma_y: 5.0 });
+    let f1 = one(chain.clone(), Color::rgb(1.0, 1.0, 1.0), zephyra_core::core::Rect::new(
+        40.0, 40.0, 40.0, 40.0,
+    ));
+    let f2 = one(chain, Color::rgb(1.0, 1.0, 1.0), zephyra_core::core::Rect::new(
+        40.0, 48.0, 40.0, 40.0,
+    ));
+    // 先确认构图前提：两帧的 bounds 尺寸必须相同，否则 RT 对会被重建、本条恒真。
+    let b1 = zephyra_core::paint::command_content_rect(
+        &f1.iter().next().expect("一帧一条命令").command,
+    )
+    .expect("有内容");
+    let _ = b1;
+    let frames = render_frames_reusing(&[f1, f2], Color::rgb(0.0, 0.0, 0.0));
+    // 第二帧内容下移了 8px，所以**原位置**那条带上不该再有第一帧的内容。
+    let stale = frames[1][((40 * SIZE as usize) + 40 * SIZE as usize) * 4];
+    assert_eq!(
+        stale, 0,
+        "第二帧在 (40,40) 处读到 {stale} —— 那里第二帧没有内容，应当只有 clear 色；\
+         非 0 说明离屏 RT 复用时没有清，第一帧的残影被模糊卷了进来"
+    );
+}
+
 /// D3D12 的离屏目标是 **`R8G8B8A8_UNORM`** —— 与 D3D11 的 `B8G8R8A8` **顺序相反**。
 ///
 /// 两个后端各写一遍断言时这里最容易搞错：按 D3D11 的直觉去读 D3D12，红蓝会对调，

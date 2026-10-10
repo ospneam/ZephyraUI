@@ -225,6 +225,8 @@ struct StreamBuffer {
     /// 时，GPU 已经读完了上一帧的全部拷贝，归零不会踩到未读的数据 —— 这是
     /// `begin_frame` 已经替我们保证的前提，不是这里额外做的假设。
     head: std::cell::Cell<u64>,
+    /// 还没做过任何一次上传（`resident` 仍停在 `COMMON`）。
+    fresh: std::cell::Cell<bool>,
 }
 
 /// 一次 `record` 的输入。
@@ -1898,6 +1900,33 @@ fn replay(
 
         // ---- 1. 把内容画进 RT_A（按 translate 平移）----
         //
+        // ⚠⚠ **RT_A 必须在画内容之前回到 `RENDER_TARGET`。**
+        //
+        // 上一帧的合成会把末趟结果转成 `PIXEL_SHADER_RESOURCE`，而末趟可能就是 A
+        // （一奇数趟的链就是这样）。RT 对是跨帧复用的，所以进入第二帧时 A 停在 PSR
+        // —— 直接 `OMSetRenderTargets(A)` + 清屏 + 画，就是**往一张 PSR 纹理里画**。
+        //
+        // 第一帧完全正常（新建的 RT 本来就是 `RENDER_TARGET`），第二帧起才错 ——
+        // 这正是它能一路躲过所有单帧测试的原因。症状在 NVIDIA 上也只是「第二帧的
+        // 模糊偏亮一点」，调试层才说得清：
+        //
+        // ```text
+        // ID3D12_MESSAGE_ID(527) ResourceBarrier: Before state (PIXEL_SHADER_RESOURCE)
+        // ... does not match with the current resource state (RENDER_TARGET)
+        // ```
+        //
+        // ⚠ 顺序仍然必须**先绑后发**（资源要先从 RTV 绑定上解绑才能转状态）。
+        unsafe {
+            list.OMSetRenderTargets(1, Some(&a.rtv(&self.offscreen_rtv_heap)?), false, None);
+        }
+        rt_barrier(
+            list,
+            &a.resource,
+            a.state.get(),
+            D3D12_RESOURCE_STATE_RENDER_TARGET,
+        );
+        a.state.set(D3D12_RESOURCE_STATE_RENDER_TARGET);
+        //
         // ⚠ 这里必须只画**这一条**命令（`single_command_list` 已把列表限成一条，
         // 所以展开区间传 `None`）。若传整份 `DisplayList`，所有图元都会被画进这张
         // 离屏 RT —— 症状是每个带滤镜的元素都带着一整个窗口的模糊副本。
@@ -2193,6 +2222,14 @@ impl StreamBuffer {
             size,
             draw_state,
             head: std::cell::Cell::new(0),
+            // `create_resource` 把**缓冲**的初始状态强制成 `COMMON`（见它自己的注释），
+            // 所以刚建出来的 `resident` 并不在 `draw_state`。第一次上传必须从
+            // `COMMON` 出发 —— 直接发 `draw_state → COPY_DEST` 是一次
+            // 「Before 状态与实际不符」的转换，验证层报 `D3D12_MESSAGE_ID 527`。
+            //
+            // ⚠ 这个错误**单帧看不出来**：验证层要等第二次 `ExecuteCommandLists`
+            // 才开始比对，于是「只渲一帧」的测试全绿，而真实宿主每帧都在报错。
+            fresh: std::cell::Cell::new(true),
         })
     }
 
@@ -2235,6 +2272,12 @@ impl StreamBuffer {
             )));
         }
         self.head.set(end);
+        // 第一次上传之前 `resident` 还在 `COMMON`（缓冲的初始状态），见 [`Self::fresh`]。
+        let before = if self.fresh.replace(false) {
+            D3D12_RESOURCE_STATE_COMMON
+        } else {
+            self.draw_state
+        };
         // CPU 写入常驻映射的上传内存：不需要屏障（上传堆资源恒为 GENERIC_READ，
         // 且 CPU 写映射内存不受资源状态约束）。
         unsafe {
@@ -2255,7 +2298,7 @@ impl StreamBuffer {
             gpu_barrier(
                 list,
                 &self.resident,
-                self.draw_state,
+                before,
                 D3D12_RESOURCE_STATE_COPY_DEST,
             );
             list.CopyBufferRegion(&self.resident, 0, &self.staging.resource, off, n);

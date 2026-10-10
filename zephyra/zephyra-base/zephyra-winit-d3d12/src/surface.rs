@@ -156,7 +156,8 @@ impl DebugInfo {
     /// 把待处理消息全部打到 stderr，然后清空队列。
     ///
     /// 清空是为了不让下一帧的消息与这一帧的混在一起 —— 混在一起的日志比看不到更难查。
-    pub fn drain(&self) {
+    pub fn drain(&self) -> Vec<u32> {
+        let mut severe: Vec<u32> = Vec::new();
         unsafe {
             let count = self.queue.GetNumStoredMessages();
             for i in 0..count {
@@ -197,6 +198,16 @@ impl DebugInfo {
                     ))
                     .into_owned()
                 };
+                // ERROR 及以上（2 = ERROR / 3 = CORRUPTION）把**消息 ID**收进返回值。
+                //
+                // drain 原来只打印，于是「命令列表合法」这个结论永远得不到证据 ——
+                // 验证层是**排队**报的，而跨帧资源状态错位（527）在像素上只表现为「第二帧
+                // 模糊偏亮一点」。返回 ID 而不是计数，是为了让调用方能**按消息**豁免：
+                // 820（ClearRenderTargetView 的清屏色与创建时不同）只是性能提示，
+                // 而 527（屏障的 Before 状态与实际不符）是实打实的 bug。
+                if msg.Severity.0 >= D3D12_MESSAGE_SEVERITY_ERROR.0 {
+                    severe.push(msg.ID.0 as u32);
+                }
                 eprintln!(
                     "[d3d12 debug] ID={:?} severity={:?}: {text}",
                     msg.ID, msg.Severity
@@ -204,6 +215,7 @@ impl DebugInfo {
             }
             self.queue.ClearStoredMessages();
         }
+        severe
     }
 }
 
@@ -298,10 +310,11 @@ impl Gpu {
     /// 把调试层的消息打到 stderr。
     ///
     /// `begin_frame` 里已经调了，所以日常帧循环不用管；只在排查时手动调。
-    pub fn drain_debug(&self) {
+    pub fn drain_debug(&self) -> Vec<u32> {
         if let Some(d) = &self.debug {
-            d.drain();
+            return d.drain();
         }
+        Vec::new()
     }
 
     /// 设备是否已被移除（挂起 / 驱动重置 / 驱动升级）。
@@ -798,7 +811,16 @@ impl Offscreen {
                 list,
                 &self.texture,
                 D3D12_RESOURCE_STATE_COPY_SOURCE,
-                D3D12_RESOURCE_STATE_PRESENT,
+                // ⚠ 回到 **`RENDER_TARGET`**，不是 `PRESENT`。
+                //
+                // `PRESENT` 是**交换链后缓冲**的收尾状态，而这里搬的是离屏目标 ——
+                // 下一帧还要继续往它上面画。留在 `PRESENT` 的话，第二帧的
+                // `ClearRenderTargetView` 就发生在一张 `PRESENT` 纹理上，验证层报
+                // 「is invalid for use as a render target」，而画面在单帧测试里完全正常。
+                //
+                // ⚠ 这个错误**只在渲第二帧时**出现，所以任何「渲一帧就回读」的夹具都
+                // 看不见它 —— 而真实宿主每帧都渲。
+                D3D12_RESOURCE_STATE_RENDER_TARGET,
             );
         }
         Ok(staging)
