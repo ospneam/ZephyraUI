@@ -81,3 +81,13 @@ raw-window-handle = "0.6"
 [lints.rust]
 # 通用层的 forbid 在这里**有意不写**，理由见文件头。
 unsafe_code = "allow"
+
+# 跨后端一致性测试要**同时**链两个渲染器。
+#
+# 放 dev-dependencies 而不是新建一个测试 crate：
+# 1. `zephyra-winit-d3d12` **不**依赖本 crate，所以不成环；
+# 2. 对照测试的自然位置就是 D3D11 这边 —— `offscreen_target` / `read_back` 两个夹具
+#    本来就在本 crate 的 `tests/` 里；换个 crate 就得把它们导出成 `pub` API，
+#    那是为测试扩大生产接口。
+[dev-dependencies]
+zephyra-winit-d3d12 = { path = "../zephyra-winit-d3d12" }

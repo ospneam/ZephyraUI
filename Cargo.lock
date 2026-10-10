@@ -2106,6 +2106,7 @@ dependencies = [
  "zephyra-core",
  "zephyra-dcomp",
  "zephyra-fx",
+ "zephyra-winit-d3d12",
 ]
 
 [[package]]
