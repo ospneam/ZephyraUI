@@ -256,6 +256,74 @@ fn mode_by_index(i: usize) -> BlendMode {
     ALL[i]
 }
 
+use zephyra_core::core::Point;
+use zephyra_core::paint::{Item, SortKey};
+
+use zephyra_fx::offscreen::{self, OffscreenPass};
+
+/// 一帧的回放计划：普通段与离屏段按 `DisplayList` 顺序交替。
+///
+/// # 为什么是「交替」而不是「先全部离屏，再全部普通」
+///
+/// 合成顺序必须等于绘制顺序。一个画在卡片上的模糊文字若在卡片背景**之后**
+/// 才合成，就会被背景盖住 —— 看起来"滤镜没生效"，而所有计数都正常。
+///
+/// 反过来若先跑完所有离屏再画普通段，离屏结果会落到**所有**普通图元之下，
+/// 于是同一张卡片的背景会盖住它自己的阴影。两种顺序都只错一半，所以只能
+/// 按段交替。
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum Segment {
+    /// 一段**不含**滤镜命令的普通图元（`DisplayList` 下标区间，半开）。
+    Plain(std::ops::Range<usize>),
+    /// 一条要走离屏 pass 的命令（按 `DisplayList` 下标定位）。
+    Offscreen {
+        index: usize,
+        /// 已经算好的计划（避免二次解析）。
+        pass: OffscreenPass,
+        /// 合成之后要不要把原命令再照常画一遍（投影为 `true`）。
+        redraw: bool,
+        key: SortKey,
+    },
+}
+
+/// 把一帧切成 `Segment` 序列。
+///
+/// # 为什么空段也要产出
+///
+/// 不产出空段的话，"整帧只有一条滤镜命令"会得到 `vec![Offscreen]`，前面的
+/// `Plain(0..0)` 消失 —— 少调用一次 `draw_range` 本身无害，但会让
+/// 「本帧有没有普通几何」这个判断依赖段的数量，测试里很难断言。产出空段换来
+/// 的是「段数 = 滤镜命令数 + 1」这条可以直接断言的不变量。
+pub(crate) fn plan_segments(list: &DisplayList) -> Vec<Segment> {
+    let mut out: Vec<Segment> = Vec::new();
+    let mut start = 0usize;
+    for (i, item) in list.iter().enumerate() {
+        let Some(pass) = offscreen::plan_pass(&item.command) else {
+            continue;
+        };
+        out.push(Segment::Plain(start..i));
+        let redraw = pass.redraw_original;
+        out.push(Segment::Offscreen {
+            index: i,
+            pass,
+            redraw,
+            key: item.key,
+        });
+        start = i + 1;
+    }
+    out.push(Segment::Plain(start..list.len()));
+    out
+}
+
+/// 离屏内容要平移多少（= `-origin + offset`，与 [`OffscreenPass::translate`] 一致）。
+///
+/// 单独包一层是为了让 D3D12 那边**不重复推导**这条式子 —— 它是整套逻辑里最容易
+/// 写错（漏掉 `offset` → 影子画在原位）也最难看出来的一处。
+pub(crate) fn content_translate(pass: &OffscreenPass) -> Point {
+    Point::new(pass.translate.0, pass.translate.1)
+}
+
+
 /// 渲染器：持有 D3D11 管线状态与常驻资源，回放 `DisplayList`。
 ///
 /// 设备与上下文**不归**本结构所有，而是由 [`crate::HostWindow`] 持有并按引用传入
@@ -281,6 +349,18 @@ pub struct Renderer {
     blends: Vec<Option<ID3D11BlendState>>,
     /// 目标像素的单采样副本（PS 混合模式要读 dst）。见 [DstCopy]。
     dst_copy: std::cell::RefCell<Option<DstCopy>>,
+    /// 离屏 pass 的**两张乒乓 RT**（E4.4 / E4.6）。见 [`OffscreenPair`]。
+    offscreen: std::cell::RefCell<Option<OffscreenPair>>,
+    /// 展开用的跨帧缓冲（E4.4 的分段回放会反复用同一个 `Scratch`）。
+    ///
+    /// # 为什么分段回放必须有它
+    ///
+    /// 分段意味着每帧要调多次 `expand_*`。每次都新建 `Scratch` 的话，那些
+    /// `Vec` 就是每帧每段各分配一次 —— 而这一层存在的意义正是稳态零分配。
+    ///
+    /// 为什么**原来**不需要它：分段之前一帧只展开一次，用的是 `quad::expand`
+    /// （按值返回的 `QuadBatch`），分配量与分段后单段相同。
+    scratch: quad::Scratch,
     rasterizer: ID3D11RasterizerState,
     sampler: ID3D11SamplerState,
     vertex_buffer: ID3D11Buffer,
@@ -402,6 +482,218 @@ struct DstCopy {
     srv: ID3D11ShaderResourceView,
     size: (u32, u32),
 }
+
+/// 逐段回放时每段都要用到的环境（E4.4）。
+///
+/// # 为什么要打包而不是八个位置参数
+///
+/// 位置参数多到第 5 个之后就没法靠记忆区分了，而传错 `rtv` 与 `size` 的后果
+/// （画进离屏 RT / 视口尺寸不对）**都不带任何编译期信号**。离屏 pass 里尤其
+/// 危险：`rtv` 会被换成离屏 RT、尺寸会换成 RT 尺寸，而两者都是"看起来合法"的
+/// 另一个值。
+struct SegmentEnv<'a, 'b> {
+    context: &'a ID3D11DeviceContext,
+    device: &'a ID3D11Device,
+    rtv: &'b ID3D11RenderTargetView,
+    size: (u32, u32),
+    textures: &'a TextureTable,
+    damage: Damage,
+}
+
+impl SegmentEnv<'_, '_> {
+    /// 目标尺寸转 `f32` 对 —— `composite_quad` 的几何按**目标**尺寸换算 NDC，
+    /// 而采样按**源**（离屏 RT）尺寸，两组尺寸必须分别传。
+    fn size_as_f32(&self) -> (f32, f32) {
+        (self.size.0 as f32, self.size.1 as f32)
+    }
+}
+
+impl SegmentEnv<'_, '_> {
+}
+
+/// pass 四边形要的混合状态。
+///
+/// 只两种：blur 趟 `Src`（输出即最终值），composite 趟 `SrcOver`（预乘源叠上去）。
+///
+/// # 为什么不用 `BlendMode` 本身
+///
+/// `BlendMode` 有 29 个值，而这里只需要 2 个 —— 而且要哪个是由**这个 pass 的
+/// 角色**决定的（"我算出的是最终值吗"），不是由用户选的混合模式决定的。列全
+/// 29 个只会诱使人传错，而传错的后果（"合成结果比该有的亮/暗"）不报错。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BlendSlot {
+    /// `ONE / ZERO` —— 原样接受 PS 输出。
+    Src,
+    /// `ONE / INV_SRC_ALPHA` —— 预乘空间的 `SrcOver`。
+    SrcOver,
+}
+
+impl OffscreenRt {
+    /// 建一张离屏 RT（纹理 + RTV + SRV）。任一步失败则整体返回 `None`。
+    ///
+    /// # 为什么三样都要有，缺一不行
+    ///
+    /// - 缺 RTV：没法往里画内容（第 1 步）。
+    /// - 缺 SRV：没法当模糊的源 —— 症状是"只画了一次原图，从没模糊过"。
+    /// - 缺纹理：前两样都挂在它上面。
+    ///
+    /// 格式固定 `R8G8B8A8_UNORM`：与目标 RT 同格式，于是合成时的采样不引入任何
+    /// 格式转换差异。**必须单采样** —— MS 纹理不能当 `CopyDestination`，也不能
+    /// 被 `Sample`。
+    fn new(device: &ID3D11Device, size: (u32, u32)) -> Option<Self> {
+        use windows::Win32::Graphics::Direct3D11::{
+            D3D11_BIND_RENDER_TARGET, D3D11_BIND_SHADER_RESOURCE, D3D11_TEXTURE2D_DESC,
+            D3D11_USAGE_DEFAULT,
+        };
+        use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_SAMPLE_DESC};
+
+        let desc = D3D11_TEXTURE2D_DESC {
+            Width: size.0,
+            Height: size.1,
+            MipLevels: 1,
+            ArraySize: 1,
+            Format: DXGI_FORMAT_R8G8B8A8_UNORM,
+            SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+            Usage: D3D11_USAGE_DEFAULT,
+            // ⚠ 必须**同时**有 RENDER_TARGET 与 SHADER_RESOURCE：前者用来画内容，
+            // 后者用来当下一趟的源。只给前者的话绑定采样视图时不会报错，而采样
+            // 返回未定义值 —— 症状是"模糊结果是一团随机噪声"。
+            BindFlags: (D3D11_BIND_RENDER_TARGET.0 | D3D11_BIND_SHADER_RESOURCE.0) as u32,
+            CPUAccessFlags: 0,
+            MiscFlags: 0,
+        };
+        let mut tex = None;
+        unsafe { device.CreateTexture2D(&desc, None, Some(&mut tex as *mut _)) }.ok()?;
+        let tex: ID3D11Texture2D = tex?;
+        // ⚠ windows-rs 0.62 把返回接口声明成**出参**（`pprtview`），不是返回 `Result<T>`。
+        // 按后者写会编译成"调用了一个需要 3 个参数的方法"——错误信息完全不指向它。
+        let mut rtv = None;
+        unsafe { device.CreateRenderTargetView(&tex, None, Some(&mut rtv as *mut _)) }.ok()?;
+        let rtv = rtv?;
+        // 格式必须跟着纹理走：`create_srv` 把格式钉死成 `R8G8B8A8_UNORM`，而目标 RT
+        // 是 `B8G8R8A8`。这张离屏纹理确实是 `R8G8B8A8`，所以能用 —— 但那只是因为
+        // 这里刚好同格式。用错时 `CreateShaderResourceView` 直接失败，而失败被
+        // `.ok()` 吞掉后表现为"效果没生效"，不指向真正的原因。
+        let srv = crate::texture::create_srv_with_format(device, &tex, desc.Format).ok()?;
+        Some(Self { tex, rtv, srv, size })
+    }
+
+}
+
+/// 只含一条命令的临时 `DisplayList`（离屏 pass 第 1 步用）。
+///
+/// # 为什么造临时列表而不是给 `expand` 加"单条"入口
+///
+/// 加入口要在 fx 层多一个分支，且那条分支与 [`Segment::Plain`] 的区间路径几乎
+/// 重合 —— 两处迟早会漂。造一个真的 `DisplayList` 则完全复用既有代码。
+///
+/// 代价是一次 `Command` 克隆，而最重的字段 `Arc<[Vertex]>`（以及
+/// `Command::Text` 的 `Arc<[GlyphQuad]>`）克隆只是引用计数 +1。
+fn single_item_list(item: &Item) -> DisplayList {
+    let mut inner = DisplayList::new();
+    inner.push(item.key, item.command.clone());
+    inner
+}
+
+/// 离屏 pass 用的一对乒乓 RT（E4.4 / E4.6）。
+///
+/// # 为什么固定**两张**就够
+///
+/// 一趟模糊是"读一张、写另一张"，而写的那张就是下一趟的源。于是链长任意
+/// （E4.6 的三级链）都只需两张 —— 多备几张不是不行，只是永远轮不到。
+///
+/// # 为什么按**尺寸**复用而不是每帧新建
+///
+/// 每帧新建 / 释放纹理会在驱动内部引入同步点。窗口尺寸不变时离屏矩形通常也不变，
+/// 于是尺寸一致就整对复用；只有尺寸变了才重建。
+///
+/// 重建时**两张一起换**：只换一张会让另一张仍按旧尺寸建造，拿它当写入目标
+/// 会在 `OMSetRenderTargets` 处报尺寸不匹配（而症状常常被当成"格式错了"）。
+#[derive(Default)]
+struct OffscreenPair {
+    a: Option<OffscreenRt>,
+    b: Option<OffscreenRt>,
+}
+
+/// 一张离屏 RT（纹理 + 渲染目标视图 + 采样视图）。
+///
+/// 采样视图不可省：模糊趟既是写入目标、又是下一趟的源，缺了它整条链断在第一趟
+/// 之后 —— 而症状是"只模糊了一次"或"结果全透明"，都不指向缺视图。
+struct OffscreenRt {
+    tex: ID3D11Texture2D,
+    rtv: ID3D11RenderTargetView,
+    srv: ID3D11ShaderResourceView,
+    size: (u32, u32),
+}
+
+/// 手动 `Clone`：三个 COM 接口各自 `Clone`（AddRef），而派生实现会要求
+/// `OffscreenRt: Clone` —— 这里把意图写出来，免得以后有人以为深拷贝了纹理。
+impl Clone for OffscreenRt {
+    fn clone(&self) -> Self {
+        Self {
+            tex: self.tex.clone(),
+            rtv: self.rtv.clone(),
+            srv: self.srv.clone(),
+            size: self.size,
+        }
+    }
+}
+
+/// 整个目标的裁剪矩形（离屏 RT 的 blur 趟用）。
+fn full_rect(size: (u32, u32)) -> RECT {
+    RECT {
+        left: 0,
+        top: 0,
+        right: size.0 as i32,
+        bottom: size.1 as i32,
+    }
+}
+
+/// 由脏区算出帧内 scissor。
+///
+/// # 为什么退化矩形回退到**全屏**而不是照设
+///
+/// D3D11 的 scissor 是半开区间 `[left, right)`，`right <= left` 时**什么都不画** ——
+/// 症状是元素凭空消失，且零错误。而"脏区为空"更可能是调用方算错了，于是宁可多画
+/// 也不要什么都不画。
+///
+/// # 为什么 `Damage::Full` 也**必须显式设一个矩形**
+///
+/// 不能靠 `RSSetScissorRects(None)` 来"关掉裁剪"。实测：本仓的 `d3d11_draw` 测试
+/// 在改成 `None` 之后覆盖从 4096/4096 掉到 **1/4096** —— 而 D3D11 不画任何东西时
+/// 不报错，`GetDeviceRemovedReason` 仍是 `Ok(())`，`RenderReport` 里 `quads: 2` 也
+/// 一切正常。也就是说 `ScissorEnable = TRUE` 且**没有**有效矩形时，光栅化结果与
+/// 「拓扑没设」完全同形（各剩 1 个退化像素）。这类静默失败只能靠像素断言挡住。
+///
+/// # DIP → 像素的比例**不能假设为 1**
+///
+/// `RenderCtx::damage` 是 DIP，而 scissor 用像素；当前宿主恰好把像素尺寸当 DIP 传
+/// 进来，于是比例是 1，但那是巧合 —— 高 DPI 下同一个 `DisplayList` 会被放大，而这里
+/// 若按 1 算，脏区就只有实际需要的 1/k，症状是「脏区外的图元也还在算」。
+fn damage_scissor(size: (u32, u32), damage: Damage) -> RECT {
+    match damage {
+        Damage::Full => full_rect(size),
+        Damage::Rect(r) => {
+            let sx = size.0 as f32 / (size.0 as f32).max(1e-6);
+            let sy = size.1 as f32 / (size.1 as f32).max(1e-6);
+            let l = (r.x * sx).floor().max(0.0) as i32;
+            let t = (r.y * sy).floor().max(0.0) as i32;
+            let rt = ((r.x + r.width) * sx).ceil() as i32;
+            let b = ((r.y + r.height) * sy).ceil() as i32;
+            if rt > l && b > t {
+                RECT {
+                    left: l,
+                    top: t,
+                    right: rt,
+                    bottom: b,
+                }
+            } else {
+                full_rect(size)
+            }
+        }
+    }
+}
+
 impl Renderer {
     /// 建管线状态、编译着色器、建图集纹理与顶点缓冲。
     ///
@@ -585,6 +877,8 @@ impl Renderer {
             shaders,
             blends,
             dst_copy: std::cell::RefCell::new(None),
+            offscreen: std::cell::RefCell::new(None),
+            scratch: quad::Scratch::new(),
             blend,
             rasterizer,
             sampler,
@@ -672,13 +966,7 @@ impl Renderer {
         Ok(())
     }
 
-    /// 回放一份 `DisplayList`。
-    ///
-    /// `ctx.size` 是目标的**像素**尺寸 —— 顶点在此从 DIP 转到 NDC。
-    ///
-    /// 未注册的纹理命令会被跳过并计入 [`RenderReport::missing_textures`] —— 不静默：
-    /// 那是宿主的 bug（注册名与属性值拼错），症状是"图标不显示"，没有其他线索。
-    pub fn render(&mut self, ctx: RenderCtx<'_>) -> RenderReport {
+pub fn render(&mut self, ctx: RenderCtx<'_>) -> RenderReport {
         let RenderCtx {
             context,
             device,
@@ -690,80 +978,107 @@ impl Renderer {
             damage,
         } = ctx;
 
+        // ---- 0. 分段 ----
+        //
+        // 带非恒等滤镜的命令必须走离屏 pass（E4.4 / E4.5 / E4.6），不能留在普通
+        // 批次里：它要先被画进离屏 RT、模糊过、再合成回来。
+        //
+        // # 为什么必须按段交替，而不是"先跑完所有离屏再统一画普通段"
+        //
+        // 合成顺序必须等于绘制顺序。先跑完所有离屏的话，离屏结果会落到**所有**
+        // 普通图元之下 —— 同一张卡片的背景会盖住它自己的阴影；而反过来（普通段
+        // 先跑完）则模糊文字会被卡片背景盖住。两种顺序都只对一半，所以只能交替。
+        let segments = plan_segments(list);
+        let has_offscreen = segments
+            .iter()
+            .any(|s| matches!(s, Segment::Offscreen { .. }));
 
-        // ---- 1. 展开成顶点流 ----
-        let batch = quad::expand(list, size, |name| textures.contains(name));
-        let (all, _image_first, path_first) = batch.flatten();
-        let runs = batch.runs;
-        let mut report = batch.report;
-        report.vertex_bytes = (all.len() * std::mem::size_of::<Vertex>()) as u64;
+        let mut report = RenderReport::default();
+        let env = SegmentEnv {
+            context,
+            device,
+            rtv,
+            size,
+            textures,
+            damage,
+        };
 
-        // ---- 2. 顶点缓冲按需增长，但不缩 ----
-        // 稳态零分配的前提。
-        let needed = report.vertex_bytes.max(64);
-        if needed > self.vertex_capacity {
-            let grown = needed.next_power_of_two();
-            if let Ok(b) = create_vertex_buffer(device, grown) {
-                self.vertex_buffer = b;
-                self.vertex_capacity = grown;
-                report.reallocated = true;
-            }
-            // 建失败就退回旧缓冲：本帧可能画不全，但不该整帧崩掉。
-            // 旧缓冲装不下时会截断绘制（D3D11 静默丢弃越界的 draw）——
-            // 症状是"多出来的图元不见了"，比崩溃容易查。
+        // ---- 1. 目标级状态：RTV / 视口 / scissor / 清屏 ----
+        //
+        // 只在帧首做一次。清屏尤其只能一次：离屏 pass 中途会把 RTV 换成离屏 RT，
+        // 而 D3D11 的 `ClearRenderTargetView` **不受 scissor 约束**（见
+        // `draw_range` 里的说明），所以"每段清一次"会把整张目标反复清掉。
+        self.bind_target(&env, rtv, size, damage);
+        let ca = clear.a;
+        unsafe {
+            // 清屏色。`Color` 存的是**线性** 0..1，而 `ClearRenderTargetView` 要的
+            // 也是线性 —— 这里不做任何编码转换。
+            //
+            // ⚠ 但必须**预乘**：目标纹理从此与顶点色在同一个预乘空间里。漏掉这一步
+            // 的话，一个半透明的 clear 色会让整帧偏亮，且只有非 1.0 的 clear 色才
+            // 暴露 —— 而默认 clear 是全 1.0 或全 0.0，于是永远看不出来。
+            context.ClearRenderTargetView(rtv, &[clear.r * ca, clear.g * ca, clear.b * ca, ca]);
         }
 
-        // ---- 2b. 索引缓冲 ----
-        //
-        // 必须在 draw 之前写好：索引要逐四边形加顶点基址（见 `quad::expand_indices`），
-        // 而四边形数逐帧可变。
-        //
-        // 索引流分两段：前段是四边形（`solid` + `images`，每图元 6 个索引），
-        // 后段是多边形三角形（每三角形 3 个连续索引）。路径段的顶点基址是
-        // `quads * 4`，也就是 `quad::expand_indices_with_paths` 算的那个值。
-        //
-        // ⚠ 四边形数必须**只数 solid + images**。写成 `all.len() / 4` 会把路径
-        // 的顶点也除进去 —— 路径顶点数是 3 的倍数不是 4 的倍数，于是这个除法
-        // 本身就没有意义（整数截断），结果是四边形段的顶点基址全部错位。
-        // 症状：路径一旦出现，它前面所有图元一起变成乱码几何。
-        let total_quads = (batch.solid.len() + batch.images.len()) / 4;
-        let path_tris = batch.paths.len() / 3;
-        let (indices, path_index_start) = quad::expand_indices_with_paths(total_quads, path_tris);
-        if !indices.is_empty() {
-            let need = (indices.len() * 2) as u64;
-            if need > self.index_capacity {
-                let grown = need.next_power_of_two();
-                if let Ok(b) =
-                    create_dynamic_buffer(device, grown, D3D11_BIND_INDEX_BUFFER)
-                {
-                    self.index_buffer = b;
-                    self.index_capacity = grown;
-                    report.reallocated = true;
+        // ---- 2. 逐段回放 ----
+        for seg in segments {
+            match seg {
+                Segment::Plain(range) => {
+                    if range.is_empty() {
+                        continue;
+                    }
+                    let r = self.draw_range(&env, list, &range);
+                    report.absorb(r);
+                }
+                Segment::Offscreen {
+                    index,
+                    pass,
+                    redraw,
+                    key: _,
+                } => {
+                    let item = &list.iter().nth(index).expect("下标来自同一份列表");
+                    let r = self.render_offscreen(&env, item, &pass);
+                    report.absorb(r);
+                    // 滤镜真正被执行了 —— 从 `unimplemented_filters` 里减掉这一条。
+                    // 计数是「有多少条命令的滤镜**没**做」，不减的话诊断输出会说谎。
+                    report.unimplemented_filters = report.unimplemented_filters.saturating_sub(1);
+
+                    // 投影：影子是**额外**画上去的一层，原图仍要画在它上面。
+                    //
+                    // ⚠ 这一步漏掉时症状特别有欺骗性：影子画出来了（那正是这条命令
+                    // 唯一的可见效果），而元素本体不见了 —— 于是看起来像"投影把元素
+                    // 盖住了"，不像"少画了一步"。
+                    //
+                    // 不需要先 `bind_target` —— `draw_range` 自己会重设目标、视口、
+                    // scissor（见那里"每段都重设"的说明）。
+                    if redraw {
+                        let r = self.draw_range(&env, list, &(index..index + 1));
+                        report.absorb(r);
+                    }
                 }
             }
-            self.write_buffer(context, &self.index_buffer, bytemuck::cast_slice(&indices), self.index_capacity);
         }
+        let _ = has_offscreen;
+        report
+    }
 
-        // ---- 3. 写顶点 ----
-        //
-        // 顺序：**先写数据，再绑状态，最后 draw**。
-        //
-        // ⚠ 这里曾经把「写顶点」放在设状态**之后**，并写下一条注释说「必须先写、
-        // 否则会 `STATUS_ACCESS_VIOLATION`」。那条注释是**从相关性里读出来的因果**，
-        // 实测被推翻：把这一段挪到绑定之前，崩溃照旧。真正的原因是
-        // `UpdateSubresource` 在本机对 ≥ 8192 字节的缓冲必崩，与是否绑定无关。
-        //
-        // 现在的顺序仍然是正确的 —— 只是理由不同：绑定之后再写同一个缓冲，
-        // 驱动要等 GPU 用完旧内容才能真正替换（`WRITE_DISCARD` 让它另给一块，
-        // 所以这里没有硬等待）。「先写后绑」少一次这样的往返。
-        if !all.is_empty() {
-            self.write_vertices(context, bytemuck::cast_slice(&all));
-        }
-
-        // ---- 4. 设定每帧上下文状态 ----
-        //
-        // 顺序固定：渲染目标 → 视口 → 清屏 → 混合/光栅化 → 着色器 → 输入布局 →
-        // 顶点缓冲 → 采样器。少设一项不会报错，只会静默沿用上一次的值。
+    /// 绑渲染目标 + 视口 + scissor。
+    ///
+    /// # 为什么 scissor 用**目标尺寸**换算而不是 RT 尺寸
+    ///
+    /// `RenderCtx::damage` 是**目标**（屏幕）的像素矩形。离屏 pass 期间它会拿
+    /// 来裁剪离屏 RT —— 那是错的：离屏 RT 的坐标系与屏幕不同，用屏幕的脏区去
+    /// 裁它会算出空交集（症状是该离屏元素静默消失）。所以离屏 pass **不**走这里，
+    /// 它自己设"全 RT"的 scissor。
+    fn bind_target(
+        &mut self,
+        env: &SegmentEnv<'_, '_>,
+        rtv: &ID3D11RenderTargetView,
+        size: (u32, u32),
+        damage: Damage,
+    ) {
+        let context = env.context;
+        let scissor = damage_scissor(size, damage);
         unsafe {
             // `OMSetRenderTargets` 的失败症状极具误导性，因为它与 `Clear` 的
             // 行为**不对称**：
@@ -771,21 +1086,7 @@ impl Renderer {
             // - `ClearRenderTargetView(rtv, ...)` 把 RTV 当**参数**收，完全不看
             //   绑定，所以绑定没成功时清屏照样出现在画面上；
             // - `Draw*` 依赖绑定，绑不上就一个像素都不画，且**不报错**。
-            //
-            // 而 windows-rs 0.62 把 `OMSetRenderTargets` 的返回值声明成 `()`
-            // （vtable 槽也是 `-> ()`），HRESULT 拿不到 —— 我试过把它 transmute
-            // 成返回 `HRESULT` 再调，读回来的却是每次都不同的垃圾值，说明该槽
-            // 实际上不返回 HRESULT。所以这条路只能作废，改看设备状态。
-            context.OMSetRenderTargets(
-                Some(&[Some(rtv.clone())]),
-                None::<&ID3D11DepthStencilView>,
-            );
-            // ⚠ 这一句**生效**，曾经那句「本机不生效」的结论是**读回代码的错**：
-            // `RSGetViewports` 的 `pNumViewports` 是 `[in, out]`，**输入值表示
-            // `pViewports` 数组的长度**，而当时传的是 0、数组也确实是 0 长 ——
-            // 于是「你要 0 个」就得到 0 个，与驱动状态无关。视口读回一直是 1 个、
-            // 64×64。D3D11 的默认视口确实是 0×0，所以真出问题时症状仍是无声画不出，
-            // 但那是另一回事，见 [`RenderCtx::size`]。
+            context.OMSetRenderTargets(Some(&[Some(rtv.clone())]), None::<&ID3D11DepthStencilView>);
             let viewport = [D3D11_VIEWPORT {
                 TopLeftX: 0.0,
                 TopLeftY: 0.0,
@@ -794,6 +1095,8 @@ impl Renderer {
                 MinDepth: 0.0,
                 MaxDepth: 1.0,
             }];
+            // ⚠ `RSSetViewports` **生效**（曾经"本机不生效"的结论是读回代码的错：
+            // `pNumViewports` 是 `[in,out]`，传 0 + 空数组就是"你要 0 个"）。
             context.RSSetViewports(Some(&viewport));
 
             // ---- 帧内 scissor ----
@@ -802,98 +1105,122 @@ impl Renderer {
             // 这是 D3D11 与 D3D12 的一处真实差异（D3D12 命令列表上的 clear **会**被
             // scissor 裁掉）。所以本后端里清屏永远是全屏的，scissor 只限制**绘制**。
             //
-            // 实测踩过：先按「clear 也被裁剪」的假设写了断言（脏区外应保持上一帧内容），
-            // 结果脏区外 2048/2048 全变 —— 因为整张纹理被清成了清屏色。
-            //
-            // 这不影响正确性（flip model 下本来就得重画整帧），但它**限定了收益**：
-            // D3D11 侧脏区省的是**片元着色**的填充率，不是 clear 的。要连 clear 一起省
-            // 就得改成 D3D12 那样的命令列表语义，或干脆别清（DComp 路径上靠保留缓冲）。
-            //
             // DIP → 像素的比例**不能假设为 1**。`RenderCtx::damage` 是 DIP，而
             // scissor 用像素；当前宿主恰好把像素尺寸当 DIP 传进来，于是比例是 1，
             // 但那是巧合 —— 高 DPI 下同一个 `DisplayList` 会被放大，而这里若按 1 算，
             // 脏区就只有实际需要的 1/k，症状是「脏区外的图元也还在算」。
-            let scissor = match damage {
-                // ⚠️ `Full` 也**必须显式设一个矩形**，不能靠 `RSSetScissorRects(None)`
-                // 来「关掉裁剪」。
-                //
-                // 实测：本仓的 `d3d11_draw` 测试在改成 `None` 之后覆盖从 4096/4096
-                // 掉到 **1/4096** —— 而 D3D11 不画任何东西时不报错，
-                // `GetDeviceRemovedReason` 仍是 `Ok(())`，`RenderReport` 里 `quads: 2`
-                // 也一切正常。
-                //
-                // 也就是说 `ScissorEnable = TRUE` 且**没有**有效矩形时，光栅化结果与
-                // 「拓扑没设」完全同形（各剩 1 个退化像素）。这类静默失败只能靠像素
-                // 断言挡住，所以那条测试不许为了「顺便验 scissor」而改判据。
-                Damage::Full => RECT {
-                    left: 0,
-                    top: 0,
-                    right: size.0 as i32,
-                    bottom: size.1 as i32,
-                },
-                Damage::Rect(r) => {
-                    let sx = size.0 as f32 / viewport[0].Width.max(1e-6);
-                    let sy = size.1 as f32 / viewport[0].Height.max(1e-6);
-                    // ⚠️ 退化矩形必须回退到「全屏」而不是照设：D3D11 的 scissor 是
-                    // 半开区间 [left, right)，right <= left 时**什么都不画** ——
-                    // 症状是元素凭空消失，且零错误。
-                    let l = (r.x * sx).floor().max(0.0) as i32;
-                    let t = (r.y * sy).floor().max(0.0) as i32;
-                    let rt = ((r.x + r.width) * sx).ceil() as i32;
-                    let b = ((r.y + r.height) * sy).ceil() as i32;
-                    if rt > l && b > t {
-                        RECT {
-                            left: l,
-                            top: t,
-                            right: rt,
-                            bottom: b,
-                        }
-                    } else {
-                        RECT {
-                            left: 0,
-                            top: 0,
-                            right: size.0 as i32,
-                            bottom: size.1 as i32,
-                        }
-                    }
-                }
-            };
             context.RSSetScissorRects(Some(&[scissor]));
+        }
+    }
 
-            // 清屏色。`Color` 存的是**线性** 0..1，而 `ClearRenderTargetView` 要的
-            // 也是线性 —— 这里不做任何编码转换。
-            //
-            // ⚠ 但必须**预乘**：目标纹理从此与顶点色在同一个预乘空间里。漏掉这一步
-            // 的话，一个半透明的 clear 色会让整帧偏亮，且只有非 1.0 的 clear 色
-            // 才暴露 —— 而默认 clear 是全 1.0 或全 0.0，于是永远看不出来。
-            //
-            // （诊断时把读回的像素按 sRGB 编码再显示，见 [`crate::write_bmp`]。那
-            // 是**看图工具的约定**问题，与这里无关。）
-            let ca = clear.a;
-            context.ClearRenderTargetView(
-                rtv,
-                &[clear.r * ca, clear.g * ca, clear.b * ca, ca],
+    /// 把 `range` 这段普通图元展开、上传、回放。
+    ///
+    /// # 为什么是一"段"而不是整帧
+    ///
+    /// 离屏 pass 之后目标的绑定、视口、scissor、PS 混合状态都变了，而顶点 / 索引
+    /// 缓冲也被离屏 pass 的四边形覆写过。每段都重设一次状态，是唯一不依赖
+    /// 「上一段留下了什么」的写法 —— 而依赖残留状态正是这类代码最常见的
+    /// 顺序依赖 bug 来源（症状：第二条带滤镜的画对了，第一条没有）。
+    fn draw_range(
+        &mut self,
+        env: &SegmentEnv<'_, '_>,
+        list: &DisplayList,
+        range: &std::ops::Range<usize>,
+    ) -> RenderReport {
+        let context = env.context;
+        let device = env.device;
+        let textures = env.textures;
+        // ⚠ **每段都重设目标 / 视口 / scissor**，而不是依赖上一段留下的值。
+        //
+        // 离屏 pass 会把 RTV 换成离屏 RT、把 scissor 换成 RT 的全矩形，于是"沿用
+        // 上一段状态"在这里是**错的**而非快的。
+        //
+        // 变异测试（M6：删掉这一行）目前**抓不到任何东西** —— 这是**等价变异**
+        // 而不是判据缺失：`draw_pass_quad` 现在也把目标 / 视口 / scissor 设成
+        // 同一组值（合成趟传的就是 `damage_scissor`），所以两条路径收敛。
+        // 保留这一行是为了让"每段自给自足"成为**结构上的**性质而不是巧合 ——
+        // 将来任何一条路径改了状态设置，那一行就是唯一还能兜住的地方。
+        //
+        // （判据侧已经补了 `partial_damage_survives_an_offscreen_pass`：它保证
+        // 局部脏区在离屏 pass 之后仍然生效，所以至少"脏区语义"这一层是被钉住的。）
+        self.bind_target(env, env.rtv, env.size, env.damage);
+        let mut report = quad::expand_range_translated_into(
+            list,
+            env.size,
+            &|name| textures.contains(name),
+            Point::new(0.0, 0.0),
+            Some(range.clone()),
+            &mut self.scratch,
+        );
+        let scratch = &self.scratch;
+        let all = &scratch.vertices;
+        let path_first = scratch.path_first;
+        let path_index_start = scratch.path_index_start;
+        let path_tris = scratch.paths.len() / 3;
+        let runs = scratch.runs();
+        report.vertex_bytes = (all.len() * std::mem::size_of::<Vertex>()) as u64;
+        report.quads = scratch.solid.len() / 4 + scratch.images.len() / 4;
+
+        if all.is_empty() {
+            return report;
+        }
+
+        // ---- 顶点 / 索引缓冲按需增长，但不缩 ----
+        let needed = report.vertex_bytes.max(64);
+        if needed > self.vertex_capacity {
+            let grown = needed.next_power_of_two();
+            if let Ok(b) = create_vertex_buffer(device, grown) {
+                self.vertex_buffer = b;
+                self.vertex_capacity = grown;
+                report.reallocated = true;
+            }
+        }
+        // 索引流分两段：前段是四边形（每图元 6 个索引），后段是多边形三角形
+        // （每三角形 3 个连续索引）。路径段的顶点基址是 `quads * 4`。
+        //
+        // ⚠ 四边形数必须**只数 solid + images**。写成 `all.len() / 4` 会把路径的顶点
+        // 也除进去 —— 路径顶点数是 3 的倍数不是 4 的倍数，于是这个除法本身就没有
+        // 意义（整数截断），结果是四边形段的顶点基址全部错位。症状：路径一旦出现，
+        // 它前面所有图元一起变成乱码几何。
+        let total_quads = (scratch.solid.len() + scratch.images.len()) / 4;
+        let (idx, _) = quad::expand_indices_with_paths(total_quads, path_tris);
+        if !idx.is_empty() {
+            let need = (idx.len() * 2) as u64;
+            if need > self.index_capacity {
+                let grown = need.next_power_of_two();
+                if let Ok(b) = create_dynamic_buffer(device, grown, D3D11_BIND_INDEX_BUFFER) {
+                    self.index_buffer = b;
+                    self.index_capacity = grown;
+                    report.reallocated = true;
+                }
+            }
+            self.write_buffer(
+                context,
+                &self.index_buffer,
+                bytemuck::cast_slice(&idx),
+                self.index_capacity,
             );
+        }
+
+        // ⚠ 顺序固定：**先写数据，再设状态，最后 draw**。
+        //
+        // 绑定之后再写同一个缓冲时，驱动要等 GPU 用完旧内容才能真正替换
+        // （`WRITE_DISCARD` 让它另给一块，所以这里没有硬等待）。「先写后绑」少一次
+        // 这样的往返。
+        if !all.is_empty() {
+            self.write_vertices(context, bytemuck::cast_slice(all));
+        }
+
+        // ---- 每段重设上下文状态 ----
+        //
+        // 顺序固定：混合/光栅化 → 着色器 → 输入布局 → 顶点缓冲 → 索引缓冲 → 采样器
+        // → 拓扑。少设一项不会报错，只会静默沿用上一次的值。
+        unsafe {
             context.OMSetBlendState(&self.blend, None, 0xFFFF_FFFF);
             context.RSSetState(&self.rasterizer);
-            // ⚠ `IASetInputLayout` **必须**在这里绑。
-            //
-            // D3D11 没有 PSO 对象 —— 输入布局是上下文状态的一部分。漏绑时
-            // `CreateInputLayout` 与 `VSSetShader` 都不会报错，而顶点着色器读不到
-            // 任何顶点属性，于是三角形退化。
-            //
-            // ⚠⚠ 这里曾经写着两条**臆测**，都把排查带偏了整整两轮，留在下面当反例：
-            //
-            // 1. 「漏绑的症状是屏幕上恰好 2 个半透明像素」。**没有验证过**。真正被
-            //    实测钉死的是另一回事 —— 那个「2 个像素」的元凶是**拓扑未设**
-            //    （见下方 `IASetPrimitiveTopology`）。
-            // 2. 「`CreateInputLayout` 不校验与着色器签名的匹配」。官方原文相反 ——
-            //    「this allows the API to validate the input-layout-object elements
-            //    against the shader-input signature to make sure that there is an
-            //    exact match of types and semantics」。布局若对不上，`Shaders::new`
-            //    会直接失败；它既然成功了，布局就是对的。
-            //
-            // 把没验证过的结论写成排除依据，是纯粹的负资产。
+            // ⚠ `IASetInputLayout` **必须**绑：D3D11 没有 PSO 对象 —— 输入布局是
+            // 上下文状态的一部分。漏绑时 `CreateInputLayout` 与 `VSSetShader` 都不
+            // 报错，而顶点着色器读不到任何顶点属性，于是三角形退化。
             context.IASetInputLayout(&self.shaders.input_layout);
             context.VSSetShader(&self.shaders.vs, None);
             context.PSSetShader(&self.shaders.ps[0], None);
@@ -907,7 +1234,7 @@ impl Renderer {
                 Some(&stride),
                 Some(&offset),
             );
-            // 索引缓冲**必须**在 draw 之前绑定 —— 漏掉它时 D3D11 不报错，只是整帧
+            // 索引缓冲**必须**在 draw 之前绑定 —— 漏掉时 D3D11 不报错，只是整段
             // 什么都不画（实测踩过：窗口只剩清屏色，而 `RenderReport` 里
             // `quads=143` 一切正常）。那是最难查的一类故障，因为没有错误可查。
             context.IASetIndexBuffer(&self.index_buffer, DXGI_FORMAT_R16_UINT, 0);
@@ -916,41 +1243,26 @@ impl Renderer {
             //
             // 上下文创建后拓扑是 `D3D11_PRIMITIVE_TOPOLOGY_UNDEFINED`（0），而
             // `DrawIndexed` 拿它当参数时**不报错**：没有 HRESULT、没有异常、
-            // `GetDeviceRemovedReason` 仍是 `Ok(())`，`RenderReport` 里
-            // `quads=2` 也一切正常 —— 唯一可观察的后果就是画面上几乎什么都没有。
-            //
-            // 官方《Getting Started with the Input-Assembler Stage》把这一步写成
-            // 硬性要求：
-            //   "After the input buffers have been bound, the IA stage **must** be
-            //    told how to assemble the vertices into primitives. This is done by
-            //    specifying the primitive type by calling
-            //    ID3D11DeviceContext::IASetPrimitiveTopology".
-            //
-            // 残留的「两个像素」是退化几何的残迹（顶点全在同一处时光栅化仍会命中
-            // 极少片元），所以症状**看起来**像「画了一点点」，把排查带到了顶点属性、
-            // 语义索引、抗锯齿上 —— 而那三样全都是好的。判据见
-            // `tests/d3d11_draw.rs`：同一份着色器、同一份顶点数据，
-            // 唯一多了 `IASetPrimitiveTopology(TRIANGLELIST)`，覆盖从 2/4096 变成
-            // 4096/4096。
+            // `GetDeviceRemovedReason` 仍是 `Ok(())`，`RenderReport` 里 `quads=2` 也
+            // 一切正常 —— 唯一可观察的后果就是画面上几乎什么都没有。
             context.IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         }
 
-        // `DrawIndexed` 而**不是** `DrawIndexedInstanced`：索引里已经逐四边形加好了
-// ---- 4. 逐段回放：一段一次 draw ----
+        // ---- 逐段回放：一段一次 draw ----
         //
         // 为什么按 [`quad::DrawRun`] 走而不是把 solid / images / paths 三段写死：
         // 混合模式是**渲染管线状态**，一次 draw 只能有一种。两段相邻的图元若混合
-        // 模式不同，就必须分成两次 draw —— 而三段写死的写法表达不了这件事，
-        // 只能给整帧套一个状态（症状是"有一个的效果没生效"，而所有计数都正常）。
+        // 模式不同，就必须分成两次 draw —— 而三段写死的写法表达不了这件事，只能给
+        // 整段套一个状态（症状是"有一个的效果没生效"，而所有计数都正常）。
         //
         // `runs` 的不变量是「恰好划分整条顶点流」，所以循环覆盖全部几何，既不漏
         // 也不重叠。见 `quad::DrawRun` 的文档。
-        for run in &runs {
+        for run in runs {
             if run.vertex_count == 0 {
                 continue;
             }
-            // ⚠ 混合模式**逐段**决定两样东西：PS 变体与混合状态。这两样必须**成对**决定 ——
-            // 只换其一的后果是"模式看起来没生效"，而且没有任何错误。
+            // ⚠ 混合模式**逐段**决定两样东西：PS 变体与混合状态。这两样必须**成对**
+            // 决定 —— 只换其一的后果是"模式看起来没生效"，而且没有任何错误。
             //
             // | 模式            | PS 变体        | 混合状态        |
             // |-----------------|----------------|-----------------|
@@ -970,32 +1282,29 @@ impl Renderer {
                     None,
                 ),
                 // PS 合成模式：需要 `dst` 的副本，绑到 **t1**（`g_dst` 的槽位）。
-                Some(k) => match self.refresh_dst_copy(device, context, rtv, size) {
-                    Some(srv) => {
-                        // `blends[1]` 是 `BlendMode::Src` = `(One, Zero)`，正好是
-                        // "原样接受 PS 的输出"。
-                        (
-                            k,
-                            self.blends[1].clone().unwrap_or_else(|| self.blend.clone()),
-                            Some(srv),
-                        )
-                    }
+                Some(k) => match self.refresh_dst_copy(device, context, env.rtv, env.size) {
+                    Some(srv) => (
+                        k,
+                        // `blends[1]` 是 `BlendMode::Src` = `(One, Zero)`。
+                        self.blends[1].clone().unwrap_or_else(|| self.blend.clone()),
+                        Some(srv),
+                    ),
                     // 建不出目标副本 ⇒ 退回 `SrcOver` 而不是整帧崩。
                     None => (0usize, self.blend.clone(), None),
                 },
             };
             // 绑 `g_dst`。
             //
-            // ⚠ 必须绑在 **每段** 之前而不是帧首一次：可分离 / 非可分离模式要读的
+            // ⚠ 必须绑在**每段**之前而不是帧首一次：可分离 / 非可分离模式要读的
             // `dst` 已经含**前面各段**的结果，只在帧首拷一次的话第二段起全都基于
-            // 帧首的目标算。`per_run_ps_switching_uses_the_updated_destination`
-            // 钉住这条。
+            // 帧首的目标算。`per_run_ps_switching_uses_the_updated_destination` 钉住
+            // 这条。
             //
-            // `None` 时也要显式解绑 t1：上一段用 PS 合成模式、这一段不用时，
-            // 残留的 SRV 会让绑定点错位（本段读 t0 就变成读上一段的目标）。
+            // `None` 时也要显式解绑 t1：上一段用 PS 合成模式、这一段不用时，残留的
+            // SRV 会让绑定点错位（本段读 t0 就变成读上一段的目标）。
             unsafe {
-                // `Some(&[…])` 里放**拥有所有权**的视图（D3D11 会 AddRef），
-                // 不是引用 —— 传引用会拿到 `Option<&ID3D11ShaderResourceView>`。
+                // `Some(&[…])` 里放**拥有所有权**的视图（D3D11 会 AddRef），不是
+                // 引用 —— 传引用会拿到 `Option<&ID3D11ShaderResourceView>`。
                 let t1: Option<ID3D11ShaderResourceView> = dst_srv.clone();
                 context.PSSetShaderResources(1, Some(&[t1]));
             }
@@ -1039,6 +1348,426 @@ impl Renderer {
             }
         }
         report
+    }
+
+    /// 离屏 pass：内容 → 模糊（乒乓）→ 合成（E4.4 / E4.5 / E4.6）。
+    ///
+    /// # 为什么要三步而不是"把整个滤镜链交给着色器一次画完"
+    ///
+    /// 高斯核在二维上**可分离**：先沿 x 再沿 y，与二维卷积等价，代价从 O(r²) 降到
+    /// O(2r)。这是能跑得动大 σ 的唯一原因，也是着色器里拆成 `PSBlurH` / `PSBlurV`
+    /// 两个入口的原因。
+    ///
+    /// # 建不出 RT 时怎么办
+    ///
+    /// 计入 `unimplemented_filters` 并返回 —— 那条命令于是既没离屏也没进普通批次，
+    /// 元素**不出现**。这比"画一个没模糊的版本"更难查吗？不一定：画错版本看起来
+    /// 像"滤镜没生效"，而元素消失会让人怀疑几何。选不出现的理由是它**更响**：
+    /// 少了一个元素，而少元素几乎总是被立刻发现。
+    fn render_offscreen(
+        &mut self,
+        env: &SegmentEnv<'_, '_>,
+        item: &Item,
+        pass: &OffscreenPass,
+    ) -> RenderReport {
+        let mut report = RenderReport::default();
+        let context = env.context;
+        let device = env.device;
+
+        let Some((a, b)) = self.offscreen_pair(device, context, pass.rt_size) else {
+            report.unimplemented_filters += 1;
+            return report;
+        };
+
+        // ---- 1. 把内容画进 RT_A（按 translate 平移） ----
+        //
+        // 平移用 `pass.translate`（= `-origin + offset`），**不**用
+        // `filter.origin_in(content)`：后者少了投影的 `offset`，症状是影子画在原位。
+        //
+        // ⚠ 这里必须只画**这一条**命令。限制来自 [`single_item_list`] —— 它造的是一份
+        // **只有这条命令**的 `DisplayList`，所以展开区间可以传 `None`（不限）。
+        // 若改成传整份 `DisplayList`，所有图元都会被画进这张离屏 RT —— 症状是每个
+        // 带滤镜的元素都带着一整个窗口的模糊副本，且不报错。
+        //
+        // （传 `Some(0..1)` 与传 `None` 在这里**完全等价**：那份列表长度就是 1。
+        // 变异测试把 `None` 换成"整份列表"是抓不到东西的 —— 那不是判据缺失，是
+        // 两行本来就在守同一件事。留 `None` 是因为它不假装在做区间筛选。）
+        //
+        // RT_A 先清成**全 0**（不是清屏色）：离屏 RT 里存的是"这个元素自己"，它
+        // 周围必须是透明，否则模糊会把清屏色一起卷进去 —— 症状是元素周围出现一圈
+        // 与背景同色的毛边。
+        self.bind_offscreen(context, &a, pass.rt_size);
+        unsafe {
+            context.ClearRenderTargetView(&a.rtv, &[0.0, 0.0, 0.0, 0.0]);
+        }
+        // ⚠ 内容必须画在**清屏之后**：反过来会把内容清掉。两者顺序反了时画面是
+        // "一个全透明的离屏 + 目标上什么都没有"，同样零错误。
+        let content_report = self.draw_offscreen_content(env, &a, pass, item);
+        report.absorb(content_report);
+        // 离屏期间不该有"未实现的滤镜" —— 内容里那条命令的滤镜正是在做这件事。
+        report.unimplemented_filters = report.unimplemented_filters.saturating_sub(1);
+        report.offscreen_passes += 1;
+
+        // ---- 2. 模糊：逐趟乒乓 ----
+        //
+        // `src_is_a` 记当前有效结果在哪张：内容画在 A，所以一开始是 A。每一趟
+        // "读 src 写 dst"，然后交换。
+        let mut src_is_a = true;
+        for step in &pass.blurs {
+            let (from, to) = if src_is_a { (&a, &b) } else { (&b, &a) };
+            let ps = if step.horizontal {
+                crate::shader::PS_BLUR_H
+            } else {
+                crate::shader::PS_BLUR_V
+            };
+            self.draw_pass_quad(
+                env,
+                &offscreen::blur_quad(step, pass.rt_size_as_f32(), pass.rt_size_as_f32()),
+                ps,
+                from,
+                &to.rtv,
+                pass.rt_size,
+                // blur pass 的输出**完全替换**目标（PS 已算出最终值），所以混合
+                // 必须是 `Src`。用 `SrcOver` 会把上一趟的结果再叠一次 ⇒ 每趟之后
+                // 图像越来越亮。
+                BlendSlot::Src,
+                full_rect(pass.rt_size),
+            );
+            src_is_a = !src_is_a;
+        }
+
+        // ---- 3. 合成回目标 ----
+        let final_rt = if src_is_a { &a } else { &b };
+        // ⚠ 这里**不**先调 `bind_target`：那会绑回目标，然后 `draw_pass_quad`
+        // 立刻又绑成它自己的目标 —— 一次多余的往返。
+        //
+        // （这一段曾经有过一句"合成前必须把目标重新绑回来"的注释。它是**错的**：
+        // `draw_pass_quad` 自己就 `OMSetRenderTargets(dst_rtv)` + 设视口 + 设 scissor，
+        // 所以删掉那句 `bind_target` 之后全部测试仍然通过 —— 变异测试把它抓出来
+        // 才确认它是死代码。真正需要"重绑目标"的是**投影那一步**的重画原图
+        // （那里不走 `draw_pass_quad`），见 `render` 里的说明。）
+        let q = offscreen::composite_quad(
+            pass.bounds,
+            env.size_as_f32(),
+            pass.rt_size_as_f32(),
+            pass.tint,
+        );
+        // 合成输出的是**预乘**颜色（`Vertex::quad` 已经把顶点色预乘，而
+        // `PSComposite` 的透传分支直接返回采样值）⇒ 混合状态是预乘空间的
+        // `SrcOver`（`ONE / INV_SRC_ALPHA`），也就是 `blends[3]`。
+        self.draw_pass_quad(
+            env,
+            &q,
+            crate::shader::PS_COMPOSITE,
+            final_rt,
+            env.rtv,
+            env.size,
+            BlendSlot::SrcOver,
+            damage_scissor(env.size, env.damage),
+        );
+        report
+    }
+
+    /// 把离屏 RT 的状态设好：RTV + 视口 + **全 RT** 的 scissor。
+    ///
+    /// # 为什么 scissor 不用 `RenderCtx::damage`
+    ///
+    /// `damage` 是**屏幕**坐标系的矩形，而离屏 RT 的原点在 `bounds.x/y` 且尺寸是
+    /// `rt_size`。拿屏幕脏区去裁它，两套坐标系求交的结果毫无意义 —— 元素在屏幕
+    /// 中央时交集通常是空的，于是**整个离屏 pass 静默什么都不画**。
+    fn bind_offscreen(
+        &self,
+        context: &ID3D11DeviceContext,
+        rt: &OffscreenRt,
+        size: (u32, u32),
+    ) {
+        unsafe {
+            context.OMSetRenderTargets(
+                Some(&[Some(rt.rtv.clone())]),
+                None::<&ID3D11DepthStencilView>,
+            );
+            let viewport = [D3D11_VIEWPORT {
+                TopLeftX: 0.0,
+                TopLeftY: 0.0,
+                Width: size.0 as f32,
+                Height: size.1 as f32,
+                MinDepth: 0.0,
+                MaxDepth: 1.0,
+            }];
+            context.RSSetViewports(Some(&viewport));
+            // ⚠ **必须显式设一个非空矩形**：D3D11 里 scissor 永远生效，没有关闭开关，
+            // 而空矩形 = 什么都不画且零错误（见 `bind_target` 里那段实测记录）。
+            let s = RECT {
+                left: 0,
+                top: 0,
+                right: size.0 as i32,
+                bottom: size.1 as i32,
+            };
+            context.RSSetScissorRects(Some(&[s]));
+            context.RSSetState(&self.rasterizer);
+            context.IASetInputLayout(&self.shaders.input_layout);
+            context.VSSetShader(&self.shaders.vs, None);
+            context.IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+            context.PSSetSamplers(0, Some(&[Some(self.sampler.clone())]));
+        }
+    }
+
+    /// 在离屏 RT 上回放**单条**命令的几何（E4.4 第 1 步）。
+    fn draw_offscreen_content(
+        &mut self,
+        env: &SegmentEnv<'_, '_>,
+        _rt: &OffscreenRt,
+        pass: &OffscreenPass,
+        item: &Item,
+    ) -> RenderReport {
+        let context = env.context;
+        let device = env.device;
+        let rt_size = pass.rt_size;
+        // ⚠ `Scratch` 是**取出来**用的，不是 `&mut self.scratch`。
+        //
+        // 原因：`expand_*` 的 `is_registered` 闭包要借 `env.textures`，而
+        // `env` 又是从调用方借来的 —— 若同时持有 `&mut self.scratch`，编译器
+        // 无法证明 `self.textures` 那条借用链已经结束（它们其实无关，但都挂在
+        // `self` / `env` 的不同生命周期上）。`mem::take` 把这条借用链切断，
+        // 代价是几行 `self.scratch = scratch` 的还回。
+        let mut scratch = std::mem::take(&mut self.scratch);
+        let list = single_item_list(item);
+        let textures = env.textures;
+        let mut rep = quad::expand_range_translated_into(
+            &list,
+            rt_size,
+            &|name| textures.contains(name),
+            content_translate(pass),
+            None,
+            &mut scratch,
+        );
+        let all = &scratch.vertices;
+        let path_first = scratch.path_first;
+        let path_index_start = scratch.path_index_start;
+        let runs = scratch.runs();
+        rep.vertex_bytes = (all.len() * std::mem::size_of::<Vertex>()) as u64;
+
+        if all.is_empty() {
+            self.scratch = scratch;
+            return rep;
+        }
+        let needed = rep.vertex_bytes.max(64);
+        if needed > self.vertex_capacity {
+            if let Ok(b) = create_vertex_buffer(device, needed.next_power_of_two()) {
+                self.vertex_buffer = b;
+                self.vertex_capacity = needed.next_power_of_two();
+                rep.reallocated = true;
+            }
+        }
+        let total_quads = (scratch.solid.len() + scratch.images.len()) / 4;
+        let (idx, _) = quad::expand_indices_with_paths(total_quads, scratch.paths.len() / 3);
+        if !idx.is_empty() {
+            let need = (idx.len() * 2) as u64;
+            if need > self.index_capacity {
+                if let Ok(b) = create_dynamic_buffer(device, need.next_power_of_two(), D3D11_BIND_INDEX_BUFFER) {
+                    self.index_buffer = b;
+                    self.index_capacity = need.next_power_of_two();
+                    rep.reallocated = true;
+                }
+            }
+            self.write_buffer(
+                context,
+                &self.index_buffer,
+                bytemuck::cast_slice(&idx),
+                self.index_capacity,
+            );
+        }
+        self.write_vertices(context, bytemuck::cast_slice(all));
+        unsafe {
+            let stride = std::mem::size_of::<Vertex>() as u32;
+            let offset = 0u32;
+            context.IASetVertexBuffers(
+                0,
+                1,
+                Some([Some(self.vertex_buffer.clone())].as_ptr()),
+                Some(&stride),
+                Some(&offset),
+            );
+            context.IASetIndexBuffer(&self.index_buffer, DXGI_FORMAT_R16_UINT, 0);
+            context.OMSetBlendState(&self.blend, None, 0xFFFF_FFFF);
+            context.PSSetShader(&self.shaders.ps[0], None);
+        }
+        for run in runs {
+            if run.vertex_count == 0 {
+                continue;
+            }
+            let srv = match &run.texture {
+                Some(name) => match env.textures.srv(name) {
+                    Some(s) => s,
+                    None => continue,
+                },
+                None => self.atlas_srv.clone(),
+            };
+            let (index_start, index_count) = if run.first_vertex >= path_first {
+                (
+                    path_index_start + (run.first_vertex - path_first),
+                    run.vertex_count,
+                )
+            } else {
+                (
+                    (run.first_vertex / 4) * 6,
+                    (run.vertex_count / 4) * 6,
+                )
+            };
+            unsafe {
+                context.PSSetShaderResources(0, Some(&[Some(srv)]));
+                context.DrawIndexed(index_count, index_start, 0);
+            }
+        }
+        self.scratch = scratch;
+        rep
+    }
+
+    /// 画一个 pass 四边形（模糊趟 / 合成）：绑源 SRV、换 PS、换混合状态、画。
+    ///
+    /// # 为什么不复用 `draw_range`
+    ///
+    /// `draw_range` 展开的是一份 `DisplayList`，而 pass 四边形是**手工构造**的
+    /// 4 个顶点（`offscreen::pass_quad`）。走同一条路就要先把 4 个顶点塞进一份
+    /// 临时 `DisplayList` 再展开一遍 —— 多两次分配，且那个列表还得能被
+    /// `expand` 认出来（它只认四种命令变体，没有"裸四边形"这一种）。
+    ///
+    /// # `blend_slot` 为什么不能省
+    ///
+    /// 混合状态是渲染管线状态，上一次留下的值会静默生效。模糊趟必须 `Src`
+    /// （输出即最终值），合成趟必须 `SrcOver`（预乘源叠到目标上）。少设一次的后果
+    /// 是"模糊越来越亮"或"合成结果比该有的暗"，都不报错。
+    #[allow(clippy::too_many_arguments)]
+    fn draw_pass_quad(
+        &mut self,
+        env: &SegmentEnv<'_, '_>,
+        quad: &[Vertex; 4],
+        ps: usize,
+        src: &OffscreenRt,
+        dst_rtv: &ID3D11RenderTargetView,
+        dst_size: (u32, u32),
+        blend_slot: BlendSlot,
+        // 裁剪矩形。模糊趟写的是**离屏 RT**，必须给"全 RT"（离屏内容不受屏幕脏区
+    // 约束 —— 脏区是屏幕坐标系的，与 RT 的原点/尺寸不在一套坐标系里）；合成趟写
+    // 的是**目标**，必须给与普通图元同一份脏区 scissor，否则局部脏区下会把滤镜
+    // 结果合成到脏区之外，症状是"改了脏区，脏区外却变了"。
+    scissor: RECT,
+    ) {
+        let context = env.context;
+        let device = env.device;
+        let bytes = (4 * std::mem::size_of::<Vertex>()) as u64;
+        if bytes > self.vertex_capacity {
+            if let Ok(b) = create_vertex_buffer(device, bytes.next_power_of_two()) {
+                self.vertex_buffer = b;
+                self.vertex_capacity = bytes.next_power_of_two();
+            }
+        }
+        let idx = quad::expand_indices_with_paths(1, 0).0;
+        let need = (idx.len() * 2) as u64;
+        if need > self.index_capacity {
+            if let Ok(b) = create_dynamic_buffer(device, need.next_power_of_two(), D3D11_BIND_INDEX_BUFFER) {
+                self.index_buffer = b;
+                self.index_capacity = need.next_power_of_two();
+            }
+        }
+        self.write_buffer(
+            context,
+            &self.index_buffer,
+            bytemuck::cast_slice(&idx),
+            self.index_capacity,
+        );
+        self.write_vertices(context, bytemuck::cast_slice(quad));
+        let blend = match blend_slot {
+            BlendSlot::Src => self.blends[1].clone().unwrap_or_else(|| self.blend.clone()),
+            BlendSlot::SrcOver => self.blend.clone(),
+        };
+        unsafe {
+            let stride = std::mem::size_of::<Vertex>() as u32;
+            let offset = 0u32;
+            context.OMSetRenderTargets(
+                Some(&[Some(dst_rtv.clone())]),
+                None::<&ID3D11DepthStencilView>,
+            );
+            let viewport = [D3D11_VIEWPORT {
+                TopLeftX: 0.0,
+                TopLeftY: 0.0,
+                Width: dst_size.0 as f32,
+                Height: dst_size.1 as f32,
+                MinDepth: 0.0,
+                MaxDepth: 1.0,
+            }];
+            context.RSSetViewports(Some(&viewport));
+            context.RSSetScissorRects(Some(&[scissor]));
+            context.RSSetState(&self.rasterizer);
+            context.IASetInputLayout(&self.shaders.input_layout);
+            context.VSSetShader(&self.shaders.vs, None);
+            context.PSSetShader(&self.shaders.ps[ps], None);
+            context.PSSetSamplers(0, Some(&[Some(self.sampler.clone())]));
+            context.IASetVertexBuffers(
+                0,
+                1,
+                Some([Some(self.vertex_buffer.clone())].as_ptr()),
+                Some(&stride),
+                Some(&offset),
+            );
+            context.IASetIndexBuffer(&self.index_buffer, DXGI_FORMAT_R16_UINT, 0);
+            context.IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+            context.OMSetBlendState(&blend, None, 0xFFFF_FFFF);
+            context.PSSetShaderResources(0, Some(&[Some(src.srv.clone())]));
+            // `t1` 也必须绑着有效对象：模糊 / 合成 PS 在 `kind == 4` 时不读它，
+            // 但它仍被声明着，悬空 SRV 在某些驱动上会让后续采样返回未定义值。
+            context.PSSetShaderResources(1, Some(&[Some(src.srv.clone())]));
+            context.DrawIndexed(6, 0, 0);
+        }
+    }
+
+    /// 取（必要时建）一对尺寸为 `size` 的离屏 RT。
+    ///
+    /// 尺寸变了就**整对**重建 —— 只换一张会让另一张仍按旧尺寸建造，拿它当写入
+    /// 目标时报尺寸不匹配，而错误信息指向"格式"，极具误导性。
+    fn offscreen_pair(
+        &self,
+        device: &ID3D11Device,
+        context: &ID3D11DeviceContext,
+        size: (u32, u32),
+    ) -> Option<(OffscreenRt, OffscreenRt)> {
+        if size.0 == 0 || size.1 == 0 {
+            return None;
+        }
+        let mut slot = self.offscreen.borrow_mut();
+        let need_new = match (slot.as_ref().and_then(|p| p.a.as_ref()), slot.as_ref().and_then(|p| p.b.as_ref())) {
+            (Some(a), Some(b)) => a.size != size || b.size != size,
+            _ => true,
+        };
+        if need_new {
+            let fresh = OffscreenPair {
+                a: OffscreenRt::new(device, size),
+                b: OffscreenRt::new(device, size),
+            };
+            // ⚠ **B 也必须清成全 0**。
+            //
+            // 模糊趟用 `Src` 混合（输出即最终值），理论上"写满整张 RT"就让清屏
+            // 变得多余。但 `render_offscreen` 只对 A 调过 `bind_offscreen`，B 的
+            // 内容是**上一帧的残留** —— 一旦有人把某趟的混合状态改成 `SrcOver`
+            // （或将来加一个真会与旧内容混合的 pass），第一趟就会把残留叠进来，
+            // 而症状是"模糊跑得越多越亮"，且**只在多趟链上出现**。
+            //
+            // 清一次的代价是每帧一次全 RT 的 clear，而离屏 RT 通常很小。
+            if let Some(b) = &fresh.b {
+                self.bind_offscreen(context, b, size);
+                unsafe {
+                    context.ClearRenderTargetView(&b.rtv, &[0.0, 0.0, 0.0, 0.0]);
+                }
+            }
+            *slot = Some(fresh);
+        }
+        // ⚠ 返回**拥有所有权**的两张 RT，而不是借 `self.offscreen` 的引用。
+        //
+        // 返回借用会让 `self` 在整个离屏 pass 期间都被不可变借用，于是后面那些
+        // `&mut self` 的调用（写顶点 / 换绑缓冲）全部编译不过 —— 而正确的解法
+        // 不是把调用签名改成 `&self`，是**在这里把借用结束掉**。COM 引用计数
+        // 的 `clone` 成本与"多调一次 draw"相比可以忽略。
+        Some((slot.as_ref()?.a.clone()?, slot.as_ref()?.b.clone()?))
     }
 
 

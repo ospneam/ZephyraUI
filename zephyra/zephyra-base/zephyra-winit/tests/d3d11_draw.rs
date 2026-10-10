@@ -21,7 +21,7 @@
 
 use zephyra_core::frame::Damage;
 use zephyra_core::core::{Color, CornerRadius, Rect};
-use zephyra_core::paint::{Command, DisplayList, SortKey};
+use zephyra_core::paint::{Command, DisplayList, Layer, SortKey};
 
 use zephyra_winit::renderer::{RenderCtx, Renderer};
 use zephyra_winit::surface::Gpu;
@@ -1789,4 +1789,673 @@ use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_R16_UINT;
 // 只有一条路，换一台机器跑。判据现成 ——
 // zephyra-winit-d3d12/tests/minimal.rs 的 `d3d12_最小资源能不能建出来`，
 // 在一台正常机器上应当通过。
+// ---------------------------------------------------------------------------
+//  E4.4 / E4.5 / E4.6：离屏 pass 的**像素**判据
+// ---------------------------------------------------------------------------
+//
+//  这一段每条测试都对着一个**具体的失效模式**设计 —— 只断言"画面有变化"的话，
+// 模糊没做与模糊做成了 σ=0 的恒等都同样算通过。
+//
+//  统一的构造手法：一个**高对比**的图案做源，模糊后边缘必然出现中间灰。
+// 于是判据是"某个具体位置的灰度落在某个具体区间"，而不是"和上一帧不同"。
+
+/// 只含一条命令的 `DisplayList`（离屏测试用）。
+fn one(filter: zephyra_core::filter::FilterChain, fill: Color, rect: zephyra_core::core::Rect) -> DisplayList {
+    let mut l = DisplayList::new();
+    l.push(
+        SortKey { layer: Layer::Background, z: 0, order: 0 },
+        Command::Quad {
+            rect,
+            radius: zephyra_core::core::CornerRadius { radius: 0.0 },
+            fill,
+            stroke: None,
+            filter,
+            blend: zephyra_core::filter::BlendMode::default(),
+        },
+    );
+    l
+}
+
+/// 左半黑右半白的四边形 —— 模糊后垂直中线附近必然出现**中间灰**。
+///
+/// # 为什么用它当"探针"
+///
+/// 硬边的黑白块模糊之后，边缘过渡带里必然存在既不是 0 也不是满值的灰度。若模糊
+/// **没做**，整幅图只有 0 和 255 两种值 —— 于是「中间灰存在」这条断言就直接把
+/// "没做"与"做了"分开，不需要比较具体数值。
+fn split_rect(x: f32) -> zephyra_core::core::Rect {
+    zephyra_core::core::Rect::new(x, 8.0, SIZE as f32 / 2.0, SIZE as f32 - 16.0)
+}
+
+/// 图案里有多少种不同的灰度值。
+///
+/// # 为什么要数"不同值"而不是看某一个点
+///
+/// 模糊没做 ⇒ 只有 0 与 255。模糊做了 ⇒ 过渡带里有一串中间值。数种类对
+/// "σ 是不是被算成了 0"也敏感：σ=0 时 `BlurRadius` 返回 0，循环只跑 k=0、
+/// 权重 1，等于原样 —— 种类数仍然是 2。
+fn distinct_gray_levels(px: &[u8], x0: u32, y: u32, w: u32) -> usize {
+    let mut levels = [false; 256];
+    for x in x0..x0 + w {
+        let p = probe_at(px, x, y);
+        // 只看亮度：模糊只卷 rgb，alpha 在中间（透明↔不透明）处是硬的。
+        let l = ((p[0] as u32 * 54 + p[1] as u32 * 183 + p[2] as u32 * 19) >> 8) as usize;
+        levels[l] = true;
+    }
+    levels.iter().filter(|b| **b).count()
+}
+
+/// blur **真的**执行了：硬边被卷成过渡带。
+///
+/// # 判据为什么是"灰度种类数"
+///
+/// 源是硬边黑白块：
+///
+/// - 模糊没做 ⇒ 全图只有 0 与 255 ⇒ 2 种。
+/// - 模糊做了（哪怕 σ 很小）⇒ 过渡带里有一串中间值 ⇒ ≥ 5 种。
+/// - 模糊做了但 σ 被算成 0 ⇒ 仍是 2 种。
+///
+/// 三种情况互不相交，所以这一个数字就把它们全分开了。
+///
+/// # 为什么图案要离画面边缘 8px
+///
+/// 离屏 RT 的边界处采样器是 clamp-to-edge，边缘的过渡带会被"拉平"。图案贴着
+/// 边缘时，过渡带的一部分落在钳位区里，种类数会偏小 —— 那是正确行为，不是 bug。
+#[test]
+fn blur_produces_a_transition_band_on_gpu() {
+    let chain = zephyra_core::filter::FilterChain::single(zephyra_core::filter::Filter::Blur {
+        sigma_x: 3.0,
+        sigma_y: 0.0,
+    });
+    let px = render_probe(&one(chain, Color::rgb(1.0, 1.0, 1.0), split_rect(0.0)));
+    let kinds = distinct_gray_levels(&px, 20, 32, 24);
+    assert!(
+        kinds >= 5,
+        "模糊应把硬边卷成过渡带（≥5 种灰度），实得 {kinds} 种 —— 只有 2 种说明模糊没做"
+    );
+}
+
+/// 只模糊一个方向时，**另一个**方向必须保持硬边。
+///
+/// # 这条在抓什么
+///
+/// `PSBlurH` 与 `PSBlurV` 是两个独立入口，方向走顶点数据。若两者被搞混
+/// （比如绑定时反了），单方向模糊会变成另一个方向 —— 而"有过渡带"这条判据
+/// 照样通过。所以必须有一条**只区分方向**的测试。
+///
+/// 构造：竖直黑白分界，**只**开 σx。
+///
+/// - 正确：水平方向糊开（同一行里有多值），垂直方向每行都还是硬边。
+/// - 方向反了：同一行内仍是硬边 → 行内灰度种类 = 2。
+#[test]
+fn horizontal_blur_leaves_vertical_edges_hard() {
+    let chain = zephyra_core::filter::FilterChain::single(zephyra_core::filter::Filter::Blur {
+        sigma_x: 3.0,
+        sigma_y: 0.0,
+    });
+    let px = render_probe(&one(chain, Color::rgb(1.0, 1.0, 1.0), split_rect(0.0)));
+    let row_kinds = distinct_gray_levels(&px, 20, 32, 24);
+    // 纵向探针：从上到下，同一列应当**只有**两段（因为图案是上下均匀的竖条）。
+    let col_kinds = {
+        let mut levels = [false; 256];
+        for y in 12..52 {
+            let p = probe_at(&px, 32, y);
+            let l = ((p[0] as u32 * 54 + p[1] as u32 * 183 + p[2] as u32 * 19) >> 8) as usize;
+            levels[l] = true;
+        }
+        levels.iter().filter(|b| **b).count()
+    };
+    assert!(row_kinds >= 5, "水平模糊应在行内产生过渡带，实得 {row_kinds} 种");
+    assert!(
+        col_kinds <= 2,
+        "只开 σx 时纵向必须保持硬边，实得 {col_kinds} 种 —— σy 显然也被应用了"
+    );
+}
+
+/// 合成位置对：`bounds` 之外**不得**有任何像素被改动。
+///
+/// # 这条在抓什么
+///
+/// 离屏 RT 覆盖 `bounds`，合成四边形也只覆盖 `bounds`。若它铺满了整张目标
+/// （忘了按屏幕矩形定位），RT 里那张**全透明的边距**会被合成到目标上 —— 而
+/// 预乘的透明合成 SrcOver 是"什么都不变"，于是**看不出**区别。
+///
+/// 所以判据必须换一个方向：把**目标**预先画成非黑，让"离屏矩形之外被误画"
+///// 与"什么都没画"可分辨 —— 具体做法是让离屏矩形**不覆盖**整张图，检查矩形外
+/// 的颜色仍等于我们自己画的底色。
+///
+/// 离屏矩形 = 内容 + outset。内容是 `split_rect(0.0)`（x 从 0 到 32），σ=2 ⇒
+/// outset 6 ⇒ bounds.x ∈ [-6, 0]，宽度 32+12 = 44。SIZE=64，所以 x∈[58,64]
+/// 那一列必然在 bounds 之外。
+#[test]
+fn composite_lands_only_on_the_offscreen_bounds() {
+    let mut l = DisplayList::new();
+    // 先铺满一张**纯蓝**底，让"被误画"与"没被画"可分辨。
+    l.push(
+        SortKey { layer: Layer::Background, z: 0, order: 0 },
+        Command::Quad {
+            rect: zephyra_core::core::Rect::new(0.0, 0.0, SIZE as f32, SIZE as f32),
+            radius: zephyra_core::core::CornerRadius { radius: 0.0 },
+            fill: Color::rgb(0.0, 0.0, 1.0),
+            stroke: None,
+            filter: zephyra_core::filter::FilterChain::none(),
+            blend: zephyra_core::filter::BlendMode::default(),
+        },
+    );
+    // 再叠一条离屏模糊的白色四边形。
+    l.push(
+        SortKey { layer: Layer::Content, z: 0, order: 1 },
+        Command::Quad {
+            rect: split_rect(0.0),
+            radius: zephyra_core::core::CornerRadius { radius: 0.0 },
+            fill: Color::rgb(1.0, 1.0, 1.0),
+            stroke: None,
+            filter: zephyra_core::filter::FilterChain::single(
+                zephyra_core::filter::Filter::Blur { sigma_x: 2.0, sigma_y: 2.0 },
+            ),
+            blend: zephyra_core::filter::BlendMode::default(),
+        },
+    );
+    l.sort();
+    let px = render_probe(&l);
+
+    // bounds 右边界 = 内容右(32) + outset(6) = 38 ⇒ x ∈ [38, 64) 全是底色。
+    let outside = probe_at(&px, 55, 32);
+    assert!(
+        outside[0] <= 2 && outside[1] <= 2 && outside[2] >= 253,
+        "bounds 之外(x=55)应当仍是底色蓝，实得 {outside:?} —— 合成四边形铺过了界"
+    );
+    // bounds 之内要取**远离图案边缘**的点：内容右边界在 x=32，σ=2 的过渡带
+    // 跨 x ∈ [26, 38]，取 x=32 正好落在带中间（实测得 [102,102,255]）—— 那是正确
+    // 行为而不是 bug，所以判据必须避开过渡带。取 x=16：离图案两侧各 16px。
+    let inside = probe_at(&px, 16, 32);
+    assert!(
+        inside[0] >= 253 && inside[1] >= 253 && inside[2] >= 253,
+        "bounds 之内(x=16)应当是图案白，实得 {inside:?} —— 合成没落地"
+    );
+}
+
+/// 离屏 pass 的**顺序**正确：滤镜元素压在下层图元之上。
+///
+/// # 为什么这条非写不可
+///
+/// 分段回放的全部意义就是保持绘制顺序。若实现成"先跑完所有离屏、再画普通段"，
+/// 离屏结果会落到所有普通图元**之下** —— 于是这条测试里的白图案会被蓝底盖住，
+/// 画面全是蓝，而所有计数都正常。
+///
+/// 反过来（滤镜元素在下层图元之上）也是合法布局，所以这里刻意让滤镜元素
+/// **排在下层**（`order` 更大），让两种顺序给出不同的像素。
+#[test]
+fn offscreen_result_is_ordered_above_lower_primitives() {
+    let mut l = DisplayList::new();
+    // order 1：离屏模糊的白条（"上层"）。
+    l.push(
+        SortKey { layer: Layer::Content, z: 0, order: 1 },
+        Command::Quad {
+            rect: zephyra_core::core::Rect::new(8.0, 8.0, SIZE as f32 - 16.0, SIZE as f32 - 16.0),
+            radius: zephyra_core::core::CornerRadius { radius: 0.0 },
+            fill: Color::rgb(1.0, 1.0, 1.0),
+            stroke: None,
+            filter: zephyra_core::filter::FilterChain::single(
+                zephyra_core::filter::Filter::Blur { sigma_x: 1.0, sigma_y: 1.0 },
+            ),
+            blend: zephyra_core::filter::BlendMode::default(),
+        },
+    );
+    // order 2：全屏纯蓝（"更上层"）—— 若顺序被搞反，它会盖住离屏结果。
+    l.push(
+        SortKey { layer: Layer::Popup, z: 0, order: 2 },
+        Command::Quad {
+            rect: zephyra_core::core::Rect::new(0.0, 0.0, SIZE as f32, SIZE as f32),
+            radius: zephyra_core::core::CornerRadius { radius: 0.0 },
+            fill: Color::rgb(0.0, 0.0, 1.0),
+            stroke: None,
+            filter: zephyra_core::filter::FilterChain::none(),
+            blend: zephyra_core::filter::BlendMode::default(),
+        },
+    );
+    l.sort();
+    let px = render_probe(&l);
+    let p = probe_at(&px, 32, 32);
+    assert!(
+        p[0] <= 2 && p[2] >= 253,
+        "更上层(Popup)的蓝应当盖住离屏白条，实得 {p:?} —— 离屏结果被画到了末尾
+         （= 实现成了「先跑完所有离屏再统一画普通段」）"
+    );
+}
+
+/// DropShadow：影子**偏移**、**染色**，且原图仍在其上。
+///
+/// # 判据为什么是"染上黑色"
+///
+/// σ=0 的投影是合法的（`Filter::DropShadow{sigma: 0}`）。此时不模糊，只有
+/// 染色 + 偏移两步 —— 于是判据可以用"影子区域是纯黑、原图位置是白色"这种
+/// 不依赖模糊精度的形式。σ>0 的模糊由上面几条测，这里专门测**染色与偏移**。
+///
+/// 构图：内容是 16×16 的白块（x∈[24,40), y∈[24,40)），offset=(8,0)。
+/// 影子落在 x∈[32,48)。于是：
+/// - x=28, y=32 → 原图（白）
+/// - x=44, y=32 → 只有影子（黑）
+#[test]
+fn drop_shadow_tints_offsets_and_keeps_the_original_on_top() {
+    let mut l = DisplayList::new();
+    let content = zephyra_core::core::Rect::new(24.0, 24.0, 16.0, 16.0);
+    l.push(
+        SortKey { layer: Layer::Content, z: 0, order: 0 },
+        Command::Quad {
+            rect: content,
+            radius: zephyra_core::core::CornerRadius { radius: 0.0 },
+            fill: Color::rgb(1.0, 1.0, 1.0),
+            stroke: None,
+            filter: zephyra_core::filter::FilterChain::single(
+                zephyra_core::filter::Filter::DropShadow {
+                    color: Color::rgba(0.0, 0.0, 0.0, 1.0),
+                    offset: zephyra_core::core::Point::new(8.0, 0.0),
+                    sigma: 0.0,
+                },
+            ),
+            blend: zephyra_core::filter::BlendMode::default(),
+        },
+    );
+    l.sort();
+    let px = render_probe(&l);
+
+    // 影子独占区（x=44 在 content 之外、在 content+offset 之内）。
+    let shadow = probe_at(&px, 44, 32);
+    assert!(
+        shadow[0] <= 2 && shadow[1] <= 2 && shadow[2] <= 2,
+        "影子区(x=44)应当是染色后的黑，实得 {shadow:?}"
+    );
+    // 原图区（x=28）：白方块本身，且**盖在**影子上。
+    let orig = probe_at(&px, 28, 32);
+    assert!(
+        orig[0] >= 253 && orig[1] >= 253 && orig[2] >= 253,
+        "原图区(x=28)应当仍是白，实得 {orig:?} —— 原图没有被重画，或影子盖在了它上面"
+    );
+}
+
+/// 滤镜真的被执行了：`unimplemented_filters` 归零、`offscreen_passes` 为正。
+///
+/// # 为什么这条不是"多余的计数测试"
+///
+/// 它是**唯一**能抓住"离屏整条链建不出来（设备不支持某种格式 / 分配失败）"
+/// 的判据 —— 那种情况下元素**不出现**，而像素断言看到的是"少了一个元素"，
+/// 与"这个元素本来就不该出现"无法区分。
+#[test]
+fn offscreen_pass_reports_zero_unimplemented_filters() {
+    let Ok(gpu) = Gpu::new() else {
+        panic!("建不出 D3D11 设备");
+    };
+    let (rtv, tex) = offscreen_target(&gpu);
+    let mut renderer = Renderer::new(&gpu.device).expect("渲染器应当能建出来");
+    let textures = TextureTable::new();
+    let list = one(
+        zephyra_core::filter::FilterChain::single(zephyra_core::filter::Filter::Blur {
+            sigma_x: 2.0,
+            sigma_y: 2.0,
+        }),
+        Color::rgb(1.0, 1.0, 1.0),
+        split_rect(0.0),
+    );
+    let rep = renderer.render(RenderCtx {
+        context: &gpu.context,
+        device: &gpu.device,
+        rtv: &rtv,
+        list: &list,
+        size: (SIZE, SIZE),
+        clear: Color::rgb(0.0, 0.0, 0.0),
+        textures: &textures,
+        damage: zephyra_core::frame::Damage::Full,
+    });
+    assert_eq!(
+        rep.unimplemented_filters, 0,
+        "滤镜已由离屏 pass 执行，计数应当归零（offscreen_passes={}）",
+        rep.offscreen_passes
+    );
+    assert_eq!(rep.offscreen_passes, 1, "恰好一条命令走了离屏");
+    let _ = read_back(&gpu, &tex);
+}
+
+/// 三级链（E4.6）确实跑了**三遍**模糊，而不是只跑第一遍。
+///
+/// # 判据为什么选 σ 的**累加**
+///
+/// 两趟 σ=2 的高斯 ≈ 一趟 σ=2.83（方差相加），三趟 ≈ σ=3.46。σ 越大过渡带越宽，
+/// 所以"中间灰的宽度"随链长单调增长。判据用**保守的**单调性而不是精确宽度 ——
+/// 精确宽度依赖高斯离散化，不该写死在像素断言里。
+///
+/// 变异目标：只执行链里**第一**趟的实现（`blurs.iter().take(1)`）时本条必须失败。
+#[test]
+fn a_longer_filter_chain_blurs_more_than_a_single_blur() {
+    let src = one(
+        zephyra_core::filter::FilterChain::single(zephyra_core::filter::Filter::Blur {
+            sigma_x: 2.0,
+            sigma_y: 0.0,
+        }),
+        Color::rgb(1.0, 1.0, 1.0),
+        split_rect(0.0),
+    );
+    let chained = one(
+        zephyra_core::filter::FilterChain::new([
+            zephyra_core::filter::Filter::Blur { sigma_x: 2.0, sigma_y: 0.0 },
+            zephyra_core::filter::Filter::Blur { sigma_x: 2.0, sigma_y: 0.0 },
+            zephyra_core::filter::Filter::Blur { sigma_x: 2.0, sigma_y: 0.0 },
+        ]),
+        Color::rgb(1.0, 1.0, 1.0),
+        split_rect(0.0),
+    );
+
+    /// 过渡带的半宽：从图案中心向两侧数，有多少个像素既不是纯黑也不是纯白。
+    fn band_half_width(px: &[u8]) -> usize {
+        let mid = SIZE / 2;
+        let mut n = 0usize;
+        for d in 1..12u32 {
+            let p = probe_at(px, mid + d, 32);
+            let l = (p[0] as u32 + p[1] as u32 + p[2] as u32) / 3;
+            if l > 4 && l < 251 {
+                n += 1;
+            }
+        }
+        n
+    }
+
+    let w1 = band_half_width(&render_probe(&src));
+    let w3 = band_half_width(&render_probe(&chained));
+    assert!(w1 >= 2, "单趟模糊本身就得有过渡带，实得半宽 {w1}");
+    assert!(
+        w3 > w1,
+        "三级链应当比单趟糊得更开：单趟半宽 {w1}，三级半宽 {w3} —— 链只跑了第一趟？"
+    );
+}
+/// 模糊趟**不累加**：一趟接一趟的模糊不改变整体亮度。
+///
+/// # 这条在抓什么
+///
+/// 模糊趟的混合状态必须是 `Src`（PS 算出的就是最终值）。若误配成 `SrcOver`，
+/// 每一趟都会把**上一次的结果**再叠一遍 —— 三趟链之后原本 128 的灰会一路涨到
+/// 255（饱和）。
+///
+/// # 为什么这条以前抓不到
+///
+/// 判据源用的是**纯白**图元。白在 `SrcOver` 下立刻饱和，于是"累加了"与"没累加"
+/// 输出的都是 255 —— **一模一样**。必须用亮度**小于**饱和值的灰色，累加才会
+/// 显形。
+///
+/// # 为什么 σ 链长度要 ≥ 3
+///
+/// 只有一趟时，源写进的是刚被清成全 0 的 RT，叠加 0 等于不叠加。所以要三趟：
+/// 第二趟起目标里已经有内容了。
+#[test]
+/// 模糊趟**不累加**：一趟接一趟的模糊不改变整体亮度。
+///
+/// # 这条在抓什么
+///
+/// 模糊趟的混合状态必须是 `Src`（PS 算出的就是最终值）。若误配成 `SrcOver`，
+/// 每一趟都会把**上一次的结果**按 `dst·(1−srcA)` 叠回来。
+///
+/// # ⚠ 源必须是**半透明**的，否则这条判据是真空的
+///
+/// 预乘空间里 `SrcOver` = `src + dst·(1−srcA)`。当 `srcA = 1` 时 `1−srcA = 0`，
+/// 目标项**整项消失** —— `Src` 与 `SrcOver` 变成同一个东西，不透明源无论怎么
+/// 配混合状态输出都一样。
+///
+/// （这与 `ps_composite_runs_use_src_not_src_over_for_translucent_draws` 是同一类
+/// 陷阱：全部用不透明颜色时，两种混合状态不可区分。）
+///
+/// 用 50% alpha 的 50% 灰：预乘后是 `(0.25,0.25,0.25) a=0.5`。
+///
+/// ```text
+///   Src      每趟替换 ⇒ 始终 0.25 ⇒ 64
+///   SrcOver  0.25 + 0.5·上一步 ⇒ 六趟后 ≈ 1.0 ⇒ 255
+/// ```
+///
+/// 三趟 blur（= 6 个 pass）足以拉开这个差距；只有一趟时目标刚被清成 0，叠加 0
+/// 等于不叠加，所以链长必须 ≥ 2。
+#[test]
+fn blur_passes_do_not_accumulate_brightness() {
+    let chain = zephyra_core::filter::FilterChain::new([
+        zephyra_core::filter::Filter::Blur { sigma_x: 2.0, sigma_y: 0.0 },
+        zephyra_core::filter::Filter::Blur { sigma_x: 2.0, sigma_y: 0.0 },
+        zephyra_core::filter::Filter::Blur { sigma_x: 2.0, sigma_y: 0.0 },
+    ]);
+    // 50% alpha 的 50% 灰：不透明就会让判据失效（见上面的说明）。
+    let px = render_probe(&one(
+        chain,
+        Color::rgba(0.5, 0.5, 0.5, 0.5),
+        split_rect(0.0),
+    ));
+    // 取图案正中，横向 σ=2 的过渡带离边缘 6px，x=16 离两侧各 16px。
+    let p = probe_at(&px, 16, 32);
+    let l = (p[0] as i32 + p[1] as i32 + p[2] as i32) / 3;
+    assert!(
+        (45..=85).contains(&l),
+        "三趟模糊后图案正中应仍是 50%alpha×50%灰（预乘后 ≈64），实得 {l}（像素 {p:?}）。\
+         明显偏亮 = 某趟用了 SrcOver，把上一趟的结果又叠了一遍"
+    );
+}
+
+/// 合成趟**真的与目标混合**，而不是直接覆盖。
+///
+/// # 构图为什么用半透明源 + 只开一个方向
+///
+/// 合成输出的是**预乘**颜色，于是：
+///
+/// ```text
+///   源 = 白 × 0.25 alpha ⇒ 预乘 (0.25,0.25,0.25) a=0.25，目标 = 蓝(0,0,1) a=1
+///   SrcOver ⇒ (0.25,0.25,0.25) + 0.75·(0,0,1) = (0.25,0.25,1.0) → 64,64,255
+///   Src     ⇒ (0.25,0.25,0.25)                    → 64,64,64
+/// ```
+///
+/// 两条约束，缺一个判据就真空：
+///
+/// 1. **必须半透明**：`srcA = 1` 时 `Src` 与 `SrcOver` 完全等价（见
+///    `blur_passes_do_not_accumulate_brightness` 的说明）。
+/// 2. **滤镜链必须非恒等**：`Filter::Blur{0,0}` 是恒等，`plan_pass` 直接返回
+///    `None` —— 压根不开离屏，这条命令走的是普通路径，于是合成用的混合状态是什么
+///    都无所谓。实测踩过：σ=0 的版本让这条判据形同虚设。
+///    改用 `σy = 2`（非恒等），而源在纵向是**均匀**的，所以纵向模糊在图案正中
+///    是恒等 —— 于是判据仍然只测混合状态本身，不掺入模糊的误差。
+#[test]
+fn composite_blends_over_the_destination() {
+    let mut l = DisplayList::new();
+    // 纯蓝底：合成要与它混合，所以蓝通道必须能"透过来"。
+    l.push(
+        SortKey { layer: Layer::Background, z: 0, order: 0 },
+        Command::Quad {
+            rect: zephyra_core::core::Rect::new(0.0, 0.0, SIZE as f32, SIZE as f32),
+            radius: zephyra_core::core::CornerRadius { radius: 0.0 },
+            fill: Color::rgb(0.0, 0.0, 1.0),
+            stroke: None,
+            filter: zephyra_core::filter::FilterChain::none(),
+            blend: zephyra_core::filter::BlendMode::default(),
+        },
+    );
+    // 25% alpha 的白，σy=2（链非恒等 ⇒ 真的走离屏）。
+    l.push(
+        SortKey { layer: Layer::Content, z: 0, order: 1 },
+        Command::Quad {
+            rect: zephyra_core::core::Rect::new(8.0, 8.0, 24.0, 24.0),
+            radius: zephyra_core::core::CornerRadius { radius: 0.0 },
+            fill: Color::rgba(1.0, 1.0, 1.0, 0.25),
+            stroke: None,
+            filter: zephyra_core::filter::FilterChain::single(
+                zephyra_core::filter::Filter::Blur { sigma_x: 0.0, sigma_y: 2.0 },
+            ),
+            blend: zephyra_core::filter::BlendMode::default(),
+        },
+    );
+    l.sort();
+    let px = render_probe(&l);
+    // 纵向取正中：y=20 距上/下边缘各 12px > 3σ=6 ⇒ 模糊在此处是恒等。
+    let p = probe_at(&px, 20, 20);
+    assert!(
+        p[2] >= 200,
+        "25%alpha 白叠在蓝底上应保留底色（蓝通道 ≥200），实得 {p:?}。\
+         蓝通道 ≈64 说明合成用了 `Src`（直接覆盖），没有与目标混合"
+    );
+    assert!(
+        (50..=80).contains(&((p[0] as i32 + p[1] as i32) / 2)),
+        "红/绿应停在 25%alpha 白的一半(≈64)，实得 {p:?}"
+    );
+}
+
+/// 合成趟**真的与目标混合**，而不是直接覆盖。
+///
+/// # 构图为什么必须用半透明源
+///
+/// 合成输出的是**预乘**颜色，于是：
+///
+/// ```text
+///   源 = 白 × 0.5 alpha ⇒ 预乘 (0.5,0.5,0.5) a=0.5，目标 = 蓝(0,0,1) a=1
+///   SrcOver ⇒ (0.5,0.5,0.5) + 0.5·(0,0,1) = (0.5,0.5,1.0) → 128,128,255
+///   Src     ⇒ (0.5,0.5,0.5)                 → 128,128,128
+/// ```
+///
+/// 两者只在**蓝通道**上差 127。用不透明源时 `a = 1`，两种混合状态完全等价 ——
+/// 于是这条判据在源不透明时是真空的。
+#[test]
+/// DropShadow：影子**确实按 offset 平移了**。
+///
+/// # 判据为什么必须有底色
+///
+/// 只有纯黑 clear 时，"影子画在偏移后的位置"与"影子画在原位、而原图盖住了它"
+/// 都表现为"某处是黑的"，两者无法区分。所以这里铺一层**纯蓝**底：影子（黑）
+/// 一旦画在偏移位置，偏移那一侧就是黑的；没偏移的话那一侧仍是蓝。
+///
+/// # 构图
+///
+/// 内容 = x ∈ [28,36)（宽 8），offset = (12, 0) ⇒ 影子落在 x ∈ [40,48)。
+///
+/// - x=42：**只在**偏移后的影子里。
+/// - x=32：原图与未偏移的影子重叠处 —— 无论如何都是白（被重画的原图盖住）。
+///
+/// 漏掉 offset 时影子落在 x ∈ [28,36)，于是 x=42 仍是蓝 → 本条失败。
+#[test]
+fn drop_shadow_is_actually_offset() {
+    let mut l = DisplayList::new();
+    l.push(
+        SortKey { layer: Layer::Background, z: 0, order: 0 },
+        Command::Quad {
+            rect: zephyra_core::core::Rect::new(0.0, 0.0, SIZE as f32, SIZE as f32),
+            radius: zephyra_core::core::CornerRadius { radius: 0.0 },
+            fill: Color::rgb(0.0, 0.0, 1.0),
+            stroke: None,
+            filter: zephyra_core::filter::FilterChain::none(),
+            blend: zephyra_core::filter::BlendMode::default(),
+        },
+    );
+    l.push(
+        SortKey { layer: Layer::Content, z: 0, order: 1 },
+        Command::Quad {
+            rect: zephyra_core::core::Rect::new(28.0, 28.0, 8.0, 8.0),
+            radius: zephyra_core::core::CornerRadius { radius: 0.0 },
+            fill: Color::rgb(1.0, 1.0, 1.0),
+            stroke: None,
+            filter: zephyra_core::filter::FilterChain::single(
+                zephyra_core::filter::Filter::DropShadow {
+                    color: Color::rgba(0.0, 0.0, 0.0, 1.0),
+                    offset: zephyra_core::core::Point::new(12.0, 0.0),
+                    sigma: 0.0,
+                },
+            ),
+            blend: zephyra_core::filter::BlendMode::default(),
+        },
+    );
+    l.sort();
+    let px = render_probe(&l);
+
+    let shadow_only = probe_at(&px, 42, 32);
+    assert!(
+        shadow_only[2] <= 40,
+        "x=42 只落在偏移后的影子里，应当是黑的，实得 {shadow_only:?} —— \
+         offset 没被加进 translate（影子画在原位）"
+    );
+    let original = probe_at(&px, 32, 32);
+    assert!(
+        original[0] >= 253 && original[2] >= 253,
+        "x=32 是原图，应当是白（重画在影子之上），实得 {original:?}"
+    );
+}
+/// 局部脏区在**离屏 pass 之后**仍然生效。
+///
+/// # 这条在抓什么
+///
+/// 离屏 pass 会把 scissor 换成"全 RT"。若后续的普通段**沿用**上一段的 scissor
+/// 而不是自己重设，那么离屏 pass 之后的所有绘制都会用"全 RT"那个矩形 —— 于是局部
+/// 脏区失效，`Damage::Rect` 变成装饰。
+///
+/// 用 `Damage::Full` 的测试**抓不到**这个：全屏矩形与全 RT 矩形在像素上完全相同
+/// （模糊趟的 scissor 是 `full_rect(rt_size)`，而目标尺寸等于 rt_size 时两者一致）。
+///
+/// # 构图
+///
+/// - 清屏 = 纯绿（全屏，D3D11 的 clear 不受 scissor 约束，见 `bind_target`）。
+/// - 脏区 = 左半屏 x ∈ [0, 32)。
+/// - 列表顺序：**离屏模糊的蓝块**（先），然后**全屏纯红**（后）。
+/// - 右半屏（x=48）落在脏区之外：那里必须仍是清屏绿。若脏区失效，红块会铺满全屏。
+///
+/// 为什么必须有一个离屏 pass 在前面：只有它会把 scissor 换掉。
+#[test]
+fn partial_damage_survives_an_offscreen_pass() {
+    let mut l = DisplayList::new();
+    // 离屏模糊的蓝块 —— 它的 pass 会把 scissor 换成"全离屏 RT"。
+    l.push(
+        SortKey { layer: Layer::Background, z: 0, order: 0 },
+        Command::Quad {
+            rect: zephyra_core::core::Rect::new(8.0, 8.0, 20.0, 20.0),
+            radius: zephyra_core::core::CornerRadius { radius: 0.0 },
+            fill: Color::rgb(0.0, 0.0, 1.0),
+            stroke: None,
+            filter: zephyra_core::filter::FilterChain::single(
+                zephyra_core::filter::Filter::Blur { sigma_x: 1.0, sigma_y: 1.0 },
+            ),
+            blend: zephyra_core::filter::BlendMode::default(),
+        },
+    );
+    // 全屏纯红 —— 画在离屏 pass **之后**，所以它的 scissor 必须是自己重设的。
+    l.push(
+        SortKey { layer: Layer::Content, z: 0, order: 1 },
+        Command::Quad {
+            rect: zephyra_core::core::Rect::new(0.0, 0.0, SIZE as f32, SIZE as f32),
+            radius: zephyra_core::core::CornerRadius { radius: 0.0 },
+            fill: Color::rgb(1.0, 0.0, 0.0),
+            stroke: None,
+            filter: zephyra_core::filter::FilterChain::none(),
+            blend: zephyra_core::filter::BlendMode::default(),
+        },
+    );
+    l.sort();
+
+    let Ok(gpu) = Gpu::new() else {
+        panic!("建不出 D3D11 设备");
+    };
+    let (rtv, tex) = offscreen_target(&gpu);
+    let mut renderer = Renderer::new(&gpu.device).expect("渲染器应当能建出来");
+    let textures = TextureTable::new();
+    renderer.render(RenderCtx {
+        context: &gpu.context,
+        device: &gpu.device,
+        rtv: &rtv,
+        list: &l,
+        size: (SIZE, SIZE),
+        clear: Color::rgb(0.0, 1.0, 0.0),
+        textures: &textures,
+        // 脏区只覆盖左半屏。
+        damage: zephyra_core::frame::Damage::Rect(zephyra_core::core::Rect::new(
+            0.0, 0.0, 32.0, SIZE as f32,
+        )),
+    });
+    let px = read_back(&gpu, &tex);
+
+    let outside = probe_at(&px, 48, 32);
+    assert!(
+        outside[0] <= 2 && outside[1] >= 253 && outside[2] <= 2,
+        "脏区外(x=48)应当仍是清屏绿，实得 {outside:?} —— 离屏 pass 之后脏区失效了"
+    );
+    let inside = probe_at(&px, 48 / 3, 32);
+    assert!(
+        inside[0] >= 253 && inside[1] <= 2,
+        "脏区内(x=16)应当是红块，实得 {inside:?}"
+    );
+}
 // ---------------------------------------------------------------------------

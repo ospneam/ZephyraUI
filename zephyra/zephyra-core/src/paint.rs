@@ -312,24 +312,11 @@ impl DisplayList {
     pub fn offscreen_requirements(&self) -> Vec<OffscreenRequirement> {
         let mut out = Vec::new();
         for item in &self.items {
-            let (filter, content) = match &item.command {
-                Command::Quad { rect, filter, .. } => (filter, *rect),
-                Command::Image { dst, filter, .. } => (filter, *dst),
-                Command::Text { glyphs, filter, .. } => {
-                    // 文本的离屏范围是所有字形四边形的并集 —— 一条命令里有 N 个
-                    // 字形四边形，整体模糊才正确（逐字形模糊会把每个字都糊成
-                    // 独立一块，视觉上完全不是"这段文字被模糊了"）。
-                    (filter, union_of_quads(glyphs))
-                }
-                // Path 没有包围盒**字段**，但顶点里就带着位置 —— 遍历一次即得紧包围盒。
-                //
-                // 用**紧**包围盒而不是节点的布局矩形：三角化的结果不会铺满布局矩形
-                // （图标的空白边角、外接圆与图形的差集），按布局矩形算会让每张 RT
-                // 白白大一圈；按紧包围盒算，包围盒相同的两条 Path 还能复用同一张 RT。
-                Command::Path { vertices, filter, .. } => {
-                    (filter, bounds_of_vertices(vertices))
-                }
-                Command::PushClip(_) | Command::PopClip => continue,
+            let (Some(content), Some(filter)) = (
+                command_content_rect(&item.command),
+                command_filter(&item.command),
+            ) else {
+                continue;
             };
             if filter.is_identity() {
                 continue;
@@ -378,6 +365,58 @@ pub struct OffscreenRequirement {
     pub filter: crate::filter::FilterChain,
     /// 该命令所在的合成层 —— 决定 RT 的生命周期跨度。
     pub layer: Layer,
+}
+
+/// 一条命令的**滤镜链**；`None` = 这条命令不参与离屏（剪裁标记）。
+pub fn command_filter(cmd: &Command) -> Option<&crate::filter::FilterChain> {
+    match cmd {
+        Command::Quad { filter, .. }
+        | Command::Path { filter, .. }
+        | Command::Image { filter, .. }
+        | Command::Text { filter, .. } => Some(filter),
+        Command::PushClip(_) | Command::PopClip => None,
+    }
+}
+
+/// 一条命令要模糊 / 投影的**原始内容矩形**（未外扩）。
+///
+/// # 为什么单独抽出来
+///
+/// [`DisplayList::offscreen_requirements`]（纯查询，给资源规划用）与渲染器的
+/// 「分段回放」（要真的建 RT 并画一遍）都需要这个矩形。两处各写一遍的话，
+/// 迟早有一处漏掉某个命令变体 —— 症状是那个变体的滤镜区域算小了一圈，
+/// 模糊在边界处被硬生生切掉，**且不报任何错**。
+pub fn command_content_rect(cmd: &Command) -> Option<Rect> {
+    match cmd {
+        Command::Quad { rect, .. } => Some(*rect),
+        Command::Image { dst, .. } => Some(*dst),
+        // 文本的范围是所有字形四边形的并集 —— 一条命令里有 N 个字形四边形，
+        // 整体模糊才正确（逐字形模糊会把每个字都糊成独立一块，视觉上完全不是
+        // "这段文字被模糊了"）。
+        Command::Text { glyphs, .. } => Some(union_of_quads(glyphs)),
+        // Path 没有包围盒**字段**，但顶点里就带着位置 —— 遍历一次即得紧包围盒。
+        //
+        // 用**紧**包围盒而不是节点的布局矩形：三角化的结果不会铺满布局矩形
+        // （图标的空白边角、外接圆与图形的差集），按布局矩形算会让每张 RT
+        // 白白大一圈；按紧包围盒算，包围盒相同的两条 Path 还能复用同一张 RT。
+        Command::Path { vertices, .. } => Some(bounds_of_vertices(vertices)),
+        Command::PushClip(_) | Command::PopClip => None,
+    }
+}
+
+/// 一条命令的内容矩形是否非空（可以渲出像素）。
+///
+/// # 为什么要单独判
+///
+/// 空矩形（例如 `Text` 命令一个字形都没有、或 `Path` 顶点为空）经
+/// [`crate::filter::FilterChain::bounds_for`] 外扩后仍可能是非空的 —— 模糊
+/// 一个空区域，得到的是一张**全透明**的 RT。把全透明的东西往目标上合成
+/// 一次没有任何效果，只是白白花掉两趟全 RT 的模糊。所以宿主应当在这里就跳过。
+pub fn content_rect_is_drawable(cmd: &Command) -> bool {
+    match command_content_rect(cmd) {
+        Some(r) => r.width > 0.0 && r.height > 0.0 && r.width.is_finite() && r.height.is_finite(),
+        None => false,
+    }
 }
 
 /// 一批字形四边形的并集。

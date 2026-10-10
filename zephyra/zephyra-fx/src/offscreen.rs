@@ -29,7 +29,7 @@
 
 use zephyra_core::core::Rect;
 use zephyra_core::filter::FilterChain;
-use zephyra_core::paint::{bounds_of_vertices, union_of_quads, Command, DisplayList};
+use zephyra_core::paint::{Command, DisplayList, command_content_rect, command_filter};
 
 /// 一张离屏纹理的规划。
 ///
@@ -90,21 +90,13 @@ pub fn plan_offscreens(list: &DisplayList) -> Vec<OffscreenPlan> {
 }
 
 /// 取出命令的滤镜与内容矩形；`None` = 该命令不参与效果离屏。
+///
+/// 转发到 `paint` 里的那一份实现 —— 那里同时被
+/// [`zephyra_core::paint::DisplayList::offscreen_requirements`] 用着。
+/// 两处各写一遍的话，漏掉某个命令变体的后果是"那个变体的滤镜区域算小一圈"，
+/// 症状是模糊在边界被硬切，**且不报任何错**。
 fn split_filter_and_content(cmd: &Command) -> Option<(&FilterChain, Rect)> {
-    match cmd {
-        Command::Quad { rect, filter, .. } => Some((filter, *rect)),
-        Command::Image { dst, filter, .. } => Some((filter, *dst)),
-        Command::Text {
-            glyphs, filter, ..
-        } => Some((filter, union_of_quads(glyphs))),
-        // Path 没有包围盒**字段**，但顶点带位置 —— 遍历一次即得紧包围盒。
-        //
-        // 用**紧**包围盒而非布局矩形：三角化的结果不会铺满布局矩形（图标的空白
-        // 边角、外接圆与图形的差集），按布局矩形算会让 RT 白白大一圈；按紧包围盒
-        // 算，包围盒相同的两条 Path 还能共用同一张 RT（上面按 `bounds` 去重那段）。
-        Command::Path { vertices, filter, .. } => Some((filter, bounds_of_vertices(vertices))),
-        Command::PushClip(_) | Command::PopClip => None,
-    }
+    Some((command_filter(cmd)?, command_content_rect(cmd)?))
 }
 
 /// 本帧有多少条命令的混合模式不是默认值。
@@ -129,12 +121,551 @@ pub fn count_non_default_blends(list: &DisplayList) -> usize {
         .count()
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+//  E4.4 / E4.5 / E4.6：离屏 pass 的**执行**计划
+// ═══════════════════════════════════════════════════════════════════════════
+//
+//  上面 [`OffscreenPlan`] 回答"要开几张 RT、每张多大"，本节回答"每张 RT 上要做
+//  哪几趟、每趟参数是什么、结果贴回哪里"。两者分开的理由与模块顶部那条边界
+//  相同：这里仍然**一个 GPU 对象都不碰**，所以能被无设备环境单测断言。
+//
+//  分开的实际收益是：模糊趟的方向与顺序一旦在 D3D11 与 D3D12 的 `renderer.rs`
+//  里各写一遍，早晚有一边顺序反了，而症状只是"某个元素的阴影糊的方向不对"，
+//  不报任何错。现在两个后端只剩"照着计划设状态、画一个铺满四边形"。
+//
+//  ── 一趟离屏渲染长什么样 ──
+//
+//    ┌───────────── 目标（屏幕）───────────────┐
+//    │  …普通图元… │ …普通图元… │ …普通图元…  │
+//    └────────────────────────────────────────┘
+//                    ↑ 遇到带滤镜的命令（分段回放）
+//    1. 建 / 复用 RT_A（尺寸 = bounds 向上取整），清成全 0
+//    2. 把该命令的几何按 `translate` 平移进 RT_A，逐段回放
+//    3. 每一趟模糊：铺满四边形 → PSBlurH / PSBlurV，A⇄B **乒乓**
+//    4. 铺满四边形 → PSComposite，把结果贴回目标的 `bounds` 处
+//    5. 若 `redraw_original`（投影），再把原命令照常画一遍 —— 影子在下、原图在上
+//
+//  ── 乒乓只需要两张 RT ──
+//
+//  链长任意（E4.6）：每一趟都"读一张写另一张"，写的那张就是下一趟的源。所以池子
+//  里固定两张就够，与链长无关。
+
+/// 一次离屏渲染的**执行**计划。
+///
+/// 全部字段都是值，没有引用 —— 计划要跨后端、跨测试地存活。
+#[derive(Debug, Clone, PartialEq)]
+pub struct OffscreenPass {
+    /// 离屏纹理尺寸（像素，整数）。
+    ///
+    /// 取 `bounds` 的**向上取整**：`bounds` 是像素空间的浮点矩形，而 RT 只能是
+    /// 整数像素。向下取整会把最后不足一个像素的那条边切掉，症状是模糊在
+    /// 右/下边缘少一列/一行 —— 只在 σ 大到肉眼可见时才显形。
+    pub rt_size: (u32, u32),
+    /// 离屏纹理左上角在**屏幕坐标**里的位置（= `bounds` 的左上角）。
+    pub origin: (f32, f32),
+    /// 离屏纹理覆盖的屏幕矩形（= `bounds`）。
+    pub bounds: Rect,
+    /// 画进离屏 RT 之前，几何要平移的量（像素）= `-origin + offset`。
+    ///
+    /// `offset` 来自 `DropShadow`：影子是"剪影模糊后**整体**平移"，所以平移必须
+    /// 在**模糊之前**做。模糊之后再挪，会把已经算好的模糊边缘一起挪出 RT ——
+    /// 症状是影子的某一侧凭空少一圈模糊。
+    pub translate: (f32, f32),
+    /// 依次执行的模糊趟，按顺序应用。
+    pub blurs: Vec<BlurStep>,
+    /// 合成阶段的染色色；`None` = 原样透传。
+    ///
+    /// 只有投影会给出 Some（"剪影 → 模糊 → 染色"三步里的第三步）。同一条链里
+    /// 出现多次投影时**后者覆盖前者**：链语义是从左到右依次执行，而染色是就地
+    /// 替换色相，后一次的结果覆盖前一次 —— 与「就地替换」而不是「两次合成」一致。
+    pub tint: Option<zephyra_core::core::Color>,
+    /// 原命令是否要在离屏合成**之后**照常再画一遍。
+    ///
+    /// 只有投影为 `true`：影子是**额外**画上去的一层，原图本身仍要画在它上面。
+    /// 纯模糊相反 —— 离屏结果**就是**这条命令的最终形态；再画一次原图等于
+    /// "模糊 + 清晰"叠在一起，视觉上完全看不出模糊。
+    pub redraw_original: bool,
+}
+
+/// 一次模糊趟。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BlurStep {
+    /// `true` = 水平（H），`false` = 垂直（V）。
+    ///
+    /// # 为什么拆成两个方向而不是一个"任意方向"
+    ///
+    /// 拆开之后每趟对应**一个** PS 入口（`PSBlurH` / `PSBlurV`），方向不必走
+    /// 常量缓冲也不必挤进 `Vertex` —— 而 `Vertex` 的每个字段都已被正常图元占满。
+    /// 若合成一个入口，方向就得进 cbuffer（D3D12 还要动根签名）。
+    pub horizontal: bool,
+    /// 标准差（像素），**不是**半径。着色器内部自己乘 3 得到半径。
+    ///
+    /// 存 σ 而不是半径是为了与 [`zephyra_core::filter::Filter`] 的字段同名同义
+    /// —— 中间任何一步做了重复的 `×SIGMA_TO_RADIUS` 换算，误差会直接体现在
+    /// 模糊宽度上。
+    pub sigma: f32,
+}
+
+/// 为一条命令算出执行计划；`None` = 它不需要离屏。
+///
+/// 「不需要」的三种情况：
+///
+/// 1. 滤镜链恒等（空链，或每一项都恒等）—— 见
+///    [`FilterChain::is_identity`]。为恒等链开离屏会让每帧多两次全 RT 模糊。
+/// 2. 命令没有内容矩形（`PushClip` / `PopClip`）。
+/// 3. 内容矩形为空或非有限。模糊一张空图得到的是全透明 RT，合成上去什么也
+///    不改变，只是白白花掉两趟全 RT 模糊；非有限值则更糟 —— 它会一路穿过
+///    `ceil` 变成天文数字的尺寸，症状是"程序卡死"而不是"某个元素少画了"。
+pub fn plan_pass(cmd: &Command) -> Option<OffscreenPass> {
+    let filter = command_filter(cmd)?;
+    if filter.is_identity() {
+        return None;
+    }
+    let content = command_content_rect(cmd)?;
+    if !(content.width > 0.0 && content.height > 0.0) {
+        return None;
+    }
+    if !(content.x.is_finite()
+        && content.y.is_finite()
+        && content.width.is_finite()
+        && content.height.is_finite())
+    {
+        return None;
+    }
+    Some(pass_for_chain(filter, content))
+}
+
+/// 按内容矩形与滤镜链算计划。[`plan_pass`] 的纯计算内核，测试可直接调。
+pub fn pass_for_chain(filter: &FilterChain, content: Rect) -> OffscreenPass {
+    let bounds = filter.bounds_for(content);
+    let origin = (bounds.x, bounds.y);
+
+    let mut blurs: Vec<BlurStep> = Vec::new();
+    let mut tint = None;
+    let mut offset = zephyra_core::core::Point::new(0.0, 0.0);
+    let mut redraw_original = false;
+
+    // `filters[0]` 最先执行 —— 见 `FilterChain` 的顺序语义。
+    for f in filter.filters() {
+        match f {
+            zephyra_core::filter::Filter::Blur { sigma_x, sigma_y } => {
+                push_blur(&mut blurs, true, *sigma_x);
+                push_blur(&mut blurs, false, *sigma_y);
+            }
+            zephyra_core::filter::Filter::DropShadow {
+                color,
+                offset: o,
+                sigma,
+            } => {
+                // `color` 进 `tint`（染色），`offset` 进 `translate`（整体平移）。
+                // ⚠ 两者都**必须**在模糊趟**之前**定下来：染色发生在合成阶段，
+                // 平移发生在画内容阶段 —— 顺序反了的话，影子会带着 blur 半径一起
+                // 挪出去（某一侧凭空少一圈模糊）。
+                push_blur(&mut blurs, true, *sigma);
+                push_blur(&mut blurs, false, *sigma);
+                offset.x += o.x;
+                offset.y += o.y;
+                tint = Some(*color);
+                redraw_original = true;
+            }
+        }
+    }
+
+    // 向上取整，且至少 1×1：视口为 0 时 D3D11 **不报错**，只是什么都不画。
+    let rt_size = (
+        (bounds.width.ceil() as u32).max(1),
+        (bounds.height.ceil() as u32).max(1),
+    );
+
+    OffscreenPass {
+        rt_size,
+        origin,
+        bounds,
+        translate: (-origin.0 + offset.x, -origin.1 + offset.y),
+        blurs,
+        tint,
+        redraw_original,
+    }
+}
+
+/// σ ≤ 0 的趟是恒等，不入列表。
+///
+/// # 为什么不留给着色器判
+///
+/// 着色器里 `BlurRadius(σ) = 0` 时循环只跑 k=0、权重 1，结果确实等于原值 ——
+/// 但那是**两次全 RT 的 draw call + 一次完整的纹理往返**。`Filter::Blur{0,0}`
+/// 在语义上是恒等，链里出现它多半是"σ 由上层算出来恰好是 0"的正常情况，
+/// 不该为它付这个钱。
+fn push_blur(out: &mut Vec<BlurStep>, horizontal: bool, sigma: f32) {
+    if sigma.is_finite() && sigma > 0.0 {
+        out.push(BlurStep { horizontal, sigma });
+    }
+}
+
+/// 模糊 / 合成 pass 用的**铺满四边形**（`kind == kind::BLUR`）。
+///
+/// # 顶点字段怎么复用
+///
+/// 着色器对 `kind == 4` 的四边形有一套**与正常图元完全不同**的字段约定
+/// （见 `zephyra.hlsl` 里 `PSBlurH` 上方那张表）：
+///
+/// | 字段       | 这里填                     |
+/// |------------|----------------------------|
+/// | `local`    | 该顶点在**源 RT** 里的像素坐标 |
+/// | `half_size`| **源 RT** 的尺寸（四顶点同值） |
+/// | `corner`   | `(方向, σ)` —— `.y` 是 σ     |
+/// | `uv`       | 像素坐标 ÷ 源 RT 尺寸        |
+/// | `color`    | 染色色（仅合成 pass 用）     |
+///
+/// `local` 原点在左上角、y 向下，与纹理 uv 一致 —— 所以 `uv = local / src_size`
+/// 天然正确，不需要再翻一次 y。（再翻一次是这类代码最常见的错，而症状只是
+/// "模糊方向上下颠倒"。）
+///
+/// # 几何铺满**目标**，采样**源**
+///
+/// 两者尺寸可以不同（源可能是上一趟乒乓过来的那张 RT）。`local` 必须跟着
+/// **源**走、`position` 必须跟着**目标**走 —— 混了就是"采样坐标整体缩放"，
+/// 症状是模糊变成一团糊在错误位置的东西。
+pub fn pass_quad(
+    dst_size: (f32, f32),
+    src_size: (f32, f32),
+    corner: [f32; 2],
+    color: [f32; 4],
+) -> [crate::quad::Vertex; 4] {
+    let w = dst_size.0.max(1e-6);
+    let h = dst_size.1.max(1e-6);
+    let sw = src_size.0.max(1e-6);
+    let sh = src_size.1.max(1e-6);
+    let nx = |x: f32| x / w * 2.0 - 1.0;
+    let ny = |y: f32| 1.0 - y / h * 2.0;
+    let x0 = nx(0.0);
+    let x1 = nx(dst_size.0);
+    let y0 = ny(0.0);
+    let y1 = ny(dst_size.1);
+    // `half_size` 在 HLSL 里是 `nointerpolation`：四个顶点必须填**同一个**值，
+    // 否则插值出的"源 RT 尺寸"随位置漂移，模糊的归一化坐标随之漂移 —— 症状
+    // 是画面一侧正常、另一侧糊成斜纹。
+    let half = [sw, sh];
+    let v = |position: [f32; 2], local: [f32; 2]| crate::quad::Vertex {
+        position,
+        local,
+        uv: [local[0] / sw, local[1] / sh],
+        color,
+        corner,
+        half_size: half,
+        kind: crate::quad::kind::BLUR,
+    };
+    [
+        v([x0, y0], [0.0, 0.0]),
+        v([x1, y0], [sw, 0.0]),
+        v([x1, y1], [sw, sh]),
+        v([x0, y1], [0.0, sh]),
+    ]
+}
+
+/// 一次模糊趟的铺满四边形。
+pub fn blur_quad(step: &BlurStep, dst_size: (f32, f32), src_size: (f32, f32)) -> [crate::quad::Vertex; 4] {
+    pass_quad(
+        dst_size,
+        src_size,
+        [f32::from(step.horizontal), step.sigma],
+        [0.0, 0.0, 0.0, 1.0],
+    )
+}
+
+/// 合成 pass 的铺满四边形：采样源 RT 并贴到**屏幕上的 `dst`**。
+///
+/// `tint` 走 `color`（着色器按 `corner.y > 0` 判是否染色），所以 `corner.y`
+/// 这里就是"染色浓度"的存在标记 —— 传 0 或 `tint.a` 都对，但**不能传 NaN**，
+/// 否则 `if (tintAmount <= 0.0)` 对 NaN 为 false，于是走进染色分支算出一个
+/// 全 NaN 的像素。
+pub fn composite_quad(
+    dst_screen: Rect,
+    dst_size: (f32, f32),
+    src_size: (f32, f32),
+    tint: Option<zephyra_core::core::Color>,
+) -> [crate::quad::Vertex; 4] {
+    // `pass_quad` 铺满**目标**，而这里的源是 RT（尺寸通常与目标不同）。先把
+    // 四边形的几何挪到屏幕矩形，再把采样尺寸换成源的 —— 两个尺寸必须分别
+    // 处理，见 [`pass_quad`] 的文档。
+    let mut v = pass_quad(
+        (dst_screen.width, dst_screen.height),
+        src_size,
+        [0.0, tint.map_or(0.0, |c| c.a)],
+        match tint {
+            // 顶点色在 `Vertex::quad` 里会被预乘；这里**故意**传非预乘值，
+            // 因为 `PSComposite` 只用 `i.color.rgb` 当色相、并用 `t.a * i.color.a`
+            // 自己算覆盖率（见那个函数里"染色不能整体乘 alpha"的注释）。
+            Some(c) => [c.r, c.g, c.b, c.a],
+            None => [0.0, 0.0, 0.0, 1.0],
+        },
+    );
+    // 几何：按屏幕矩形重算 NDC（目标尺寸 = `dst_size`），因为合成四边形只覆盖
+    // 离屏纹理对应的那块屏幕区域，而不是铺满整个目标。
+    let w = dst_size.0.max(1e-6);
+    let h = dst_size.1.max(1e-6);
+    let (x0, x1) = (
+        dst_screen.x / w * 2.0 - 1.0,
+        (dst_screen.x + dst_screen.width) / w * 2.0 - 1.0,
+    );
+    let (y0, y1) = (
+        1.0 - dst_screen.y / h * 2.0,
+        1.0 - (dst_screen.y + dst_screen.height) / h * 2.0,
+    );
+    v[0].position = [x0, y0];
+    v[1].position = [x1, y0];
+    v[2].position = [x1, y1];
+    v[3].position = [x0, y1];
+    v
+}
+
+/// 把只含 `cmd` 的新列表准备好，让调用方 `expand` 出局部几何。
+///
+/// # 为什么要临时造一个单条列表，而不是给 `expand` 加"只处理第 N 条"的参数
+///
+/// `expand` 内部按命令类型分派，加筛选参数就要在**每一个**分派点重复判断，
+/// 漏一处就是"某种命令偷偷被画两遍"或"漏画"。造一个单条列表则完全复用既有
+/// 路径，筛选只发生一次。
+///
+/// 代价是一次 `Command` 克隆，而最重的字段 `Arc<[Vertex]>` 克隆只是引用计数 +1。
+pub fn single_command_list(
+    cmd: &Command,
+    key: zephyra_core::paint::SortKey,
+) -> DisplayList {
+    let mut out = DisplayList::new();
+    out.push(key, cmd.clone());
+    out
+}
+
+impl OffscreenPass {
+    /// 离屏纹理尺寸转成 `f32` 对。
+    ///
+    /// # 为什么专门给一个方法而不是调用处写 `(w as f32, h as f32)`
+    ///
+    /// 因为 `blur_quad` 的第三个参数是**源**尺寸，而 `pass_quad` 里 `local` 与
+    /// `half_size` 都由它推导 —— 两处都写一遍 `as f32` 的话，某一处忘了写就会
+    /// 让归一化坐标差一个数量级，症状是"模糊变成斜纹"。
+    pub fn rt_size_as_f32(&self) -> (f32, f32) {
+        (self.rt_size.0 as f32, self.rt_size.1 as f32)
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
     use zephyra_core::core::{Color, CornerRadius, Point};
     use zephyra_core::filter::{BlendMode, Filter};
     use zephyra_core::paint::{Layer, SortKey};
+
+    // ── E4.4 / E4.5 / E4.6：执行计划 ──
+
+    fn blur_chain(sx: f32, sy: f32) -> FilterChain {
+        FilterChain::single(Filter::Blur {
+            sigma_x: sx,
+            sigma_y: sy,
+        })
+    }
+
+    /// 水平趟必须在垂直趟**之前**，且 σ 互不串位。
+    ///
+    /// # 变异目标
+    ///
+    /// 把 `push_blur` 的两行顺序对调（或把 `sigma_x`/`sigma_y` 写反）时本条
+    /// 必须失败。否则症状只是"某元素的模糊宽窄方向反了"，在 demo 上很难看出。
+    #[test]
+    fn blur_becomes_two_steps_horizontal_first() {
+        let p = pass_for_chain(&blur_chain(2.0, 3.0), Rect::new(10.0, 20.0, 30.0, 40.0));
+        assert_eq!(
+            p.blurs,
+            vec![
+                BlurStep {
+                    horizontal: true,
+                    sigma: 2.0
+                },
+                BlurStep {
+                    horizontal: false,
+                    sigma: 3.0
+                },
+            ],
+            "σx / σy 是分别给的，顺序或串位都等于换了滤镜"
+        );
+    }
+
+    #[test]
+    fn zero_sigma_steps_are_dropped() {
+        let p = pass_for_chain(&blur_chain(0.0, 0.0), Rect::new(0.0, 0.0, 10.0, 10.0));
+        assert!(
+            p.blurs.is_empty(),
+            "σ=0 的趟是恒等，不该付两次全 RT 的 draw"
+        );
+        // 而恒等链整体压根不该开离屏。
+        let id = quad(
+            blur_chain(0.0, 0.0),
+            BlendMode::SrcOver,
+            Rect::new(0.0, 0.0, 10.0, 10.0),
+        );
+        assert!(plan_pass(&id).is_none());
+    }
+
+    /// 投影 = 染色 + 偏移 + 额外重画原图。
+    ///
+    /// `translate` 是这条测试的判据核心：平移必须在**模糊之前**，否则影子某一侧
+    /// 会凭空少一圈模糊（而不是整体位置偏一点）。
+    #[test]
+    fn drop_shadow_tints_redraws_and_shifts_inside_the_offscreen() {
+        let c = Rect::new(100.0, 100.0, 40.0, 40.0);
+        let chain = FilterChain::single(Filter::DropShadow {
+            color: Color::rgba(0.0, 0.0, 0.0, 0.5),
+            offset: Point::new(6.0, 8.0),
+            sigma: 2.0,
+        });
+        let p = pass_for_chain(&chain, c);
+        assert!(p.redraw_original, "影子是额外一层，原图仍要画在它上面");
+        assert_eq!(p.tint, Some(Color::rgba(0.0, 0.0, 0.0, 0.5)));
+        assert_eq!(p.blurs.len(), 2);
+        // outset.left = max(3σ - offset.x, 0) = max(6-6, 0) = 0 ⇒ origin.x = 100。
+        assert_eq!(p.origin, (100.0, 100.0), "origin 决定平移量，算错等于整体错位");
+        assert_eq!(
+            p.translate,
+            (-94.0, -92.0),
+            "translate = -origin + offset；漏掉 offset 会让影子画在原位"
+        );
+    }
+
+    /// 链里三道效果 ⇒ 六趟，且顺序与 σ 序列**逐项**对上。
+    ///
+    /// # 变异目标
+    ///
+    /// 任何对 `blurs` 排序、去重、或截断到前两项的实现都会在这里露馅。
+    #[test]
+    fn a_three_effect_chain_is_six_steps_in_chain_order() {
+        let chain = FilterChain::new([
+            Filter::Blur {
+                sigma_x: 1.0,
+                sigma_y: 1.0,
+            },
+            Filter::Blur {
+                sigma_x: 2.0,
+                sigma_y: 2.0,
+            },
+            Filter::DropShadow {
+                color: Color::rgba(0.0, 0.0, 0.0, 1.0),
+                offset: Point::new(0.0, 0.0),
+                sigma: 1.0,
+            },
+        ]);
+        let p = pass_for_chain(&chain, Rect::new(0.0, 0.0, 8.0, 8.0));
+        assert_eq!(p.blurs.len(), 6, "三道效果各两趟");
+        assert_eq!(
+            p.blurs.iter().map(|b| b.sigma).collect::<Vec<_>>(),
+            vec![1.0, 1.0, 2.0, 2.0, 1.0, 1.0],
+            "趟的 σ 必须按 filters[0] 起的顺序，不能被排序或去重"
+        );
+        // 三道里最后一道是投影，所以要重画原图。
+        assert!(p.redraw_original);
+    }
+
+    /// RT 尺寸向上取整，且永不塌成 0。
+    ///
+    /// # 变异目标
+    ///
+    /// 把 `.ceil()` 改成 `.floor()`（或 `.round()`）时本条必须失败 —— 症状是模糊
+    /// 在右/下边缘少掉不足一个像素的一条，而那只在 σ 大到肉眼可见时才显形。
+    #[test]
+    fn rt_size_rounds_up_and_never_collapses_to_zero() {
+        // σ=1 ⇒ outset = 3。内容 0.2×0.2 ⇒ bounds 6.2×6.2 ⇒ 7×7（不是 6×6）。
+        let frac = pass_for_chain(&blur_chain(1.0, 1.0), Rect::new(0.0, 0.0, 0.2, 0.2));
+        assert_eq!(frac.rt_size, (7, 7), "bounds 有小数时必须进位，否则切掉一条边");
+        // 整数边界不该被多进一位（否则白白多分配一整行/一整列显存）。
+        let exact = pass_for_chain(&blur_chain(1.0, 1.0), Rect::new(0.0, 0.0, 10.0, 20.0));
+        assert_eq!(exact.rt_size, (16, 26), "bounds 已是整数时不该多进");
+        let tiny = pass_for_chain(&blur_chain(1.0, 1.0), Rect::new(0.0, 0.0, 0.001, 0.001));
+        assert!(
+            tiny.rt_size.0 >= 1 && tiny.rt_size.1 >= 1,
+            "0×0 的视口什么都不画且不报错"
+        );
+    }
+
+    /// 非有限矩形必须被挡住 —— 否则它会穿过 `ceil` 变成天文数字的纹理尺寸。
+    ///
+    /// # 变异目标
+    ///
+    /// 删掉 `plan_pass` 里的 `is_finite` 检查时本条必须失败。
+    #[test]
+    fn a_non_finite_rect_yields_no_plan() {
+        for bad in [
+            Rect::new(f32::NAN, 0.0, 10.0, 10.0),
+            Rect::new(0.0, 0.0, f32::INFINITY, 10.0),
+        ] {
+            let cmd = quad(blur_chain(2.0, 2.0), BlendMode::SrcOver, bad);
+            assert!(plan_pass(&cmd).is_none(), "{bad:?} 必须在这里就被挡住");
+        }
+    }
+
+    /// 空内容矩形不���离屏 —— 模糊一张空图得到的是全透明，纯浪费两趟全 RT。
+    #[test]
+    fn an_empty_content_rect_yields_no_plan() {
+        let cmd = quad(
+            blur_chain(2.0, 2.0),
+            BlendMode::SrcOver,
+            Rect::new(5.0, 5.0, 0.0, 10.0),
+        );
+        assert!(plan_pass(&cmd).is_none());
+    }
+
+    /// pass 四边形的**采样坐标按源尺寸**归一化，几何铺满目标。
+    #[test]
+    fn pass_quad_samples_the_source_and_covers_the_destination() {
+        let v = blur_quad(
+            &BlurStep {
+                horizontal: true,
+                sigma: 2.0,
+            },
+            (100.0, 100.0), // 目标
+            (40.0, 60.0),    // 源
+        );
+        assert_eq!(
+            (v[0].position, v[2].position),
+            ([-1.0, 1.0], [1.0, -1.0]),
+            "几何必须铺满目标"
+        );
+        assert_eq!(v[2].local, [40.0, 60.0], "local 必须是源 RT 里的像素坐标");
+        assert!(
+            (v[2].uv[0] - 1.0).abs() < 1e-6 && (v[2].uv[1] - 1.0).abs() < 1e-6,
+            "右下角的 uv 必须是 (1,1) —— 归一化按**源**尺寸"
+        );
+        for vert in &v {
+            assert_eq!(
+                vert.half_size,
+                [40.0, 60.0],
+                "`half_size` 在 HLSL 里是 nointerpolation：四顶点不一致就插出斜纹"
+            );
+            assert_eq!(vert.kind, crate::quad::kind::BLUR);
+        }
+        assert!((v[0].corner[1] - 2.0).abs() < 1e-6, "σ 走 corner.y");
+    }
+
+    /// 合成四边形落在**屏幕矩形**上，且染色标志与颜色都对。
+    #[test]
+    fn composite_quad_lands_on_the_screen_rect() {
+        let dst = Rect::new(10.0, 20.0, 40.0, 30.0);
+        let v = composite_quad(dst, (200.0, 200.0), (40.0, 30.0), None);
+        // NDC 角点：(10,20) → 左上，(50,50) → 右下。
+        assert!((v[0].position[0] - (10.0 / 200.0 * 2.0 - 1.0)).abs() < 1e-5);
+        assert!((v[0].position[1] - (1.0 - 20.0 / 200.0 * 2.0)).abs() < 1e-5);
+        assert!((v[2].position[0] - (50.0 / 200.0 * 2.0 - 1.0)).abs() < 1e-5);
+        assert!((v[2].position[1] - (1.0 - 50.0 / 200.0 * 2.0)).abs() < 1e-5);
+        assert_eq!(v[0].corner[1], 0.0, "无染色时标志必须是 0（NaN 会走进染色分支）");
+        // 采样尺寸仍是源 RT，与目标无关。
+        assert_eq!(v[2].half_size, [40.0, 30.0]);
+
+        let tinted = composite_quad(dst, (200.0, 200.0), (40.0, 30.0), Some(Color::rgba(0.0, 0.0, 0.0, 0.5)));
+        assert_eq!(tinted[0].corner[1], 0.5, "染色浓度即 tint.a");
+        assert_eq!(
+            tinted[0].color,
+            [0.0, 0.0, 0.0, 0.5],
+            "顶点色必须**非预乘** —— PSComposite 自己用 `t.a * i.color.a` 算覆盖率"
+        );
+    }
 
     fn quad(filter: FilterChain, blend: BlendMode, rect: Rect) -> Command {
         Command::Quad {

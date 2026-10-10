@@ -161,6 +161,19 @@ pub mod kind {
     /// 所以它是独立的 `kind`。代价是着色器多一个分支（`> 2.5`），成本为零：
     /// 同一批内 `kind` 恒定，编译器可以把它提升成 uniform 分支。
     pub const PATH: f32 = 3.0;
+    /// 离屏 pass 的**铺满四边形**（模糊 / 合成用），见 [`crate::offscreen`]。
+    ///
+    /// # 为什么不复用前四个
+    ///
+    /// 前四个值喂给 `PSMain` 的分支，而模糊 pass 喂给 `PSBlurH` / `PSBlurV` /
+    /// `PSComposite` —— 那是**三个不同的像素着色器**，各自只有一种图元，根本没有
+    /// 分支可言。`kind` 在这里只起一个作用：让调用方一眼看出这批顶点不是正常
+    /// 图元，以及在调试打印里区分开。
+    ///
+    /// 值取 4.0 是因为它必须**大于** [`kind_thresholds::PATH_MIN`]，否则一旦有人
+    /// 让模糊四边形也走 `PSMain`，它会落进多边形分支"直接返回顶点色"——
+    /// 症状是模糊结果变成一块纯色，且没有任何错误。
+    pub const BLUR: f32 = 4.0;
 }
 
 /// `zephyra.hlsl` 里 `PSMain` 用来把图元分成三类的那三个阈值。
@@ -579,6 +592,48 @@ pub struct RenderReport {
     /// 解析过渡带（几何自带距离场），多边形没有距离场、只能靠 MSAA。混在一个
     /// 计数里就看不出"图标边缘发毛"是 MSAA 没开还是几何少切了三角形。
     pub path_triangles: usize,
+    /// 因走离屏 pass（E4.4）而**执行成功**的滤镜命令数。
+    ///
+    /// # 为什么单独计而不看 `unimplemented_filters`
+    ///
+    /// `unimplemented_filters` 的定义是"有多少条命令的滤镜**没**做"（取反计数）。
+    /// 它无法区分"没人用滤镜"与"滤镜做了"，所以一旦 E4.4 落地，光看它会以为
+    /// 后端一直没接离屏。这个字段给出正面的计数。
+    ///
+    /// 判据：`unimplemented_filters == 0 && offscreen_passes == 用滤镜的命令数`。
+    pub offscreen_passes: usize,
+}
+
+impl RenderReport {
+    /// 把另一段（分段回放里的一次展开 / 一次离屏 pass）的统计并进来。
+    ///
+    /// # 为什么求和而不是覆盖
+    ///
+    /// 分段回放把一帧拆成若干次 `expand`，每次都带回一份 `RenderReport`。只取
+    /// 最后一份的话，前面各段的 `quads` / `path_triangles` / `missing_textures`
+    /// 全丢 —— 于是「这一帧画了多少四边形」会随**有没有滤镜命令**而变，而这个变化
+    /// 与几何量毫无关系，症状是同一份 `DisplayList` 在加一个阴影后报出更少的
+    /// 图元。
+    ///
+    /// `reallocated` 取**或**：任一段扩容过就该报 true。
+    pub fn absorb(&mut self, other: RenderReport) {
+        self.quads += other.quads;
+        self.skipped += other.skipped;
+        self.unimplemented_filters += other.unimplemented_filters;
+        self.unimplemented_blends += other.unimplemented_blends;
+        self.offscreen_passes += other.offscreen_passes;
+        self.reallocated |= other.reallocated;
+        // `vertex_bytes` 取**最大值**而不是求和：所有段共用同一个顶点缓冲，而它
+        // 记的是"这次写了多少字节"，不是"这一帧总共写了几次"。
+        //
+        // 求和会得到一个比实际缓冲还大的数 —— 而它的唯一用途是与
+        // `vertex_capacity` 比大小，于是会出现"报告说写了 3 倍于缓冲容量的字节，
+        // 却从没触发过扩容"这种自相矛盾的状态。
+        self.vertex_bytes = self.vertex_bytes.max(other.vertex_bytes);
+        self.image_batches += other.image_batches;
+        self.missing_textures += other.missing_textures;
+        self.path_triangles += other.path_triangles;
+    }
 }
 
 /// 一帧展开出来的全部几何。
@@ -1017,6 +1072,33 @@ pub fn expand_translated_into(
     translate: Point,
     scratch: &mut Scratch,
 ) -> RenderReport {
+    expand_range_translated_into(list, size, is_registered, translate, None, scratch)
+}
+
+/// [`expand_translated_into`] 加上**下标区间**筛选 —— E4.4 的分段回放用它。
+///
+/// # 为什么筛选放在**下标区间**而不是"传一个临时 DisplayList"
+///
+/// 临时列表要克隆每条 `Command`。`Command::Path` 的顶点是 `Arc<[Vertex]>`、
+/// `Command::Text` 的字形是 `Arc<[GlyphQuad]>`，克隆只是引用计数 +1 —— 但
+/// `Quad` / `Image` 里还有 `FilterChain`（`Vec<Filter>`），那是**真分配**。
+/// 一帧几十条命令就是几十次小分配，而这一层存在的全部意义就是稳态零分配。
+///
+/// 区间筛选只在**这一个迭代点**生效，命令分派那段一个字都不用动 —— 而把
+/// 筛选塞进每个分派分支的话，漏一处就是"某种命令被画两遍"或"漏画"。
+///
+/// # 区间是**半开**的 `[start, end)`
+///
+/// 与 Rust 切片一致，也与 `str::len()` 那类习惯一致。传 `end = len` 是合法的
+/// （末段总是这样），传 `end > len` 只会让后面的下标取不到，不会 panic。
+pub fn expand_range_translated_into(
+    list: &DisplayList,
+    size: (u32, u32),
+    is_registered: &dyn Fn(&str) -> bool,
+    translate: Point,
+    range: Option<std::ops::Range<usize>>,
+    scratch: &mut Scratch,
+) -> RenderReport {
     let px = (size.0 as f32, size.1 as f32);
     let shift = |r: Rect| shift_rect(r, translate);
     // 从 `scratch` **借**缓冲：把上一帧的成果取到本地 `out`，末尾再还回去。
@@ -1070,7 +1152,14 @@ pub fn expand_translated_into(
     image_quads.clear();
     let mut clip: Option<Rect> = None;
 
-    for item in list.iter() {
+    for (i, item) in list.iter().enumerate() {
+        // 分段回放（E4.4）：只展开落在本段下标区间里的命令。见
+        // [`expand_segment_translated_into`]。
+        if let Some(r) = &range {
+            if !r.contains(&i) {
+                continue;
+            }
+        }
         match &item.command {
             Command::Quad {
                 rect,
