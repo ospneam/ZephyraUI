@@ -251,12 +251,16 @@ fn custom_property_values_compare_by_value() {
 #[test]
 fn layout_affecting_properties_are_classified() {
     use crate::property::PropertyChange;
-    const MARGIN: &PropertyKey = &PropertyKey::new("Margin", PropertyValue::float(0.0));
+    // ⚠️ B1 之后这条测试的形状变了：以前靠 `Layout.` **前缀**自动生效
+    // （`PropertyKey::new("Layout.Width", …)` 就足够了），现在必须由构造器
+    // **显式声明**。所以这里同时用到两种构造器的键。
+    const MARGIN: &PropertyKey = &PropertyKey::layout("Margin", PropertyValue::float(0.0));
     const BACKGROUND: &PropertyKey = &PropertyKey::new(
         "Background",
         PropertyValue::color(Color::rgb(0.0, 0.0, 0.0)),
     );
-    const LAYOUT_WIDTH: &PropertyKey = &PropertyKey::new("Layout.Width", PropertyValue::float(0.0));
+    const LAYOUT_WIDTH: &PropertyKey =
+        &PropertyKey::layout("Layout.Width", PropertyValue::float(0.0));
 
     // 直接借 `&'static` —— 与 [`crate::property::PropertyStore::set_local`] 一样。
     //

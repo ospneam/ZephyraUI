@@ -33,30 +33,62 @@ use std::sync::Arc;
 /// 属性键：属性的全局身份。
 ///
 /// 一个 [`PropertyKey`] 对应全树唯一的一份语义（类型 + 默认值 + 是否可继承 +
-/// 变更回调）。用 `&'static str` 作名字是为了能写调试输出；相等性靠地址，
+/// 变更是否影响布局）。用 `&'static str` 作名字是为了能写调试输出；相等性靠地址，
 /// 所以定义处必须是 `static`/`const` 提升。
 pub struct PropertyKey {
     name: &'static str,
     default: PropertyValue,
     inherits: bool,
+    /// 改这个属性要不要**重排**（而不只是重绘）。
+    ///
+    /// ⚠️ 它在**构造时**定死，不是运行时按名字算出来的。早期版本用
+    /// `name_affects_layout(name)`——一个靠字符串前缀 + 名单的函数。那样「忘了
+    /// 声明」会是一次**静默的布局错乱**（拿不到 `Dirty::Layout` → 不重排 → 布局盒是
+    /// 旧尺寸、字形按新字号画），零报错。改成字段后，忘了声明**编译不过**。
+    layout: bool,
 }
 
 impl PropertyKey {
-    /// 定义一个不可继承的属性。
+    /// 定义一个**不可继承**、**只重绘**的属性。
     pub const fn new(name: &'static str, default: PropertyValue) -> Self {
         Self {
             name,
             default,
             inherits: false,
+            layout: false,
         }
     }
 
-    /// 定义一个**可继承**的属性（未在本地设置时沿父链查找）。
+    /// 定义一个**可继承**、**只重绘**的属性（未在本地设置时沿父链查找）。
     pub const fn inheritable(name: &'static str, default: PropertyValue) -> Self {
         Self {
             name,
             default,
             inherits: true,
+            layout: false,
+        }
+    }
+
+    /// 定义一个**不可继承**、**影响布局**的属性。
+    ///
+    /// 改变它必须重排——比如 `Width` / `Padding`。**拿不准就选这个**：多重排一次
+    /// 只是慢一点，少重排一次会让布局盒与内容错位（零报错）。
+    pub const fn layout(name: &'static str, default: PropertyValue) -> Self {
+        Self {
+            name,
+            default,
+            inherits: false,
+            layout: true,
+        }
+    }
+
+    /// 定义一个**可继承**、**影响布局**的属性。
+    pub const fn inheritable_layout(name: &'static str, default: PropertyValue) -> Self {
+        Self {
+            name,
+            default,
+            inherits: true,
+            layout: true,
         }
     }
 
@@ -68,6 +100,14 @@ impl PropertyKey {
     /// 是否可继承。
     pub const fn inherits(&self) -> bool {
         self.inherits
+    }
+
+    /// 改这个属性要不要重排。
+    ///
+    /// 属性系统据此决定重排还是只重绘——把 `Background` 与 `Width` 同等对待会让
+    /// 改个颜色触发整棵子树重排，是 UI 卡顿最常见的来源。
+    pub const fn affects_layout(&self) -> bool {
+        self.layout
     }
 
     /// 主题默认值。
@@ -355,41 +395,46 @@ impl PropertyChange {
     /// 属性系统据此决定重排还是只重绘——把 `Background` 与 `Margin` 同等对待
     /// 会让改个颜色触发整棵子树重排，是 UI 卡顿最常见的来源。
     pub fn affects_layout(&self) -> bool {
-        name_affects_layout(self.key.name())
+        self.key.affects_layout()
     }
 }
 
 /// 属性名是否属于「影响布局」的一类。
 ///
-/// # 命名即契约
+/// # ⚠️ 只在测试里用，生产代码一律走 [`PropertyKey::affects_layout`]
 ///
-/// 判定看的是**属性名**而不是某个标志位。这样做的代价是要靠命名纪律；换来的是
-/// 属性定义保持 `const fn`（标志位得在构造时求值，而 `starts_with` 不是 const），
-/// 并且新增属性时"忘了声明它影响布局"表现为一个能立刻被测试抓到的漏判，而不是
-/// 一次静默的绘制错位。
+/// 这个函数是 B0 时期的实现——判定看**属性名**（一串硬编码名单）。B1 已把判定搬进
+/// [`PropertyKey`] 的 `layout` 字段，由**构造器**在定义时定死，于是「忘了声明」
+/// 从一次静默的布局错位变成**编译错误**。
 ///
-/// 约定：`Layout.` 前缀的一律影响布局；其余逐个列举。
+/// 保留它只有一个理由：[`crate::layout_classification_tests`] 用它**独立复算**一遍
+/// 每个真实 `props::*` 键的分类——**独立复算**才有意义：如果测试只是读字段本身，
+/// 那它就只是把字段抄了一遍，改错了也会一起错、永远绿。
+///
+/// # 命名即契约（历史说明）
+///
+/// 判定看属性名而不是标志位，代价是要靠命名纪律；换来的是属性定义保持
+/// `const fn`（标志位得在构造时求值）。B1 移除了这个取舍——标志位现在是构造器的
+/// 一部分，仍然 `const`。
+///
+/// ⚠️ B1 之前这里还有一条 `name.starts_with("Layout.")` 的捷径，配套的要求是
+/// 「影响布局的键都得带这个前缀」。现在前缀已经没用了（判定在构造器里），
+/// `Layout.Spacing` 也已改名成 `Spacing`。留着前缀只会让人以为它还在管事。
 pub fn name_affects_layout(name: &str) -> bool {
-    name.starts_with("Layout.")
-        || matches!(
-            name,
-            "Margin" | "Padding" | "Width" | "Height" | "Size" | "Collapsed"
-                // ↓ 弹性布局三项。`arrange` 读 `node.cross_align(ctx)` 与
-                //   `node.stack(ctx)`（后者带 `direction` + `main_align`），
-                //   所以改这三个键必须重排。漏掉的后果同下面三项。
+    matches!(
+        name,
+        "Padding"
+                | "Text.LineHeight"
+                | "Width"
+                | "Height"
+                | "Spacing"
+                | "Collapsed"
                 | "Direction"
                 | "CrossAlign"
                 | "MainAlign"
-                // ↓ 文本三个键。`measure` 通过 `node.text_size(ctx)` 读它们，而
-                //   `text_size` 内部取 `text_style()`（字号 + 行高）与
-                //   `text_max_width()`（换行宽度），三者都进 `engine.shape(...)`。
-                //   漏掉的后果是「改了字号却拿到 `Dirty::Paint` 而不是
-                //   `Dirty::Layout`」→ 不重排 → 盒子还是旧尺寸、字形按新字号画
-                //   → 文字压到邻居上，零报错。
                 | "Text.Size"
-                | "Text.LineHeight"
                 | "Text.MaxWidth"
-        )
+    )
 }
 
 /// 单个节点上的属性表。
@@ -428,26 +473,26 @@ pub struct PropertyStore {
     styled: Vec<LocalEntry>,
 }
 
-/// 一条属性：id（键地址）、名字、值。
+/// 一条属性：键 + 值。
 ///
-/// 三个字段打包在一起，是因为它们总是**一起**被读：diff 遍历时同时要 id（对账）
-/// 与名字（判定要不要重排）。分成两表（`HashMap<id, value>` + `HashMap<id, name>`）
-/// 就意味着每次读都要查两处，而写入要维护两处的一致性。
+/// ⚠️ 早期版本是 `{ id: usize, name: &str, value }` 三个字段——**两个冗余**：
+/// `id` 就是 `key` 的地址（[`PropertyStore::id_of`]），`name` 也是从 key 取的
+/// （[`PropertyKey::name`]）。留着的代价是**写入时要维护三处的一致性**，而读的时候
+/// 「要 id 还是要 name」得先想一下。
+///
+/// 现在只存 `key`：**同一个指针**，一个字段。id 和名字都能从它推出来
+/// （`id_of` / `key.name()`），不会不一致。
 #[derive(Debug, Clone)]
 struct LocalEntry {
-    id: usize,
-    name: &'static str,
+    key: &'static PropertyKey,
     value: PropertyValue,
 }
 
 impl LocalEntry {
-    /// 找不到名字时的占位。
-    ///
-    /// ⚠ 这个名字**必须**让 [`name_affects_layout`] 返回 `true`（它以
-    /// `Layout.` 开头），因为拿不到名字时唯一安全的假设是"它可能影响布局"：
-    /// 宁可多重排一次，也不要画出错位的画面。只这一处需要它，`set_local` 与
-    /// `set_styled` 走的是带 `&'static PropertyKey` 的路径，名字总是有的。
-    const UNKNOWN_NAME: &'static str = "Layout.Unknown";
+    /// 内部 id（键地址）。
+    fn id(&self) -> usize {
+        PropertyStore::id_of(self.key)
+    }
 }
 
 impl PropertyStore {
@@ -468,8 +513,7 @@ impl PropertyStore {
         key: &'static PropertyKey,
         value: PropertyValue,
     ) -> Option<PropertyChange> {
-        let id = key as *const _ as usize;
-        let old = upsert(&mut self.local, id, key.name, value.clone());
+        let old = upsert(&mut self.local, key, value.clone());
         Some(PropertyChange {
             key,
             old,
@@ -483,8 +527,7 @@ impl PropertyStore {
         key: &'static PropertyKey,
         value: PropertyValue,
     ) -> Option<PropertyChange> {
-        let id = key as *const _ as usize;
-        let old = upsert(&mut self.styled, id, key.name, value.clone());
+        let old = upsert(&mut self.styled, key, value.clone());
         Some(PropertyChange {
             key,
             old,
@@ -494,14 +537,14 @@ impl PropertyStore {
 
     /// 清除本地值（回落到样式/继承/默认）。
     pub fn clear_local(&mut self, key: &PropertyKey) {
-        let id = key as *const _ as usize;
-        self.local.retain(|e| e.id != id);
+        let id = Self::id_of(key);
+        self.local.retain(|e| e.id() != id);
     }
 
     /// 本地是否显式设置了该属性。
     pub fn is_locally_set(&self, key: &PropertyKey) -> bool {
-        let id = key as *const _ as usize;
-        self.local.iter().any(|e| e.id == id)
+        let id = Self::id_of(key);
+        self.local.iter().any(|e| e.id() == id)
     }
 
     /// 内部 id（`PropertyKey` 的地址）。diff 对账时用它避免借用键定义。
@@ -511,9 +554,34 @@ impl PropertyStore {
 
     /// 本地设置的全部条目，供 diff 对账。
     ///
-    /// 一并给出属性名：判定"这次变化要不要重排"需要名字，而调用方只有 id。
-    pub fn iter_local(&self) -> impl Iterator<Item = (usize, &'static str, &PropertyValue)> {
-        self.local.iter().map(|e| (e.id, e.name, &e.value))
+    /// 一并交出 **`&'static PropertyKey`**：判定「这次变化要不要重排」要读它的
+    /// `affects_layout` 字段，而旧实现只能交出名字、再去查一个字符串名单。
+    pub fn iter_local(&self) -> impl Iterator<Item = (&'static PropertyKey, &PropertyValue)> {
+        self.local.iter().map(|e| (e.key, &e.value))
+    }
+
+    /// 按键写入本地值，返回**值是否真的变了**。
+    ///
+    /// diff 用返回值决定要不要标脏——「值没变就别标脏」是 UI 静止时零重建的
+    /// 第一道闸门。⚠️ 不能用 [`Self::set_local`] 的 `Option` 代替：那玩意**无条件**
+    /// 返回 `Some`，因为它要的是「变更记录」而不是「变没变」。
+    pub fn set_local_if_changed(
+        &mut self,
+        key: &'static PropertyKey,
+        value: PropertyValue,
+    ) -> bool {
+        let id = Self::id_of(key);
+        match self.local.iter_mut().find(|e| e.id() == id) {
+            Some(existing) if existing.value == value => false,
+            Some(existing) => {
+                existing.value = value;
+                true
+            }
+            None => {
+                self.local.push(LocalEntry { key, value });
+                true
+            }
+        }
     }
 
     /// 按内部 id 读取本地值。
@@ -521,7 +589,7 @@ impl PropertyStore {
     /// 主题重解析需要它：先看"当前存的是资源键还是已解析的字面值"，才决定要不要
     /// 替换。
     pub fn local_value(&self, id: usize) -> Option<&PropertyValue> {
-        self.local.iter().find(|e| e.id == id).map(|e| &e.value)
+        self.local.iter().find(|e| e.id() == id).map(|e| &e.value)
     }
 
     /// 按内部 id 写入本地值，返回**值是否真的变了**。
@@ -529,21 +597,26 @@ impl PropertyStore {
     /// diff 用返回值决定要不要标脏——「值没变就别标脏」是 UI 静止时零重建的
     /// 第一道闸门。
     pub fn set_local_by_id(&mut self, id: usize, value: PropertyValue) -> bool {
-        match self.local.iter_mut().find(|e| e.id == id) {
+        match self.local.iter_mut().find(|e| e.id() == id) {
             Some(existing) if existing.value == value => false,
             Some(existing) => {
                 existing.value = value;
                 true
             }
-            // 名字可能尚未登记（从旧结构反序列化、或先 `set_local_by_id` 后
-            // `set_local`）。缺登记时保守地视为影响布局，见 [`LocalEntry::UNKNOWN_NAME`]。
             None => {
-                self.local.push(LocalEntry {
-                    id,
-                    name: LocalEntry::UNKNOWN_NAME,
-                    value,
-                });
-                true
+                // ⚠ 拿不到键就没法登记——**别在这里造无名条目**。那是 B1 之前的
+                // hack：造一条名字叫 `Layout.Unknown` 的假记录，凑合让
+                // `name_affects_layout` 返回 true。但那永远查不出「这条其实不影响
+                // 布局」，只是一律多重排。
+                //
+                // 现在 `LocalEntry` 存的就是键本身，而**唯一的调用方 diff 手上一定有
+                // 键**（它遍历的是 `Element` 的 store，那里的每条都带键）。所以走不到
+                // 这里；真走到了说明有调用方在用 id 而不是键，那是要修的 bug，
+                // 不是能靠猜默认值糊过去的。
+                //
+                // 返回 `false` = 「没写进去，也不标脏」，好过写一条分类是猜的值进去
+                // （那会让后续诊断彻底失真）。
+                false
             }
         }
     }
@@ -551,10 +624,10 @@ impl PropertyStore {
     /// 本节点能提供的值（不含继承与默认回落）。
     pub fn lookup(&self, key: &PropertyKey) -> Option<(&PropertyValue, ValueSource)> {
         let id = Self::id_of(key);
-        if let Some(e) = self.local.iter().find(|e| e.id == id) {
+        if let Some(e) = self.local.iter().find(|e| e.id() == id) {
             return Some((&e.value, ValueSource::Local));
         }
-        if let Some(e) = self.styled.iter().find(|e| e.id == id) {
+        if let Some(e) = self.styled.iter().find(|e| e.id() == id) {
             return Some((&e.value, ValueSource::Styled));
         }
         None
@@ -564,20 +637,19 @@ impl PropertyStore {
 /// 写入一条（存在则替换），返回旧值。
 ///
 /// 提取成自由函数是因为 `set_local` 与 `set_styled` 的逻辑必须**完全一致** ——
-/// 分头写的话，"一处更新了名字、另一处没更新"这种差异没有任何症状，
-/// 只会让 `iter_local` 在某些节点上报出 `Layout.Unknown`。
+/// 分头写的话，"存在则替换"这条路径在两处走偏，没有任何症状，只会让
+/// `iter_local()` 漏掉某个条目。
+///
+/// ⚠️ 简化记录：B1 之前这里还要「顺带更新名字」（因为 `LocalEntry` 单独存了
+/// `name`，反序列化出来的结构可能带旧名字）。现在条目里存的就是**键本身**，
+/// 不存在名字与键对不上的可能——这整个类的 bug 消失了。
 fn upsert(
     entries: &mut Vec<LocalEntry>,
-    id: usize,
-    name: &'static str,
+    key: &'static PropertyKey,
     value: PropertyValue,
 ) -> Option<PropertyValue> {
-    match entries.iter_mut().find(|e| e.id == id) {
+    match entries.iter_mut().find(|e| e.id() == id_of(key)) {
         Some(existing) => {
-            // 名字也要更新：同一个 id 理论上只有一个 `PropertyKey`，但反序列化
-            // 出来的结构可能带着上一轮的名字。留着旧名字比写新的更坏 ——
-            // 那会让"要不要重排"的判定用错语义。
-            existing.name = name;
             // ⚠ `replace` 把新值换进去、把旧值换出来。表里留下的必须是**新值**。
             //
             // 这一处曾写成"再 `replace` 一次把新值换出来当旧值交出去"，于是表里
@@ -589,10 +661,15 @@ fn upsert(
             Some(std::mem::replace(&mut existing.value, value))
         }
         None => {
-            entries.push(LocalEntry { id, name, value });
+            entries.push(LocalEntry { key, value });
             None
         }
     }
+}
+
+/// 内部 id（键地址）。配 [`upsert`] 用。
+fn id_of(key: &PropertyKey) -> usize {
+    key as *const _ as usize
 }
 
 
@@ -722,21 +799,18 @@ mod store_tests {
         let mut by_key = PropertyStore::new();
         by_key.set_local(&A, PropertyValue::float(7.0));
         let mut by_id = PropertyStore::new();
-        assert!(by_id.set_local_by_id(PropertyStore::id_of(&A), PropertyValue::float(7.0)));
-        assert!(!by_id.set_local_by_id(PropertyStore::id_of(&A), PropertyValue::float(7.0)),
-            "同值重复写入不算变化");
-
-        assert_eq!(
-            by_id.local_value(PropertyStore::id_of(&A)).unwrap().get::<f32>(),
-            by_key.local_value(PropertyStore::id_of(&A)).unwrap().get::<f32>()
-        );
-        // 按 id 写入的条目名字未知，必须保守地按"影响布局"处理。
-        let (_, name, _) = by_id.iter_local().next().unwrap();
-        assert_eq!(name, LocalEntry::UNKNOWN_NAME);
+        // ⚠️ 按 id 写入一条**从未登记过**的键现在**写不进去**（返回 `false`）。
+        // 旧实现会造一条名字叫 `Layout.Unknown` 的假记录凑合，那永远查不出
+        // 「这条其实不影响布局」，只是一律多重排；B1 之后 `LocalEntry` 存的就是
+        // 键本身，造不出假键，所以这里改成「不写」。
         assert!(
-            name_affects_layout(name),
-            "名字缺失时必须让 `name_affects_layout` 为真——\
-             宁可多重排一次，也不要画出错位的画面"
+            !by_id.set_local_by_id(PropertyStore::id_of(&A), PropertyValue::float(7.0)),
+            "只持 id 无法反推键，所以写不进去——返回 false 好过写一条分类靠猜的条目"
+        );
+        assert_eq!(
+            by_id.iter_local().count(),
+            0,
+            "写不进去就不该留下条目"
         );
     }
 }

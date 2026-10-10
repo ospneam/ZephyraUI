@@ -18,32 +18,32 @@ use crate::property::{PropertyKey, PropertyValue};
 /// 四边统一是刻意的简化：UI 里绝大多数控件的 padding 是对称的。真需要非对称时
 /// 把它扩成 `Thickness` 变体，而不是现在就为它把键拆成四个。
 pub static PADDING: PropertyKey =
-    PropertyKey::inheritable("Padding", PropertyValue::float(0.0));
+    PropertyKey::inheritable_layout("Padding", PropertyValue::float(0.0));
 
 /// 显式宽度（DIP）。`None` 表示由布局决定。
-pub static WIDTH: PropertyKey = PropertyKey::new("Width", PropertyValue::float(f32::NAN));
+pub static WIDTH: PropertyKey = PropertyKey::layout("Width", PropertyValue::float(f32::NAN));
 
 /// 显式高度（DIP）。
-pub static HEIGHT: PropertyKey = PropertyKey::new("Height", PropertyValue::float(f32::NAN));
+pub static HEIGHT: PropertyKey = PropertyKey::layout("Height", PropertyValue::float(f32::NAN));
 
 /// 堆叠方向（仅对容器生效）。
-pub static DIRECTION: PropertyKey = PropertyKey::new(
+pub static DIRECTION: PropertyKey = PropertyKey::layout(
     "Direction",
     PropertyValue::direction(Direction::Horizontal),
 );
 
 /// 主轴上相邻子项的间距。
 pub static SPACING: PropertyKey =
-    PropertyKey::new("Layout.Spacing", PropertyValue::float(0.0));
+    PropertyKey::layout("Spacing", PropertyValue::float(0.0));
 
 /// 交叉轴对齐（由容器统一施加给子项）。
-pub static CROSS_ALIGN: PropertyKey = PropertyKey::new(
+pub static CROSS_ALIGN: PropertyKey = PropertyKey::layout(
     "CrossAlign",
     PropertyValue::cross_align(AlignItems::Start),
 );
 
 /// 主轴对齐（由容器施加给整组子项）。
-pub static MAIN_ALIGN: PropertyKey = PropertyKey::new(
+pub static MAIN_ALIGN: PropertyKey = PropertyKey::layout(
     "MainAlign",
     PropertyValue::main_align(MainAxisAlign::Start),
 );
@@ -52,7 +52,7 @@ pub static MAIN_ALIGN: PropertyKey = PropertyKey::new(
 ///
 /// 对应 WinUI 的 `Visibility=Collapsed`。与"宽度为 0"不同：零宽仍占一个间距位，
 /// 而折叠完全不占——工具栏在图片模式下少一个按钮时，间距必须跟着消失。
-pub static COLLAPSED: PropertyKey = PropertyKey::new("Collapsed", PropertyValue::bool(false));
+pub static COLLAPSED: PropertyKey = PropertyKey::layout("Collapsed", PropertyValue::bool(false));
 
 // ============================== 外观 ==============================
 
@@ -170,7 +170,7 @@ pub static TEXT: PropertyKey = PropertyKey::new("Text", PropertyValue::static_st
 
 /// 字号（DIP）。`NaN` 表示"用宿主默认"。
 pub static TEXT_SIZE: PropertyKey =
-    PropertyKey::new("Text.Size", PropertyValue::float(f32::NAN));
+    PropertyKey::layout("Text.Size", PropertyValue::float(f32::NAN));
 
 /// 文本颜色（继承）。
 pub static TEXT_COLOR: PropertyKey =
@@ -178,11 +178,11 @@ pub static TEXT_COLOR: PropertyKey =
 
 /// 文本最大宽度（DIP），用于断行。`NaN` 表示不限宽（不换行）。
 pub static TEXT_MAX_WIDTH: PropertyKey =
-    PropertyKey::new("Text.MaxWidth", PropertyValue::float(f32::NAN));
+    PropertyKey::layout("Text.MaxWidth", PropertyValue::float(f32::NAN));
 
 /// 文本行高倍数（继承）。`NaN` 表示用字体自带值。
 pub static TEXT_LINE_HEIGHT: PropertyKey =
-    PropertyKey::inheritable("Text.LineHeight", PropertyValue::float(f32::NAN));
+    PropertyKey::inheritable_layout("Text.LineHeight", PropertyValue::float(f32::NAN));
 
 // ============================== 交互 ==============================
 

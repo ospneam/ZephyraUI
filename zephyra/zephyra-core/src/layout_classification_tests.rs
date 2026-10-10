@@ -22,7 +22,7 @@
 //! —— 节点自己的盒子由 `WIDTH` / `HEIGHT` / 内边距 / 子节点决定，图像画在**已经排好版**
 //! 的盒子里面。
 
-use crate::property::{name_affects_layout, PropertyKey};
+use crate::property::{name_affects_layout, PropertyKey, PropertyValue};
 use crate::props;
 
 /// `name_affects_layout` 对每个真实键的**期望**分类，以及理由。
@@ -71,12 +71,29 @@ const EXPECTED: &[(&PropertyKey, bool, &str)] = &[
 
 #[test]
 fn every_real_property_key_has_a_pinned_layout_classification() {
+    // B1 之后这个函数从「实现」降级成「独立复算」。
+    //
+    // ⚠️ 为什么不能直接断言 `key.affects_layout() == want` 就完了：那样的读的是
+    // 同一个字段，**改错了也会一起错、永远绿**。所以这里用 `name_affects_layout`
+    // （B0 时期的字符串名单实现）**从零复算一遍**，再和「构造器定死的字段」比。
+    //
+    // 两条独立路径同结论，才算真的钉住了。它们不一致时：
+    // · props.rs 里用了错的构造器 → 测试红
+    // · `name_affects_layout` 的名单漏了某条 → 测试红
     for (key, want, why) in EXPECTED {
         let got = name_affects_layout(key.name());
         assert_eq!(
             got, *want,
-            "{} 的布局分类不对（{why}）。它现在是 {got}，期望 {want}",
+            "{} 的布局分类不对（{why}）。字符串名单说是 {got}，构造器说是 {want}",
             key.name()
+        );
+        assert_eq!(
+            key.affects_layout(),
+            *want,
+            "{} 的构造器与分类表不一致（{why}）。\
+             表说是 {want}，构造器说 {}——改 props.rs 里的构造器，改表是没用的",
+            key.name(),
+            key.affects_layout()
         );
     }
 }
@@ -103,7 +120,7 @@ fn the_pinned_list_covers_every_property_declared_in_props() {
     );
     // `props` 里每个键的**属性字符串**：
     const NAMES: &[&str] = &[
-        "Padding", "Width", "Height", "Direction", "Layout.Spacing", "CrossAlign",
+        "Padding", "Width", "Height", "Direction", "Spacing", "CrossAlign",
         "MainAlign", "Collapsed", "Background", "CornerRadius", "BorderColor",
         "BorderWidth", "Opacity", "Layer", "Filter", "BlendMode", "Image.Texture",
         "Image.Size", "Image.Tint", "Image.Src", "Icon.Name", "Icon.Color",
@@ -124,4 +141,52 @@ fn the_pinned_list_covers_every_property_declared_in_props() {
         pinned.len(),
         NAMES.len()
     );
+}
+
+/// 四个构造器必须在 (inherits, layout) 这个二维空间里占**四个不同位置**。
+///
+/// # 这条在防什么
+///
+/// 如果四个构造器退化成同样的行为（比如 `layout()` 忘了置 `layout: true`），
+/// 「忘了声明 → 编译不过」这条收益就消失了——代码照样编译，只是行为是错的。
+///
+/// 症状：`Width` 改了却只重绘 → 布局盒是旧尺寸 → 元素位置不动 → **零报错**。
+///
+/// 两个维度各两个取值，所以正好四个位置，缺一个就说明有构造器重复。
+#[test]
+fn the_four_constructors_pin_four_distinct_positions() {
+    use crate::property::PropertyKey;
+
+    let f = || PropertyValue::float(0.0);
+    let positions = [
+        ("new", PropertyKey::new("T.a", f()).inherits(), PropertyKey::new("T.a", f()).affects_layout()),
+        (
+            "inheritable",
+            PropertyKey::inheritable("T.b", f()).inherits(),
+            PropertyKey::inheritable("T.b", f()).affects_layout(),
+        ),
+        (
+            "layout",
+            PropertyKey::layout("T.c", f()).inherits(),
+            PropertyKey::layout("T.c", f()).affects_layout(),
+        ),
+        (
+            "inheritable_layout",
+            PropertyKey::inheritable_layout("T.d", f()).inherits(),
+            PropertyKey::inheritable_layout("T.d", f()).affects_layout(),
+        ),
+    ];
+    let mut seen: Vec<(&str, bool, bool)> = Vec::new();
+    for (name, inherits, layout) in positions {
+        let dup = seen.iter().position(|(_, i, l)| *i == inherits && *l == layout);
+        assert!(
+            dup.is_none(),
+            "构造器 `{name}` 与 `{}` 的行为完全相同（inherits={inherits}, layout={layout}）——\
+             有一个构造器没干活，\"忘了声明就编译不过\"这条收益已经失效了",
+            seen[dup.unwrap_or(0)].0
+        );
+        seen.push((name, inherits, layout));
+    }
+    // 四个构造器 / 四个位置，所以上面那个循环就够了。这条只是把话说全：
+    assert_eq!(seen.len(), 4, "四个构造器就该有四个");
 }

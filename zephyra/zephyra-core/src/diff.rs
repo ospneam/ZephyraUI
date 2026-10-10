@@ -73,9 +73,9 @@ pub fn diff(node: &mut Node, element: &Element) -> DiffStats {
     //
     // 区分不是优化而是正确性：`Spacing` 变了却只标 Paint，子项位置就不会更新，
     // 而画面上"看起来"只少了一个格子——这类 bug 极难从截图看出来。
-    for (id, name, value) in element.props().iter_local() {
-        if node.props_mut().set_local_by_id(id, value.clone()) {
-            let level = if crate::property::name_affects_layout(name) {
+    for (key, value) in element.props().iter_local() {
+        if node.props_mut().set_local_if_changed(key, value.clone()) {
+            let level = if key.affects_layout() {
                 Dirty::Layout
             } else {
                 Dirty::Paint
