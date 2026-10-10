@@ -2376,6 +2376,82 @@ fn drop_shadow_is_actually_offset() {
         "x=32 是原图，应当是白（重画在影子之上），实得 {original:?}"
     );
 }
+/// 投影的**覆盖率本身也被模糊** —— 半透明边缘，不是硬边。
+///
+/// # 这条在抓什么
+///
+/// 模糊趟以前只累加 `rgb`，`alpha` 直接取中心那一抽样。后果不是"整体偏暗"，
+/// 而是**影子的 alpha 有硬边**：颜色糊开了，覆盖率还是原图那条硬边，于是半透明
+/// 阴影外围出现一圈 alpha 不连续的暗框。Chrome / Skia 模糊的是**预乘 RGBA 四通道**，
+/// 正是为了避免这个。
+///
+/// # 几何（`SIZE = 64`，所以尺寸必须算得下）
+///
+/// ```text
+///   0        12              28   34        43        64
+///   ├─────────┼───────────────┼────┼─────────┤
+///            原图 x∈[12,28)     剪影 x∈[18,34)   离屏边界 43
+/// ```
+///
+/// σ=3 ⇒ 半径 9，剪影右侧的模糊尾巴伸到 x=43。
+///
+/// # 判据为什么落在剪影的**最后一个像素**
+///
+/// 取 x=33（剪影内、原图外）：它离右边界只有 1 像素，正处在覆盖率从 1 往下降的
+/// 那段上。此时
+///
+/// - 只糊 rgb 的实现 → 中心抽样的 alpha = 1 ⇒ 影子是**全黑**，蓝通道 ≈ **0**；
+/// - 四通道一起糊 → 该像素的 +k 抽样全部落在剪影外，覆盖率 ≈ **0.57** ⇒ 蓝 ≈ **110**。
+///
+/// 判据因此写成「蓝通道既不贴近 0 也不贴近 255」：`>= 30` 抓"退回硬边"，
+/// `<= 200` 抓"糊没了 / 根本没画影子"。
+#[test]
+fn drop_shadow_alpha_is_blurred_too() {
+    use zephyra_core::filter::{Filter, FilterChain};
+    let mut l = DisplayList::new();
+    // 纯蓝底：影子是半透明黑，压上去会按覆盖率把蓝通道按比例拉下来。
+    l.push(
+        SortKey { layer: Layer::Background, z: 0, order: 0 },
+        Command::Quad {
+            rect: zephyra_core::core::Rect::new(0.0, 0.0, SIZE as f32, SIZE as f32),
+            radius: zephyra_core::core::CornerRadius { radius: 0.0 },
+            fill: Color::rgb(0.0, 0.0, 1.0),
+            stroke: None,
+            filter: FilterChain::none(),
+            blend: zephyra_core::filter::BlendMode::default(),
+        },
+    );
+    l.push(
+        SortKey { layer: Layer::Content, z: 0, order: 1 },
+        Command::Quad {
+            rect: zephyra_core::core::Rect::new(12.0, 12.0, 16.0, 16.0),
+            radius: zephyra_core::core::CornerRadius { radius: 0.0 },
+            fill: Color::rgb(1.0, 1.0, 1.0),
+            stroke: None,
+            filter: FilterChain::single(Filter::DropShadow {
+                color: Color::rgba(0.0, 0.0, 0.0, 1.0),
+                offset: zephyra_core::core::Point::new(6.0, 0.0),
+                sigma: 3.0,
+            }),
+            blend: zephyra_core::filter::BlendMode::default(),
+        },
+    );
+    l.sort();
+    let px = render_probe(&l);
+
+    let p = probe_at(&px, 33, 20);
+    assert!(
+        p[2] >= 30,
+        "x=33 在剪影内、原图外，离右边界 1px，模糊后的覆盖率应当落在 0 与 1 之间；\
+         实得 {p:?}（蓝 ≤30 = 覆盖率没被模糊，退回成硬边）"
+    );
+    assert!(
+        p[2] <= 200,
+        "x=33 应当只是**部分**变暗，蓝通道 ≤200；实得 {p:?}\
+         （蓝 ≥200 = 影子根本没落到这里）"
+    );
+}
+
 /// 局部脏区在**离屏 pass 之后**仍然生效。
 ///
 /// # 这条在抓什么

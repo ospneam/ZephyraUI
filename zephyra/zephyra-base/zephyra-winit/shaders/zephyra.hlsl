@@ -420,7 +420,16 @@ float4 PSBlurH(VSOut i) : SV_TARGET {
     float sigma = i.corner.y;
     float r = BlurRadius(sigma);
     float2 size = i.half_size;
-    float3 sum = float3(0.0, 0.0, 0.0);
+    // ⚠ 累加器是 **float4**，不是 float3 —— 四通道**一起**模糊，与 Chrome / Skia 一致。
+    //
+    // 之前这里是 `float3`，alpha 从中心那一抽样直接取。那样做的后果不是"偏暗"，
+    // 而是**投影有硬边**：影子颜色糊开了，覆盖率却还是原图的硬边，于是半透明阴影
+    // 周围出现一圈 alpha 不连续的暗框。
+    //
+    // 为什么"只糊 rgb"会被想成更安全：不糊 alpha 时 rgb 与 a **本来就不同步**，这才是
+    // 暗边的来源。预乘空间里正确的做法是对 `(rgb, a)` 一起做同一个卷积 —— 出来仍然
+    // 满足 `rgb ≤ a`，因为卷积是线性的、且输入逐像素都满足这个不等式。
+    float4 sum = float4(0.0, 0.0, 0.0, 0.0);
     float wsum = 0.0;
     // `[0, r]` 的整数上界。写成动态上界的循环在 SM5 里没问题，但**必须**给上限，
     // 否则恶意/异常的 σ 会让它跑几百万次。
@@ -429,51 +438,43 @@ float4 PSBlurH(VSOut i) : SV_TARGET {
         if (float(k) > r) { break; }
         float2 uv = (i.local + float2(float(k), 0.0)) / size;
         float w = GaussWeight(float(k), sigma);
-        sum += g_tex.SampleLevel(g_smp, uv, 0).rgb * w;
+        sum += g_tex.SampleLevel(g_smp, uv, 0) * w;
         wsum += w;
         // 对称项：k = 0 只算一次（否则权重翻倍）。
         if (k > 0) {
             float2 uv2 = (i.local - float2(float(k), 0.0)) / size;
-            sum += g_tex.SampleLevel(g_smp, uv2, 0).rgb * w;
+            sum += g_tex.SampleLevel(g_smp, uv2, 0) * w;
             wsum += w;
         }
     }
     // `wsum > 0` 恒成立（k=0 的权重是 1），但仍挡一道：σ 异常时宁可输出全 0
     // 也不要 NaN —— NaN 会顺着预乘链把整帧污染掉。
     if (wsum <= 0.0) { return float4(0.0, 0.0, 0.0, 0.0); }
-    // ⚠ 只模糊 **rgb**，alpha 取中心那一抽样。
-    //
-    // 这是本实现与「四通道一起模糊」的**故意**差异：alpha 在预乘空间里是**覆盖率**，
-    // 模糊它会让半透明区域边缘出现"alpha 先掉、rgb 后掉"的不一致，表现为暗边。
-    // 把 alpha 一起模糊是对的方案，但需要 RT 走 **线性**色彩空间 —— 现在是
-    // `R8G8B8A8_UNORM`（非线性），在非线性空间里做的任何卷积都偏暗。
-    // E4.6 起若要修正，得先把离屏 RT 换成 `R16G16B16A16_FLOAT`。
-    float4 c = g_tex.SampleLevel(g_smp, i.local / size, 0);
-    return float4(sum / wsum, c.a);
+    // 归一化后的 alpha 就是「被模糊的覆盖率」，直接送进后面的合成。
+    return sum / wsum;
 }
 
 float4 PSBlurV(VSOut i) : SV_TARGET {
     float sigma = i.corner.y;
     float r = BlurRadius(sigma);
     float2 size = i.half_size;
-    float3 sum = float3(0.0, 0.0, 0.0);
+    float4 sum = float4(0.0, 0.0, 0.0, 0.0);
     float wsum = 0.0;
     [loop]
     for (int k = 0; k <= 32; ++k) {
         if (float(k) > r) { break; }
         float2 uv = (i.local + float2(0.0, float(k))) / size;
         float w = GaussWeight(float(k), sigma);
-        sum += g_tex.SampleLevel(g_smp, uv, 0).rgb * w;
+        sum += g_tex.SampleLevel(g_smp, uv, 0) * w;
         wsum += w;
         if (k > 0) {
             float2 uv2 = (i.local - float2(0.0, float(k))) / size;
-            sum += g_tex.SampleLevel(g_smp, uv2, 0).rgb * w;
+            sum += g_tex.SampleLevel(g_smp, uv2, 0) * w;
             wsum += w;
         }
     }
     if (wsum <= 0.0) { return float4(0.0, 0.0, 0.0, 0.0); }
-    float4 c = g_tex.SampleLevel(g_smp, i.local / size, 0);
-    return float4(sum / wsum, c.a);
+    return sum / wsum;
 }
 
 /// 把离屏 RT 的结果**合成**回当前目标。

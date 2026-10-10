@@ -114,7 +114,14 @@ impl View for Demo {
                 &props::DIRECTION,
                 PropertyValue::direction(Direction::Vertical),
             )
-            .with_children([toolbar(self), icons(), content(), src_crops(), status_bar(self)])
+            .with_children([
+            toolbar(self),
+            icons(),
+            content(),
+            src_crops(),
+            effects(),
+            status_bar(self),
+        ])
             .with(&NOTE, PropertyValue::static_str("demo"))
             .with(&Z_INDEX, PropertyValue::int(0))
     }
@@ -457,6 +464,165 @@ fn content() -> Element {
                         })
                         .collect::<Vec<_>>(),
                 ),
+        ])
+}
+
+/// 一个效果样本：深色底板 + 半透明色块，色块带自己的滤镜 / 混合模式。
+///
+/// # 三层而不是两层
+///
+/// ```text
+/// 外层（竖排：底板 + 说明文字）
+/// └ 底板  深色、不透明、带滤镜/混合模式吗？不带 —— 它只是「目标」
+///   └ 样本  半透明色块，滤镜与混合模式挂在这里
+/// ```
+///
+/// 底板与样本**必须**是两个节点。把同一个节点先涂成深色再涂成半透明色，
+/// 后一次会**覆盖**前一次（属性是覆盖语义，不是叠加），于是「底板」消失、
+/// 样本直接混在面板底色上 —— 混合模式照样能跑，但两个模式之间的对比度掉一大截，
+/// 肉眼就不容易分辨了。
+///
+/// # 为什么样本要**半透明**
+///
+/// 混合模式是「源」与「目标」的函数，而不透明色块叠在底板上时，除 `Src` 之外的
+/// 每个模式算出来的结果都等于色块本身 —— 29 个模式看起来一模一样。
+/// 50% alpha 才让 `Multiply`（底板透过来）与 `Screen`（两者都往白推）分得开。
+fn effect_swatch(
+    key: &'static str,
+    caption: &'static str,
+    fill: zephyra_core::core::Color,
+    filter: zephyra_core::filter::FilterChain,
+    blend: zephyra_core::filter::BlendMode,
+) -> Element {
+    use zephyra_core::core::Color;
+
+    Element::new(NodeTag::Container)
+        .with_key(key)
+        .with(&props::DIRECTION, PropertyValue::direction(Direction::Vertical))
+        .with(&props::SPACING, PropertyValue::float(6.0))
+        .with_children([
+            // 底板：混合模式的「目标」。深色底 + 浅色描边，让两种模式的差别最大。
+            Element::new(NodeTag::Container)
+                .with_key("backdrop")
+                .with(
+                    &props::BACKGROUND,
+                    PropertyValue::color(Color::rgb(0.10, 0.20, 0.42)),
+                )
+                .with(&props::CORNER_RADIUS, PropertyValue::float(8.0))
+                .with(&props::WIDTH, PropertyValue::float(96.0))
+                .with(&props::HEIGHT, PropertyValue::float(64.0))
+                .with(&props::PADDING, PropertyValue::float(12.0))
+                .with_children([Element::new(NodeTag::Container)
+                    .with_key("swatch")
+                    .with(
+                        &props::BACKGROUND,
+                        PropertyValue::color(Color::rgba(fill.r, fill.g, fill.b, 0.55)),
+                    )
+                    .with(&props::CORNER_RADIUS, PropertyValue::float(6.0))
+                    // ⚠ 样本必须给**显式**尺寸。只挂背景与圆角的节点没有内在尺寸，
+                    // 而容器布局不会把「父节点扣掉内边距后的剩余空间」默认分给孩子
+                    // —— 于是它塌成 0×0，滤镜与混合模式都挂在一条什么都不画的
+                    // 命令上。症状是「离屏规划里有这个 RT、但画面上什么都没有」，
+                    // 很像滤镜没实现。
+                    .with(&props::WIDTH, PropertyValue::float(72.0))
+                    .with(&props::HEIGHT, PropertyValue::float(40.0))
+                    .with(&props::FILTER, PropertyValue::filter(filter))
+                    .with(&props::BLEND_MODE, PropertyValue::blend_mode(blend))]),
+            Element::new(NodeTag::Text)
+                .with_key("caption")
+                .with(&props::TEXT, PropertyValue::static_str(caption))
+                .with(&props::TEXT_SIZE, PropertyValue::float(12.0)),
+        ])
+}
+
+/// E4 的效果展台：模糊 / 投影 / 多级链，外加两个非默认混合模式。
+///
+/// # 这一块在演示什么
+///
+/// E4 的三件事各自都能被肉眼分辨，但**必须有对照**才不会误判：
+///
+/// - 模糊 —— 看边缘有没有过渡带。没做模糊时硬边只有 0 与满值两种灰度；
+/// - 投影 —— 看**偏移方向**上有没有第二个更暗的形状，且原图仍压在它上面；
+/// - 多级链 —— 单趟模糊与三趟模糊的过渡带**宽度不同**，只看「糊了」区分不了。
+///
+/// 最后两个样本不带滤镜、只带混合模式，是为了让「混合模式生效」这件事与
+/// 「离屏 pass 生效」互不干扰 —— 否则一个模式下错，会被另一个的偏移掩盖。
+fn effects() -> Element {
+    use zephyra_core::core::{Color, Point};
+    use zephyra_core::filter::{BlendMode, Filter, FilterChain};
+
+    let accent = Color::rgb(0.35, 0.78, 1.0);
+    let warm = Color::rgb(1.0, 0.62, 0.28);
+
+    // 三趟同参数的高斯 ≈ 一趟 σ=2.83，所以过渡带明显更宽 —— 这就是判据。
+    let triple = FilterChain::new([
+        Filter::Blur { sigma_x: 2.0, sigma_y: 2.0 },
+        Filter::Blur { sigma_x: 2.0, sigma_y: 2.0 },
+        Filter::Blur { sigma_x: 2.0, sigma_y: 2.0 },
+    ]);
+
+    Element::new(NodeTag::Container)
+        .with_key("effects")
+        .with(
+            &props::BACKGROUND,
+            PropertyValue::Resource(roles::SURFACE_ALT.into()),
+        )
+        .with(&props::PADDING, PropertyValue::float(Spacing::Medium.dip()))
+        .with(
+            &props::DIRECTION,
+            PropertyValue::direction(Direction::Vertical),
+        )
+        .with(&props::SPACING, PropertyValue::float(Spacing::Small.dip()))
+        .with_children([
+            Element::new(NodeTag::Container)
+                .with_key("effects-row")
+                .with(
+                    &props::DIRECTION,
+                    PropertyValue::direction(Direction::Horizontal),
+                )
+                .with(&props::SPACING, PropertyValue::float(Spacing::Medium.dip()))
+                .with_children([
+                    effect_swatch(
+                        "fx-none",
+                        "对照",
+                        accent,
+                        FilterChain::none(),
+                        BlendMode::SrcOver,
+                    ),
+                    effect_swatch(
+                        "fx-blur",
+                        "模糊 σ3",
+                        accent,
+                        FilterChain::single(Filter::Blur { sigma_x: 3.0, sigma_y: 3.0 }),
+                        BlendMode::SrcOver,
+                    ),
+                    effect_swatch(
+                        "fx-shadow",
+                        "投影 σ3",
+                        accent,
+                        FilterChain::single(Filter::DropShadow {
+                            color: Color::rgba(0.0, 0.0, 0.0, 0.85),
+                            offset: Point::new(6.0, 6.0),
+                            sigma: 3.0,
+                        }),
+                        BlendMode::SrcOver,
+                    ),
+                    effect_swatch("fx-triple", "三级模糊", accent, triple, BlendMode::SrcOver),
+                    effect_swatch(
+                        "fx-multiply",
+                        "Multiply",
+                        warm,
+                        FilterChain::none(),
+                        BlendMode::Multiply,
+                    ),
+                    effect_swatch(
+                        "fx-screen",
+                        "Screen",
+                        warm,
+                        FilterChain::none(),
+                        BlendMode::Screen,
+                    ),
+                ]),
         ])
 }
 
