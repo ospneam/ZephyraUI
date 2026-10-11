@@ -202,4 +202,31 @@ impl StyleSheet {
     pub fn rules(&self) -> &[StyleRule] {
         &self.rules
     }
+
+    /// 把另一份样式表的规则并进来，`order` **接着往下编**。
+    ///
+    /// # 为什么必须接着编
+    ///
+    /// `order` 是同特异性时「后写的赢」的**唯一**依据。两份各自从 0 开始的话，
+    /// 跨文件的同特异性规则谁赢就不确定了 —— 症状是「改了另一个文件里的规则
+    /// 却没反应」，而那看起来像选择器写错了，极难定位。
+    ///
+    /// ⚠️ 也因此这个方法必须在 ir 模块内：`order` 是私有字段，
+    /// 外面拿不到旧值，就接不上。
+    pub fn merge(mut self, other: StyleSheet) -> Self {
+        let next = self
+            .rules
+            .iter()
+            .map(|r| r.order)
+            .max()
+            .map(|m| m + 1)
+            .unwrap_or(0);
+        for (i, r) in other.rules.into_iter().enumerate() {
+            self.rules
+                .push(StyleRule::new(r.selector, r.declarations, next + i as u32));
+        }
+        // 并进来的规则可能比原有的更具体，所以整体重排一次。
+        // 加载期只做一次，`apply` 不负这个代价。
+        Self::from_rules(self.rules)
+    }
 }

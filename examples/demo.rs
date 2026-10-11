@@ -30,11 +30,9 @@
 //! ZEPHYRA_TRACE=1 cargo run -p zephyra-foundation --bin demo   # 每帧统计
 //! ```
 
-use zephyra_core::core::{Spacing, UvRect};
-use zephyra_core::layout::{AlignItems, Direction};
+use zephyra_core::core::UvRect;
 use zephyra_core::property::{PropertyKey, PropertyValue};
 use zephyra_core::props;
-use zephyra_core::theme::roles;
 use zephyra_core::context::Context;
 use zephyra_core::element::Element;
 use zephyra_core::id::{ElementKey, NodeTag};
@@ -101,15 +99,8 @@ impl View for Demo {
         Element::new(NodeTag::Container)
             .with_key("root")
             // 根必须有背景：真实管线里"没有背景"意味着**什么都不画**，全透明的树
-            // 会产出空的 DisplayList。
-            .with(
-                &props::BACKGROUND,
-                PropertyValue::Resource(roles::SURFACE.into()),
-            )
-            .with(
-                &props::DIRECTION,
-                PropertyValue::direction(Direction::Vertical),
-            )
+            // 会产出空的 DisplayList。背景本身在 demo.zstyle 的 `Container.root`。
+            .style("root")
             .with_children([
             toolbar(self),
             icons(),
@@ -127,20 +118,7 @@ impl View for Demo {
 fn toolbar(demo: &Demo) -> Element {
     Element::new(NodeTag::Container)
         .with_key("toolbar")
-        .with(
-            &props::BACKGROUND,
-            PropertyValue::Resource(roles::SURFACE_ALT.into()),
-        )
-        .with(&props::PADDING, PropertyValue::float(Spacing::Small.dip()))
-        .with(&props::SPACING, PropertyValue::float(Spacing::Medium.dip()))
-        .with(
-            &props::DIRECTION,
-            PropertyValue::direction(Direction::Horizontal),
-        )
-        .with(
-            &props::CROSS_ALIGN,
-            PropertyValue::cross_align(AlignItems::Center),
-        )
+        .style("toolbar")
         .with_children(BUTTONS.map(|name| button(name, demo)))
 }
 
@@ -184,27 +162,18 @@ fn button(name: &'static str, demo: &Demo) -> Element {
             Element::new(NodeTag::Container)
                 .with_key("glyph")
                 .with(&props::ICON_NAME, PropertyValue::static_str(icon_name(name)))
-                .with(&props::ICON_COLOR, PropertyValue::Resource(icon_role(hovered, pressed).into()))
-                .with(&props::WIDTH, PropertyValue::float(20.0))
-                .with(&props::HEIGHT, PropertyValue::float(20.0)),
+                .style("glyph")
+                // 悬停与按下是**分类名**，不是值。颜色本身在 demo.zstyle 的
+                // `Container.glyph` / `.hovered` / `.pressed` 三条规定。
+                .styles(pressed.then_some("pressed").or_else(|| hovered.then_some("hovered"))),
             Element::new(NodeTag::Text)
                 .with_key("label")
                 .with(&props::TEXT, PropertyValue::static_str(name))
-                .with(
-                    &props::TEXT_SIZE,
-                    PropertyValue::float(if name.len() > 6 { 9.0 } else { 11.0 }),
-                )
-                .with(
-                    &props::TEXT_COLOR,
-                    PropertyValue::Resource(
-                        if hovered || pressed {
-                            roles::CONTENT
-                        } else {
-                            roles::CONTENT_SECONDARY
-                        }
-                        .into(),
-                    ),
-                ),
+                .style("label")
+                .styles(pressed.then_some("pressed").or_else(|| hovered.then_some("hovered")))
+                // 名字长的用小一档字号 —— 判断「名字长不长」是源码的事（它知道名字），
+                // 用哪一档是样式表的事（demo.zstyle 的 `Text.label.compact`）。
+                .styles((name.len() > 6).then_some("compact")),
         ])
 }
 
@@ -224,15 +193,6 @@ fn icon_name(button: &'static str) -> &'static str {
         "gear" => "gear",
         "settings" => "settings",
         other => other,
-    }
-}
-
-/// 图标颜色随交互状态变化。
-fn icon_role(hovered: bool, pressed: bool) -> &'static str {
-    if hovered || pressed {
-        roles::CONTENT
-    } else {
-        roles::CONTENT_SECONDARY
     }
 }
 
@@ -309,6 +269,219 @@ mod tests {
             "another button must stay idle"
         );
     }
+    /// 按下的**是当前这个按钮**，不是所有按钮。
+    // ---------------------------------------------------------------------
+    //  整棵树的门禁
+    // ---------------------------------------------------------------------
+
+    use zephyra_core::node::Node;
+
+    /// **源码里不许有样式** —— 全树版本，这是那把锁的本体。
+    ///
+    /// # 为什么比「逐个函数查」强
+    ///
+    /// 逐函数查只能查到「我记得去查的那个函数」。整棵树遍历不依赖记忆：
+    /// 以后谁在任何一个视图函数里写下 `.with(&props::BACKGROUND, ...)`，
+    /// 这条都会红，而不必有人想起要往清单里加一项。
+    ///
+    /// # 判据是 `iter_local()`，不是 `lookup()`
+    ///
+    /// `lookup()` 会一路回落到默认值，看不出这一层有没有被写过。
+    /// `iter_local()` 只列**这一帧源码真的写进 Local 层**的条目 ——
+    /// 那正是「源码里的样式」的定义。
+    ///
+    /// ⚠️ `PropertyKey` 没有实现 `PartialEq`，所以按**指针**比。
+    /// 这是安全的：`props.rs` 里全是 `&'static PropertyKey`，同一个键在全进程内
+    /// 只有一个实例，地址即身份。
+    ///
+    /// ⚠️ 遍历结果必须先确认树不是空的：空树上这条恒真，那正是本项目
+    /// 反复吃过两次的亏（「全绿但恒真」）。
+    #[test]
+    fn the_whole_demo_tree_writes_no_appearance_in_source() {
+        const APPEARANCE: &[&zephyra_core::property::PropertyKey] = &[
+            &props::WIDTH,
+            &props::HEIGHT,
+            &props::CORNER_RADIUS,
+            &props::PADDING,
+            &props::SPACING,
+            &props::DIRECTION,
+            &props::CROSS_ALIGN,
+            &props::MAIN_ALIGN,
+            &props::BACKGROUND,
+            &props::BORDER_COLOR,
+            &props::BORDER_WIDTH,
+            &props::TEXT_SIZE,
+            &props::TEXT_COLOR,
+            &props::TEXT_LINE_HEIGHT,
+            &props::TEXT_MAX_WIDTH,
+            &props::ICON_COLOR,
+            &props::IMAGE_SIZE,
+            &props::IMAGE_TINT,
+            &props::OPACITY,
+        ];
+
+        let theme = zephyra_core::theme::Theme::dark();
+        let ctx = zephyra_core::context::Context::new(&theme);
+        // 四种状态组合各跑一遍：hover / pressed 会改变分类名，
+        // 而「某些外观只在某个状态下才泄漏」恰恰是逐函数查最容易漏的形状。
+        let mut seen_nodes = 0;
+        for (hovered, pressed) in [(false, false), (true, false), (false, true), (true, true)] {
+            let demo = Demo {
+                hovered: hovered.then(|| ElementKey::from("menu")),
+                pressed: pressed.then(|| ElementKey::from("menu")),
+            };
+            let node = Node::from_element(&demo.view(&ctx));
+            let mut offenders: Vec<String> = Vec::new();
+            walk(&node, &mut |n: &Node| {
+                seen_nodes += 1;
+                for (key, _) in n.props().iter_local() {
+                    if APPEARANCE.iter().any(|k| std::ptr::eq(*k, key)) {
+                        offenders.push(format!(
+                            "{} / {}",
+                            n.key().map(|k| k.to_string()).unwrap_or_else(|| "?".into()),
+                            key.name()
+                        ));
+                    }
+                }
+            });
+            assert!(
+                offenders.is_empty(),
+                "源码把这些外观写进了 Local 层（hovered={hovered}, pressed={pressed}）：\n  {}",
+                offenders.join("\n  ")
+            );
+        }
+        assert!(
+            seen_nodes > 20,
+            "树遍历得太少（{seen_nodes} 个节点）—— 这条测试可能恒真，先查 walk()"
+        );
+    }
+
+    /// 一个换行。写在 CSS 拼接处，避免在字符串里嵌 \n 时被 PowerShell 转义弄坏。
+    fn char10() -> char {
+        char::from(10)
+    }
+
+    /// 递归遍历：父先于子。
+    fn walk(node: &Node, f: &mut impl FnMut(&Node)) {
+        f(node);
+        for c in node.children() {
+            walk(c, f);
+        }
+    }
+
+    /// 源码发出的每个分类名，样式表里必须有对应规则。
+    ///
+    /// # 这条在防什么
+    ///
+    /// `.style("tollbar")` 拼错时**什么都不发生**：不报错、不崩、画面只是
+    /// 回到默认值。而「回到默认值」看起来就像「样式表没生效」，
+    /// 于是人去查样式表 —— 而样式表是对的。
+    ///
+    /// 这是整条迁移路上最隐蔽的失败模式，所以单独钉一条。
+    #[test]
+    fn every_class_name_the_source_emits_exists_in_the_stylesheet() {        let mut css = String::new();
+        for name in ["controls.zstyle", "demo.zstyle"] {
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(name);
+            css.push_str(&std::fs::read_to_string(&path).expect("stylesheet must exist"));
+            css.push('\n');
+        }
+        let parsed = zstylec::parse("all.zstyle", &css);
+        assert!(parsed.is_ok(), "stylesheets must parse: {:?}", parsed.errors);
+
+        // 样式表里出现过的全部分类名。
+        let known: Vec<&str> = parsed
+            .sheet
+            .rules()
+            .iter()
+            .flat_map(|r| r.selector.names.iter().copied())
+            .collect();
+
+        let theme = zephyra_core::theme::Theme::dark();
+        let ctx = zephyra_core::context::Context::new(&theme);
+        let node = Node::from_element(&Demo::default().view(&ctx));
+
+        let mut missing: Vec<String> = Vec::new();
+        let mut emitted = 0;
+        walk(&node, &mut |n: &Node| {
+            for name in n.style_names() {
+                emitted += 1;
+                if !known.contains(name) {
+                    missing.push(format!(
+                        "{} : .{}",
+                        n.key().map(|k| k.to_string()).unwrap_or_else(|| "?".into()),
+                        name
+                    ));
+                }
+            }
+        });
+        assert!(
+            emitted > 15,
+            "只发出 {emitted} 个分类名 —— 树遍历可能没走完，这条测试有恒真的风险"
+        );
+        assert!(
+            missing.is_empty(),
+            "这些分类名在样式表里没有对应规则（拼错就是静默失效）：\n  {}",
+            missing.join("\n  ")
+        );
+    }
+    /// 每个元素都必须**能被样式表选中**：有分类名，或其类型有裸规则。
+    ///
+    /// # 为什么单独一条
+    ///
+    /// 「少了 `.style("status")`」这种删除是最安静的失败：树的 Local 层仍然
+    /// 干净（上一条依然绿），分类名也都存在（上一条也绿），但那个元素
+    /// **谁都选不中**，于是它的外观全部退回属性默认值 —— 没有背景、没有内边距。
+    /// 从代码审查上看看不出任何异常。
+    ///
+    /// # 为什么不是「每个元素都要有分类名」
+    ///
+    /// 工具按钮就不带分类名 —— 它们由 `controls.zstyle` 的裸类型选择器
+    /// `Control { }` 命中。写成「必须有分类名」会误杀那条正确用法。
+    /// 所以判据是「能被选中」，而选中的两条路（分类名、裸类型规则）都要算。
+    #[test]
+    fn every_element_is_reachable_by_the_stylesheet() {
+        let mut css = String::new();
+        for name in ["controls.zstyle", "demo.zstyle"] {
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(name);
+            css.push_str(&std::fs::read_to_string(&path).expect("stylesheet must exist"));
+            css.push(char10());
+        }
+        let parsed = zstylec::parse("all.zstyle", &css);
+        assert!(parsed.is_ok(), "stylesheets must parse: {:?}", parsed.errors);
+
+        // 有裸类型规则的类型 —— 这些类型的元素不带分类名也能被选中。
+        let bare: Vec<NodeTag> = parsed
+            .sheet
+            .rules()
+            .iter()
+            .filter(|r| r.selector.names.is_empty())
+            .filter_map(|r| r.selector.tag)
+            .collect();
+
+        let theme = zephyra_core::theme::Theme::dark();
+        let ctx = zephyra_core::context::Context::new(&theme);
+        let node = Node::from_element(&Demo::default().view(&ctx));
+
+        let mut unreachable: Vec<String> = Vec::new();
+        let mut total = 0;
+        walk(&node, &mut |n: &Node| {
+            total += 1;
+            if n.style_names().is_empty() && !bare.contains(&n.tag()) {
+                unreachable.push(format!("{}",
+                    n.key().map(|k| k.to_string()).unwrap_or_else(|| "?".into())
+                ));
+            }
+        });
+        assert!(
+            total > 20,
+            "树遍历得太少（{total} 个节点）—— 这条测试可能恒真，先查 walk()"
+        );
+        assert!(
+            unreachable.is_empty(),
+            "这些元素既没分类名、其类型也没有裸规则，样式表选不中它们：\n  {}",
+            unreachable.join("\n  ")
+        );
+    }
 }
 
 /// 图像内容区：一组真实纹理的图标。
@@ -318,15 +491,7 @@ mod tests {
 fn icons() -> Element {
     Element::new(NodeTag::Container)
         .with_key("icons")
-        .with(
-            &props::DIRECTION,
-            PropertyValue::direction(Direction::Horizontal),
-        )
-        .with(&props::SPACING, PropertyValue::float(Spacing::Large.dip()))
-        .with(
-            &props::CROSS_ALIGN,
-            PropertyValue::cross_align(AlignItems::Center),
-        )
+        .style("icon-row")
         .with_children(
             ICON_NAMES
                 .iter()
@@ -335,9 +500,7 @@ fn icons() -> Element {
                         .with_key(*n)
                         // 只填句柄 —— 核心不知道它对应哪张 GPU 纹理。
                         .with(&props::IMAGE_TEXTURE, PropertyValue::static_str(n))
-                        .with(&props::WIDTH, PropertyValue::float(56.0))
-                        .with(&props::HEIGHT, PropertyValue::float(56.0))
-                        .with(&props::CORNER_RADIUS, PropertyValue::float(8.0))
+                        .style("icon")
                 })
                 .collect::<Vec<_>>(),
         )
@@ -353,15 +516,7 @@ const ICON_NAMES: [&str; 4] = ["demo:checker", "demo:gradient", "demo:ring", "de
 fn src_crops() -> Element {
     Element::new(NodeTag::Container)
         .with_key("src-crops")
-        .with(
-            &props::DIRECTION,
-            PropertyValue::direction(Direction::Horizontal),
-        )
-        .with(&props::SPACING, PropertyValue::float(Spacing::Small.dip()))
-        .with(
-            &props::CROSS_ALIGN,
-            PropertyValue::cross_align(AlignItems::Center),
-        )
+        .style("crop-row")
         .with_children(
             SRC_CROPS
                 .iter()
@@ -381,8 +536,7 @@ fn src_crops() -> Element {
                             &props::IMAGE_TEXTURE,
                             PropertyValue::static_str("demo:checker"),
                         )
-                        .with(&props::WIDTH, PropertyValue::float(40.0))
-                        .with(&props::HEIGHT, PropertyValue::float(40.0))
+                        .style("crop")
                 })
                 .collect::<Vec<_>>(),
         )
@@ -466,36 +620,11 @@ fn icon_pixels(name: &str) -> (Vec<u8>, u32, u32) {
 fn content() -> Element {
     Element::new(NodeTag::Container)
         .with_key("content")
-        .with(
-            &props::BACKGROUND,
-            PropertyValue::Resource(roles::SURFACE.into()),
-        )
-        .with(
-            &props::PADDING,
-            PropertyValue::float(Spacing::Large.dip()),
-        )
-        .with(
-            &props::DIRECTION,
-            PropertyValue::direction(Direction::Vertical),
-        )
-        .with(&props::SPACING, PropertyValue::float(Spacing::Small.dip()))
+        .style("content")
         .with_children([
             Element::new(NodeTag::Container)
                 .with_key("hero")
-                .with(
-                    &props::BACKGROUND,
-                    PropertyValue::Resource(roles::ACCENT_FILL.into()),
-                )
-                .with(&props::CORNER_RADIUS, PropertyValue::float(12.0))
-                .with(
-                    &props::PADDING,
-                    PropertyValue::float(Spacing::Large.dip()),
-                )
-                .with(
-                    &props::DIRECTION,
-                    PropertyValue::direction(Direction::Vertical),
-                )
-                .with(&props::SPACING, PropertyValue::float(Spacing::Small.dip()))
+                .style("hero")
                 .with_children(
                     (0..LINES)
                         .map(|i| {
@@ -507,11 +636,7 @@ fn content() -> Element {
                             Element::new(NodeTag::Text)
                                 .with_key(line_key(i))
                                 .with(&props::TEXT, PropertyValue::static_str(line_text(i)))
-                                .with(&props::TEXT_SIZE, PropertyValue::float(16.0))
-                                .with(
-                                    &props::TEXT_COLOR,
-                                    PropertyValue::Resource(roles::ON_ACCENT_FILL.into()),
-                                )
+                                .style("hero-line")
                         })
                         .collect::<Vec<_>>(),
                 ),
@@ -541,48 +666,32 @@ fn content() -> Element {
 fn effect_swatch(
     key: &'static str,
     caption: &'static str,
-    fill: zephyra_core::core::Color,
+    // 源色的**分类名**（`accent` / `warm`），不是颜色值。
+    //
+    // 传名字而不是传 `Color`：源码说「这个样张用哪种源色」，
+    // 具体是什么颜色在 `demo.zstyle` 的 `Container.swatch.accent` /
+    // `.warm`。传值就又变成「源码里有外观」了。
+    fill: &'static str,
     filter: zephyra_core::filter::FilterChain,
     blend: zephyra_core::filter::BlendMode,
 ) -> Element {
-    use zephyra_core::core::Color;
-
     Element::new(NodeTag::Container)
         .with_key(key)
-        .with(&props::DIRECTION, PropertyValue::direction(Direction::Vertical))
-        .with(&props::SPACING, PropertyValue::float(6.0))
+        .style("fx")
         .with_children([
-            // 底板：混合模式的「目标」。深色底 + 浅色描边，让两种模式的差别最大。
+            // 混合模式的**目标**：底色 + 圆角，滤镜与混合模式加在子节点上。
             Element::new(NodeTag::Container)
                 .with_key("backdrop")
-                .with(
-                    &props::BACKGROUND,
-                    PropertyValue::color(Color::rgb(0.10, 0.20, 0.42)),
-                )
-                .with(&props::CORNER_RADIUS, PropertyValue::float(8.0))
-                .with(&props::WIDTH, PropertyValue::float(96.0))
-                .with(&props::HEIGHT, PropertyValue::float(64.0))
-                .with(&props::PADDING, PropertyValue::float(12.0))
+                .style("backdrop")
                 .with_children([Element::new(NodeTag::Container)
                     .with_key("swatch")
-                    .with(
-                        &props::BACKGROUND,
-                        PropertyValue::color(Color::rgba(fill.r, fill.g, fill.b, 0.55)),
-                    )
-                    .with(&props::CORNER_RADIUS, PropertyValue::float(6.0))
-                    // ⚠ 样本必须给**显式**尺寸。只挂背景与圆角的节点没有内在尺寸，
-                    // 而容器布局不会把「父节点扣掉内边距后的剩余空间」默认分给孩子
-                    // —— 于是它塌成 0×0，滤镜与混合模式都挂在一条什么都不画的
-                    // 命令上。症状是「离屏规划里有这个 RT、但画面上什么都没有」，
-                    // 很像滤镜没实现。
-                    .with(&props::WIDTH, PropertyValue::float(72.0))
-                    .with(&props::HEIGHT, PropertyValue::float(40.0))
+                    .styles(["swatch", fill])
                     .with(&props::FILTER, PropertyValue::filter(filter))
                     .with(&props::BLEND_MODE, PropertyValue::blend_mode(blend))]),
             Element::new(NodeTag::Text)
                 .with_key("caption")
                 .with(&props::TEXT, PropertyValue::static_str(caption))
-                .with(&props::TEXT_SIZE, PropertyValue::float(12.0)),
+                .style("caption"),
         ])
 }
 
@@ -602,9 +711,6 @@ fn effects() -> Element {
     use zephyra_core::core::{Color, Point};
     use zephyra_core::filter::{BlendMode, Filter, FilterChain};
 
-    let accent = Color::rgb(0.35, 0.78, 1.0);
-    let warm = Color::rgb(1.0, 0.62, 0.28);
-
     // 三趟同参数的高斯 ≈ 一趟 σ=2.83，所以过渡带明显更宽 —— 这就是判据。
     let triple = FilterChain::new([
         Filter::Blur { sigma_x: 2.0, sigma_y: 2.0 },
@@ -614,43 +720,30 @@ fn effects() -> Element {
 
     Element::new(NodeTag::Container)
         .with_key("effects")
-        .with(
-            &props::BACKGROUND,
-            PropertyValue::Resource(roles::SURFACE_ALT.into()),
-        )
-        .with(&props::PADDING, PropertyValue::float(Spacing::Medium.dip()))
-        .with(
-            &props::DIRECTION,
-            PropertyValue::direction(Direction::Vertical),
-        )
-        .with(&props::SPACING, PropertyValue::float(Spacing::Small.dip()))
+        .style("effects")
         .with_children([
             Element::new(NodeTag::Container)
                 .with_key("effects-row")
-                .with(
-                    &props::DIRECTION,
-                    PropertyValue::direction(Direction::Horizontal),
-                )
-                .with(&props::SPACING, PropertyValue::float(Spacing::Medium.dip()))
+                .style("effects-row")
                 .with_children([
                     effect_swatch(
                         "fx-none",
                         "对照",
-                        accent,
+                        "accent",
                         FilterChain::none(),
                         BlendMode::SrcOver,
                     ),
                     effect_swatch(
                         "fx-blur",
                         "模糊 σ3",
-                        accent,
+                        "accent",
                         FilterChain::single(Filter::Blur { sigma_x: 3.0, sigma_y: 3.0 }),
                         BlendMode::SrcOver,
                     ),
                     effect_swatch(
                         "fx-shadow",
                         "投影 σ3",
-                        accent,
+                        "accent",
                         FilterChain::single(Filter::DropShadow {
                             color: Color::rgba(0.0, 0.0, 0.0, 0.85),
                             offset: Point::new(6.0, 6.0),
@@ -658,18 +751,18 @@ fn effects() -> Element {
                         }),
                         BlendMode::SrcOver,
                     ),
-                    effect_swatch("fx-triple", "三级模糊", accent, triple, BlendMode::SrcOver),
+                    effect_swatch("fx-triple", "三级模糊", "accent", triple, BlendMode::SrcOver),
                     effect_swatch(
                         "fx-multiply",
                         "Multiply",
-                        warm,
+                        "warm",
                         FilterChain::none(),
                         BlendMode::Multiply,
                     ),
                     effect_swatch(
                         "fx-screen",
                         "Screen",
-                        warm,
+                        "warm",
                         FilterChain::none(),
                         BlendMode::Screen,
                     ),
@@ -681,28 +774,10 @@ fn effects() -> Element {
 fn status_bar(demo: &Demo) -> Element {
     Element::new(NodeTag::Container)
         .with_key("status")
-        .with(
-            &props::BACKGROUND,
-            PropertyValue::Resource(roles::SURFACE_ALT.into()),
-        )
-        .with(&props::PADDING, PropertyValue::float(Spacing::Small.dip()))
-        .with(
-            &props::DIRECTION,
-            PropertyValue::direction(Direction::Horizontal),
-        )
-        .with(&props::SPACING, PropertyValue::float(Spacing::Medium.dip()))
-        .with(&props::CROSS_ALIGN, PropertyValue::cross_align(AlignItems::Center))
+        .style("status")
         .with_children([
-            // 焦点环样式的圆点：切主题时它跟着 `FOCUS_RING` 变。
-            Element::new(NodeTag::Container)
-                .with_key("focus")
-                .with(
-                    &props::BACKGROUND,
-                    PropertyValue::Resource(roles::FOCUS_RING.into()),
-                )
-                .with(&props::CORNER_RADIUS, PropertyValue::float(8.0))
-                .with(&props::WIDTH, PropertyValue::float(10.0))
-                .with(&props::HEIGHT, PropertyValue::float(10.0)),
+            // 焦点环样式的圆点：切主题时它跟着 `FOCUS_RING` 变（demo.zstyle）。
+            Element::new(NodeTag::Container).with_key("focus").style("dot"),
             // hover 目标：真实文字。
             //
             // 之前这里是"用色块宽度编码目标序号"—— 那是 `Command::Text` 零生产者
@@ -710,18 +785,10 @@ fn status_bar(demo: &Demo) -> Element {
             Element::new(NodeTag::Text)
                 .with_key("hovered")
                 .with(&props::TEXT, PropertyValue::static_str(hover_caption(demo)))
-                .with(&props::TEXT_SIZE, PropertyValue::float(12.0))
-                .with(
-                    &props::TEXT_COLOR,
-                    PropertyValue::Resource(
-                        if demo.hovered.is_some() {
-                            roles::CONTENT
-                        } else {
-                            roles::CONTENT_DISABLED
-                        }
-                        .into(),
-                    ),
-                ),
+                .style("status-line")
+                // 有没有 hover 目标决定用哪一档字色 —— 判断是源码的事，
+                // 两档各是什么颜色是 demo.zstyle 的 `.idle` / `.hovered`。
+                .styles(demo.hovered.is_some().then_some("hovered")),
         ])
 }
 
@@ -1168,44 +1235,75 @@ fn bench_cpu() {
     );
 }
 
-/// Load the `.zstyle` that sits next to this source file, install it as the
-/// frame's styler, and report problems in full.
+/// Load every `.zstyle` that sits next to this source file, install the merged
+/// result as the frame's styler, and report problems in full.
 ///
-/// Errors are printed and then **skipped** -- the app keeps running on
-/// `props.rs` defaults. A broken look-and-feel file must not stop the program:
-/// that would turn "one wrong property name" into "this app will not start".
+/// # Why "every file" and not a hard-coded name
+///
+/// The demo has two concerns -- the reusable controls (`controls.zstyle`) and
+/// the demo's own chrome (`demo.zstyle`). Hard-coding one file name means
+/// adding a stylesheet becomes a code change, which is exactly the coupling
+/// this track exists to remove.
+///
+/// Files are **sorted** before merging: directory order is arbitrary, and
+/// cross-file ties are broken by source order. Without sorting, "the later
+/// file wins" would differ between machines.
+///
+/// # Errors are printed and then skipped
+///
+/// A broken look-and-feel file must not stop the program: that would turn
+/// "one wrong property name" into "this app will not start". The bad file is
+/// dropped, the rest still load, and each failure names its file.
 fn load_stylesheet<V: View>(app: &mut HostWindow<V>) {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("controls.zstyle");
-    let css = match std::fs::read_to_string(&path) {
-        Ok(s) => s,
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut paths: Vec<std::path::PathBuf> = match std::fs::read_dir(dir) {
+        Ok(rd) => rd
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("zstyle"))
+            .collect(),
         Err(e) => {
-            eprintln!("[demo] 读不到 {}：{e}（按默认值继续）", path.display());
+            eprintln!("[demo] cannot list {}: {e}", dir.display());
             return;
         }
     };
+    paths.sort();
 
-    let name = path
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("controls.zstyle");
-    let result = zstylec::parse(name, &css);
-
-    if !result.is_ok() {
-        for e in &result.errors {
-            eprintln!("{e}\n");
+    let mut sheet = zephyra_style::ir::StyleSheet::new();
+    for path in &paths {
+        let css = match std::fs::read_to_string(path) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("[demo] cannot read {}: {e}", path.display());
+                continue;
+            }
+        };
+        let name = path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("style.zstyle")
+            .to_string();
+        let result = zstylec::parse(&name, &css);
+        if !result.is_ok() {
+            for e in &result.errors {
+                eprintln!("{e}\n");
+            }
+            eprintln!(
+                "[demo] {} has {} error(s) -- skipping it, the rest still load",
+                name,
+                result.errors.len()
+            );
+            continue;
         }
-        eprintln!(
-            "[demo] 样式表 {} 个错误，仍按默认值继续（不是退出）",
-            result.errors.len()
-        );
-        return;
+        eprintln!("[demo] {name}: {} rules", result.sheet.rules().len());
+        sheet = sheet.merge(result.sheet);
     }
 
-    let rules = result.sheet.rules().len();
+    let rules = sheet.rules().len();
     app.set_styler(Box::new(zephyra_style::SheetStyler(std::sync::Arc::new(
-        result.sheet,
+        sheet,
     ))));
-    eprintln!("[demo] 已加载 {name}：{rules} 条规则");
+    eprintln!("[demo] loaded {rules} rules in total");
 }
 
 /// 自举宿主：第一次 `resumed` 时建窗（async），之后把事件转交给 [`HostWindow`]。

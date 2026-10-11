@@ -1,0 +1,222 @@
+/* demo 的非控件外观：面板、样张、状态栏。
+ *
+ * 与 controls.zstyle 分工：
+ *   controls.zstyle  控件（那排工具栏按钮）
+ *   demo.zstyle      demo 自己的版式与配色
+ *
+ * # 命名规则
+ *
+ * 一律「类型 + 语义角色分类名」，如 `Container.toolbar` / `Text.hero-line`。
+ * 源码只说「我是什么角色」，这里只说「这个角色长什么样」。
+ * 不用裸类型选择器（`Container { }`）—— demo 里有六种长相完全不同的 Container，
+ * 裸类型会把它们混成一类。
+ *
+ * # 为什么分类名而不是元素 key
+ *
+ * key 走事件路由，分类名走选择器。两者名字可以一样，但**必须是两条路**：
+ * 否则「改 key」会顺带改外观，而那是两个不相干的意图。
+ *
+ * # 没有分组选择器
+ *
+ * `A, B { }` 这个语法**不支持**（本版本只有 `类型.分类名` 一种形状），所以
+ * 每条形规则分开写。看起来重复，但那正是「不许出现第二种概念」的代价。
+ */
+
+/* ---- 根与工具栏 ---- */
+
+Container.root {
+    background: @surface;
+    direction: vertical;
+}
+
+Container.toolbar {
+    background: @surface_alt;
+    direction: horizontal;
+    cross-align: center;
+    padding: 8px;
+    spacing: 12px;
+}
+
+/* ---- 图标墙 ---- */
+
+Container.icon-row {
+    direction: horizontal;
+    cross-align: center;
+    spacing: 16px;
+}
+
+Image.icon {
+    width: 56px;
+    height: 56px;
+    corner-radius: 8px;
+}
+
+/* ---- uv 裁剪样张 ---- */
+
+Container.crop-row {
+    direction: horizontal;
+    cross-align: center;
+    spacing: 8px;
+}
+
+Image.crop {
+    width: 40px;
+    height: 40px;
+}
+
+/* ---- 说明面板 ---- */
+
+Container.content {
+    background: @surface;
+    direction: vertical;
+    spacing: 8px;
+    padding: 16px;
+}
+
+Container.hero {
+    background: @accent_fill;
+    direction: vertical;
+    spacing: 8px;
+    padding: 16px;
+    corner-radius: 12px;
+}
+
+/* 说明文字：强调底上只有一种字号。 */
+Text.hero-line {
+    text-size: 16px;
+    text-color: @on_accent_fill;
+}
+
+/* ---- 效果样张 ---- */
+
+Container.effects {
+    background: @surface_alt;
+    direction: vertical;
+    spacing: 8px;
+    padding: 12px;
+}
+
+Container.effects-row {
+    direction: horizontal;
+    spacing: 12px;
+}
+
+/* 一个效果样张：被测试的那块 + 说明文字。 */
+Container.fx {
+    direction: vertical;
+    spacing: 6px;
+}
+
+/* 混合模式的「目标」与「源」必须在同一节点上叠。
+ * 这块底板就是目标 —— 换成半透明会让混合的另一半消失，
+ * 于是「某种模式错了」看起来像「没效果」。 */
+Container.backdrop {
+    /* 深蓝底。写成字面量而不是 @令牌：主题里没有「演示用深蓝」这个角色，
+     * 而为一个样张给主题加角色是反的——样张不该能改主题。 */
+    background: #1a336b;
+    corner-radius: 8px;
+    width: 96px;
+    height: 64px;
+    padding: 12px;
+}
+
+/* 被滤镜 / 混合模式处理的那一块。 */
+Container.swatch {
+    corner-radius: 6px;
+    /* 尺寸刻意写死：默认值 0 会让它塌成一条线，于是每种模式看起来
+     * 都一样 —— 那效果测试就白做了。 */
+    width: 72px;
+    height: 40px;
+}
+
+/* 样张的源色。每个样张换一种颜色，用来看混合模式在不同源色下的行为 ——
+ * 但「有哪几种源色、各是什么」是样式的事，源码只说是哪一种。
+ *
+ * ⚠️ 8 位十六进制的末两位是 alpha，且必须是**二进制**值（0~255）。
+ * 源码原来写的是 `Color::rgba(r, g, b, 0.55)` —— 0.55 是十进制浮点，
+ * 换成 140/255 后有约 4e-4 的误差，肉眼不可见，但严格说不等。
+ * 版式与配色的取舍上，宁可要「源码里没有颜色字面量」。 */
+Container.swatch.accent {
+    background: #59c7ff8c;
+}
+
+Container.swatch.warm {
+    background: #ff9e478c;
+}
+
+Text.caption {
+    text-size: 12px;
+}
+
+/* ---- 状态栏 ---- */
+
+Container.status {
+    background: @surface_alt;
+    direction: horizontal;
+    cross-align: center;
+    padding: 8px;
+    spacing: 12px;
+}
+
+/* 焦点环样式的圆点：切主题时它跟着 @focus_ring 变。 */
+Container.dot {
+    background: @focus_ring;
+    corner-radius: 8px;
+    width: 10px;
+    height: 10px;
+}
+
+Text.status-line {
+    text-size: 12px;
+    /* 没有 hover 目标时用暗档。源码只发 `.hovered`，所以默认态必须由
+     * 基础规则自己给 —— 写成 `.idle` 的话那条规则谁也选不中。 */
+    text-color: @content_disabled;
+}
+
+/* ---- 交互态 ----
+ *
+ * 与 controls.zstyle 的 `Control.pressed` 同一套路：源码发分类名，
+ * 这里决定长相。两级分类名的特异性（2）盖过一级（1），所以
+ * 「默认 → hover → pressed」不需要额外机制去协调。
+ *
+ * ⚠️ hover 与 pressed 的颜色在这里是同一个角色，但**不合并成一条规则**：
+ * 合并要靠分组选择器，而本版本没有那个语法。分开写只是多两行，
+ * 换来「选择器只有一种形状」。 */
+
+/* 按钮图标：颜色不继承（见 `ICON_COLOR` 的文档），所以必须显式给。 */
+Container.glyph {
+    width: 20px;
+    height: 20px;
+    icon-color: @content_secondary;
+}
+
+Container.glyph.hovered {
+    icon-color: @content;
+}
+
+Container.glyph.pressed {
+    icon-color: @content;
+}
+
+/* 按钮标签。名字长的用小一档 —— 那个判断是源码的事（它知道名字多长），
+ * 用哪一档是这里的事。 */
+Text.label {
+    text-size: 11px;
+    text-color: @content_secondary;
+}
+
+Text.label.compact {
+    text-size: 9px;
+}
+
+Text.label.hovered {
+    text-color: @content;
+}
+
+Text.label.pressed {
+    text-color: @content;
+}
+
+Text.status-line.hovered {
+    text-color: @content;
+}
