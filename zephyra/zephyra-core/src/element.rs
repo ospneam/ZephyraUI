@@ -16,6 +16,24 @@ use crate::property::{PropertyKey, PropertyStore, PropertyValue};
 pub struct Element {
     tag: NodeTag,
     key: Option<ElementKey>,
+    /// 样式分类名。**只**给样式表的选择器用，与 [`Self::key`] 无关。
+    ///
+    /// # 为什么单独一份，不复用 `key`
+    ///
+    /// `key` 是**事件路由**的身份（哪个按钮被点了），`style` 是**外观**的分类
+    /// （这一组元素长什么样）。两者用途不同、变更时机也不同：
+    /// key 一辈子不变，style 会随状态切（`danger` / `compact`）。
+    ///
+    /// # 为什么必须是字面量，不能带判断
+    ///
+    /// `.style(if x { "a" })` = 源码在挑外观，那是立规要禁的。
+    /// 判断写在外面、只把结论传进来：
+    ///
+    /// ```rust,ignore
+    /// let name = if low { "danger" } else { "normal" };   // 判断在这里
+    /// Button::new().style(name)                             // 这里只有一个词
+    /// ```
+    styles: Vec<&'static str>,
     props: PropertyStore,
     children: Vec<Element>,
 }
@@ -26,6 +44,7 @@ impl Element {
         Self {
             tag,
             key: None,
+            styles: Vec::new(),
             props: PropertyStore::new(),
             children: Vec::new(),
         }
@@ -58,6 +77,23 @@ impl Element {
         self
     }
 
+    /// 加一个样式分类名（对应样式表里的 `.名字`）。
+    ///
+    /// 这是**源码里唯一能碰外观的地方**——但它只给一个词，不给任何值。
+    /// 「这个名字长什么样」全部在样式表里。
+    pub fn style(mut self, name: &'static str) -> Self {
+        self.styles.push(name);
+        self
+    }
+
+    /// 一次加多个样式分类名。
+    ///
+    /// 语义同 [`Self::style`] 连调多次，只是省几次调用。
+    pub fn styles(mut self, names: impl IntoIterator<Item = &'static str>) -> Self {
+        self.styles.extend(names);
+        self
+    }
+
     /// 类型标签。
     pub fn tag(&self) -> NodeTag {
         self.tag
@@ -66,6 +102,11 @@ impl Element {
     /// 稳定 key。
     pub fn key(&self) -> Option<&ElementKey> {
         self.key.as_ref()
+    }
+
+    /// 样式分类名。
+    pub fn style_names(&self) -> &[&'static str] {
+        &self.styles
     }
 
     /// 属性表。

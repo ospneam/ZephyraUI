@@ -33,4 +33,5 @@ pub mod ir;
 #[cfg(test)]
 mod tests;
 
+pub use apply::SheetStyler;
 pub use ir::{Declaration, Selector, StyleRule, StyleSheet};

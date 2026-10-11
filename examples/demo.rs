@@ -161,13 +161,6 @@ fn button(name: &'static str, demo: &Demo) -> Element {
     Element::new(NodeTag::Control)
         .with_key(name)
         .with(&props::INTERACTIVE, PropertyValue::bool(true))
-        .with(&props::WIDTH, PropertyValue::float(BTN))
-        .with(&props::HEIGHT, PropertyValue::float(BTN))
-        .with(&props::CORNER_RADIUS, PropertyValue::float(6.0))
-        .with(
-            &props::BACKGROUND,
-            PropertyValue::Resource(props::control_fill_role(false, false, hovered).into()),
-        )
         .with(
             &props::BORDER_COLOR,
             // 按下时用强调色描一圈，让"按下去了"在低对比度主题下也看得清。
@@ -184,17 +177,11 @@ fn button(name: &'static str, demo: &Demo) -> Element {
             &props::BORDER_WIDTH,
             PropertyValue::float(if pressed { 2.0 } else { 1.0 }),
         )
-        // 图标在上、文字在下，所以按钮内部竖排并居中。
-        .with(
-            &props::DIRECTION,
-            PropertyValue::direction(Direction::Vertical),
-        )
-        .with(&props::MAIN_ALIGN, PropertyValue::main_align(MainAxisAlign::Center))
-        .with(
-            &props::CROSS_ALIGN,
-            PropertyValue::cross_align(AlignItems::Center),
-        )
-        .with(&props::SPACING, PropertyValue::float(3.0))
+        // NOTE: width / height / corner-radius / background / direction /
+        // main-align / cross-align / spacing all moved to controls.zstyle.
+        // Only the two state-dependent ones stay here -- describing "what state
+        // this is in" is source logic, not "what it looks like".
+
         .with_children([
             // 图标位：真矢量图标，走 core 的「图标名 → 展平 → 三角化 → Path」。
             //
@@ -1117,6 +1104,46 @@ fn bench_cpu() {
     );
 }
 
+/// Load the `.zstyle` that sits next to this source file, install it as the
+/// frame's styler, and report problems in full.
+///
+/// Errors are printed and then **skipped** -- the app keeps running on
+/// `props.rs` defaults. A broken look-and-feel file must not stop the program:
+/// that would turn "one wrong property name" into "this app will not start".
+fn load_stylesheet<V: View>(app: &mut HostWindow<V>) {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("controls.zstyle");
+    let css = match std::fs::read_to_string(&path) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("[demo] 读不到 {}：{e}（按默认值继续）", path.display());
+            return;
+        }
+    };
+
+    let name = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("controls.zstyle");
+    let result = zstylec::parse(name, &css);
+
+    if !result.is_ok() {
+        for e in &result.errors {
+            eprintln!("{e}\n");
+        }
+        eprintln!(
+            "[demo] 样式表 {} 个错误，仍按默认值继续（不是退出）",
+            result.errors.len()
+        );
+        return;
+    }
+
+    let rules = result.sheet.rules().len();
+    app.set_styler(Box::new(zephyra_style::SheetStyler(std::sync::Arc::new(
+        result.sheet,
+    ))));
+    eprintln!("[demo] 已加载 {name}：{rules} 条规则");
+}
+
 /// 自举宿主：第一次 `resumed` 时建窗（async），之后把事件转交给 [`HostWindow`]。
 ///
 /// `V` 必须能整份移出（`new_async` 拿走所有权），所以这里存 `Option<V>`。
@@ -1153,6 +1180,11 @@ impl<V: View + 'static> winit::application::ApplicationHandler for Bootstrap<V> 
             app.textures().len(),
             ICON_NAMES.len()
         );
+
+        // Load the stylesheet -- the first proof of "no styles in source".
+        // Failure only warns: without it the UI still works off `props.rs`
+        // defaults. Letting a look-and-feel file stop the app is backwards.
+        load_stylesheet(&mut app);
 
         // ⚠ 必须在这里补第一帧。
         //

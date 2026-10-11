@@ -221,6 +221,16 @@ impl<V: View> HostWindow<V> {
         }
     }
 
+    /// 装一个样式注入点（每帧 diff 之后、布局之前调用）。
+    ///
+    /// 转发给 [`FrameCache::set_styler`]。分离在这里而不是塞进 `new` 的签名：
+    /// 样式表是**运行期**才加载的东西（dev 模式还要能热重载），
+    /// 而窗口是启动时就得建好的。把它塞进构造器会让「起窗口」依赖
+    /// 「读样式表成功」——那样一个拼错的属性名就让程序起不来。
+    pub fn set_styler(&mut self, styler: Box<dyn zephyra_core::styler::Styler>) {
+        self.cache.set_styler(styler);
+    }
+
     /// 图像纹理表（只读）。宿主用 [`Self::textures_mut`] 改。
     pub fn textures(&self) -> &TextureTable {
         &self.textures

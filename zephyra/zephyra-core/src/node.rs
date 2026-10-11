@@ -55,6 +55,8 @@ impl Dirty {
 pub struct Node {
     tag: NodeTag,
     key: Option<ElementKey>,
+    /// 样式分类名（与 [`crate::element::Element::style`] 对应，每帧由 diff 对账）。
+    pub(crate) styles: Vec<&'static str>,
     props: PropertyStore,
     children: Vec<Node>,
     /// 测量结果缓存（`Dirty >= Layout` 时失效）。
@@ -76,6 +78,7 @@ impl Node {
         Node {
             tag: element.tag(),
             key: element.key().cloned(),
+            styles: element.style_names().to_vec(),
             props: element.props().clone(),
             children: element.children().iter().map(Node::from_element).collect(),
             measure_cache: None,
@@ -93,6 +96,11 @@ impl Node {
     /// 稳定 key。
     pub fn key(&self) -> Option<&ElementKey> {
         self.key.as_ref()
+    }
+
+    /// 样式分类名。
+    pub fn style_names(&self) -> &[&'static str] {
+        &self.styles
     }
 
     /// 属性表。

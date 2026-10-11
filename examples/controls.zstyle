@@ -1,0 +1,24 @@
+/* demo 的按钮外观。
+ *
+ * 这是「源码里不许有样式」的第一份实证：demo.rs 里那些
+ * `.with(&props::BACKGROUND, …)` 全部搬到了这里。
+ *
+ * 命名规则（计划「维护性」一节）：
+ *   · 按部件分文件 —— 这个文件只管按钮
+ *   · 名字带部件前缀，防跨文件撞车
+ */
+
+Control {
+    width: 40px;
+    height: 40px;
+    corner-radius: 6px;
+    border-width: 1px;
+    /* 颜色全部走 @令牌，不写死 —— 换主题只换令牌那组值 */
+    background: @control_fill;
+    border-color: @stroke;
+    /* 按钮内部竖排、居中 */
+    direction: vertical;
+    main-align: center;
+    cross-align: center;
+    spacing: 3px;
+}

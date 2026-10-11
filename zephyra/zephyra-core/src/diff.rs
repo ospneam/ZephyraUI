@@ -84,6 +84,19 @@ pub fn diff(node: &mut Node, element: &Element) -> DiffStats {
         }
     }
 
+    // 样式分类名对账。**必须整表替换而不是追加**：声明树每帧重建，所以
+    // 「这帧有、上帧没有」是常态。只追加不删除的话，去掉一个分类名后它
+    // **永远留在节点上**——症状是「样式表改了不生效」，而这正是本轨道
+    // 立规之前最担心的一类 bug。
+    let want: Vec<&'static str> = element.style_names().to_vec();
+    if node.style_names() != want.as_slice() {
+        node.styles = want;
+        // 分类名变不变都可能改变外观，但不影响布局（外观在 Styled 层）。
+        // 标 Paint：下一帧 apply 会把新分类的样式写进来，然后按值的
+        // `affects_layout` 决定要不要升级成 Layout。
+        node.mark_dirty(Dirty::Paint);
+    }
+
     // 子节点对账。
     let old_len = node.children().len();
     let new_len = element.children().len();

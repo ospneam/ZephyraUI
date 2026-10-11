@@ -18,7 +18,6 @@
 //! 超过 30% 才优化（优化手段直接：只在插入时 apply + 样式表变了才重跑）。
 //! **先测再写结论**，本仓已沉淀「性能判断必须来自计时」。
 
-use zephyra_core::id::ElementKey;
 use zephyra_core::node::Node;
 
 use crate::ir::StyleSheet;
@@ -40,15 +39,31 @@ impl StyleSheet {
     }
 }
 
+/// 让样式表能装进 [`zephyra_core::frame::FrameCache::set_styler`]。
+///
+/// # 为什么必须包一层新类型
+///
+/// Rust 的孤儿规则：`impl CoreTrait for Arc<本地类型>` 不合法 —— `Arc` 是外部类型，
+/// 而 `Styler` 也是外部 trait，两个都不在本地 crate。所以要有一个**本地类型**
+/// 作载体。
+///
+/// 顺带这个包装也把「换表」变便宜了：`Arc::make_mut` 或直接换 Arc 都行。
+pub struct SheetStyler(pub std::sync::Arc<StyleSheet>);
+
+impl zephyra_core::styler::Styler for SheetStyler {
+    fn apply(&mut self, root: &mut Node) {
+        self.0.apply_to(root);
+    }
+}
+
 /// 单个节点。抽成自由函数是为了和递归那次调用共用同一段逻辑。
 fn apply_node(sheet: &StyleSheet, node: &mut Node) {
     let tag = node.tag();
-    // 分类名：`ElementKey::Name` 就是源码 `.with_key("危险")` 给的那个词。
-    // ⚠️ `Id(u64)` 形式当不了分类名——它不是字符串。
-    let mut names: Vec<&str> = Vec::new();
-    if let Some(ElementKey::Name(n)) = node.key() {
-        names.push(n);
-    }
+    // 分类名来自 `.style(...)`——**唯一**入口。
+    //
+    // ⚠️ 不从 `ElementKey` 取：key 是事件路由的身份，style 才是外观分类。
+    // 两者混用会让「这个 key 是不是也能当选择器」变成说不清的问题。
+    let names: Vec<&str> = node.style_names().iter().copied().collect();
 
     // 按序往下写，后面的覆盖前面的。
     //

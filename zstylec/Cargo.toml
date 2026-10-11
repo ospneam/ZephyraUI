@@ -1,0 +1,34 @@
+[package]
+name = "zstylec"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "zstyle compiler (dev tool): compiles .zstyle text into a binary. Not linked into the product"
+
+# ‼️ 这个 crate 是 **dev 工具**，不是产品的一部分。
+#
+# 分开放的理由（计划「两种模式」一节）：
+#   zephyra-style  只装 IR + 反序列化，release 二进制链它，**不含 cssparser**
+#   zstylec        装 cssparser + 全部报错逻辑，只在构建/开发时跑
+#
+# 于是「CSS 的词法/语法」整块不进产品，而「CSS 的写法 + 我们的语义」这个边界
+# 由代码结构本身保证——不是靠文档约定。
+
+[[bin]]
+name = "zstylec"
+path = "src/main.rs"
+
+[lib]
+name = "zstylec"
+path = "src/lib.rs"
+
+[dependencies]
+zephyra-style = { path = "../zephyra/zephyra-style", version = "0.1.0" }
+zephyra-core = { path = "../zephyra/zephyra-core", version = "0.1.0" }
+
+# 只给 tokenizer + parser，AST 自己搭。语义归我们，没有要对抗的 Web 预设。
+cssparser = "0.35"
+
+[lints.rust]
+unsafe_code = "forbid"

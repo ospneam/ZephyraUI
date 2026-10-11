@@ -180,6 +180,17 @@ impl<V: View> HostWindow<V> {
         }
     }
 
+    /// Install a styler (called every frame after diff, before layout).
+    ///
+    /// Forwards to `FrameCache::set_styler`. Kept out of `new`'s signature on
+    /// purpose: a stylesheet is a run-time thing (and dev hot-reloads it),
+    /// while the window must exist at startup. Folding it into the constructor
+    /// would make "start the window" depend on "the stylesheet parsed" -- one
+    /// wrong property name and the app will not launch.
+    pub fn set_styler(&mut self, styler: Box<dyn zephyra_core::styler::Styler>) {
+        self.cache.set_styler(styler);
+    }
+
     /// 图像纹理表（只读）。
     pub fn textures(&self) -> &TextureTable {
         &self.textures

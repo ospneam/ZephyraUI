@@ -76,6 +76,7 @@ pub mod paint;
 pub mod props;
 pub mod property;
 pub mod style;
+pub mod styler;
 pub mod text;
 pub mod theme;
 

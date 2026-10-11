@@ -13,6 +13,9 @@ zephyra-core = { path = "../zephyra/zephyra-core" }
 # 直接依赖它而不是走再导出：`--dump-cpu` 的意义就是「不开窗口也能验证整条链」，
 # 而一旦它依赖某个后端 crate，那条路就会跟着后端一起坏 —— 那正好是它要躲开的东西。
 zephyra-fx = { path = "../zephyra/zephyra-fx" }
+# dev 模式下直接解析样式表文本（release 侧不该链它，见 zstylec 的文档）
+zstylec = { path = "../zstylec" }
+zephyra-style = { path = "../zephyra/zephyra-style" }
 # 演示宿主：真开窗口 + GPU 渲染。
 #
 # # 只有一个后端会被编进来

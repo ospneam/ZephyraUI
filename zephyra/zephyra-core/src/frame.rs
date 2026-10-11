@@ -132,6 +132,12 @@ pub struct FrameCache {
     viewport: (f32, f32),
     /// 强制下一帧重渲（见 [`Self::invalidate`]）。
     forced: bool,
+    /// 每帧在 diff 之后、布局之前被调用的样式注入点。
+    ///
+    /// ⚠️ 用 `Box<dyn Styler>` 而不是泛型参数：宿主**持有**这个 cache，
+    /// 而它可能要在运行期换样式表（热重载）。泛型会把「换样式表」变成
+    /// 「换掉整个 cache 的类型」，那做不到。
+    styler: Option<Box<dyn crate::styler::Styler>>,
 }
 
 impl FrameCache {
@@ -187,6 +193,19 @@ impl FrameCache {
         self.forced = true;
     }
 
+    /// 装一个样式注入点（每帧 diff 之后、布局之前调用）。
+    ///
+    /// # 为什么必须立刻 invalidate
+    ///
+    /// 新装上的 styler 还没跑过，所以树上**没有**它那份样式。若这一帧正好是
+    /// 稳态（`Unchanged`），宿主会整帧跳过，那份样式就要等到下一次别的事件
+    /// 才出现 —— 症状是「改了样式表，顿一下才生效」，而那个「顿一下」
+    /// 取决于用户接下来点什么，完全不可预测。
+    pub fn set_styler(&mut self, styler: Box<dyn crate::styler::Styler>) {
+        self.styler = Some(styler);
+        self.invalidate();
+    }
+
     /// 推进一帧：声明 → 对账 → （必要时）布局 → 降级。
     ///
     /// `viewport` 是窗口的 DIP 尺寸。根节点由布局**铺满**它，所以它同时也是
@@ -214,6 +233,15 @@ impl FrameCache {
             }
             Some(node) => diff(node, element),
         };
+
+        // ---- 1.5 应用样式 ----
+        //
+        // ⚠️ **必须在 diff 之后、布局之前**，这是硬契约：
+        // diff 在 tag 变化时整个替换节点，替换会把 `Styled` 层一起丢掉 ——
+        // 排在 diff 之前等于白写；排在布局之后，改尺寸的样式要等下一帧。
+        if let (Some(styler), Some(node)) = (self.styler.as_mut(), self.node.as_mut()) {
+            styler.apply(node);
+        }
 
         // ---- 2. 要不要重排 ----
         //
