@@ -85,11 +85,6 @@ pub(crate) fn lookup(css_name: &str) -> Option<&'static PropertyKey> {
         .map(|p| p.key)
 }
 
-/// 按 CSS 名查，返回**用于报错**的那一条（带 CSS 名）。
-pub(crate) fn find(css_name: &str) -> Option<&'static Prop> {
-    PROPS.iter().find(|p| p.css == css_name)
-}
-
 /// 全部 CSS 名（报错时列最接近的用）。
 pub(crate) fn all_css_names() -> impl Iterator<Item = &'static str> {
     PROPS.iter().map(|p| p.css)

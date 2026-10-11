@@ -68,50 +68,29 @@ impl ParseResult {
     }
 }
 
-/// 我们的错误类型。
+/// 把一次失败的解析翻成人话。
 ///
-/// cssparser 要求实现 `From<BasicParseError>`，所以 `E = Error` 时这条必须能构造。
-#[derive(Debug)]
-pub enum OwnError {
-    /// cssparser 报的（token 级）错。
-    Basic(String),
-    /// 我们自己报的（语义级：未知类型 / 未知属性 / 坏值）。
-    Own(Error),
-}
-
-impl<'i> From<BasicParseError<'i>> for OwnError {
-    fn from(e: BasicParseError<'i>) -> Self {
-        // ⚠️ `BasicParseError` 没实现 `Display`（它的 kind 才有），所以不能 `to_string()`。
-        // 这里只带「是什么 kind」，原文位置由 `ParserState` 另给。
-        Self::Basic(describe_basic(&e.kind))
-    }
-}
-
-/// 把 `BasicParseErrorKind` 翻成人话。
-fn describe_basic(kind: &BasicParseErrorKind) -> String {
-    use BasicParseErrorKind::*;
-    match kind {
-        UnexpectedToken(t) => format!("unexpected here: {t:?}"),
-        EndOfInput => "input ends here".into(),
-        AtRuleInvalid(n) => format!("unsupported @{n}"),
-        AtRuleBodyInvalid => "invalid at-rule body".to_string(),
-        QualifiedRuleInvalid => "malformed rule".to_string(),
-        UnexpectedTokenWithinDeclaration => "unexpected token in declaration".to_string(),
-    }
-}
-
-/// `ParseErrorKind` 有两种：cssparser 的 token 级，和「我们自己的」。
+/// # 为什么错误类型就是 `BasicParseError`
 ///
-/// 后者走的是 `From<BasicParseError> for OwnError` 那条路 —— 现实中我们总是用
-/// `input.new_error(..)` 造 Basic，所以 Custom 分支其实走不到；留着是为了
-/// 匹配穷尽，也让将来真用它时不静默降级。
-fn describe_kind(kind: &ParseErrorKind<'_, OwnError>) -> String {
-    match kind {
-        ParseErrorKind::Basic(b) => describe_basic(b),
-        ParseErrorKind::Custom(e) => match e {
-            OwnError::Basic(s) => s.clone(),
-            OwnError::Own(own) => own.headline.clone(),
-        },
+/// 早先这里有个 `enum OwnError { Basic(String), Own(Error) }`，但 `Own(..)`
+/// 一支**从来没被构造过** —— 语义错误走的是 `self.errors`（那里才有
+/// 「属性名 / 最接近的候选 / 该怎么办」），从不借道 cssparser 的错误通道。
+/// 于是那个枚举只剩一个变体在包 `Basic`，纯属空壳。直接用 `BasicParseError`
+/// 当三个 trait 的 `Error`，`From` 用标准库的身份实现，少一个概念。
+///
+/// # 为什么用 cssparser 自己的 `Display`
+///
+/// `BasicParseErrorKind` 实现了 `Display`。早先这里手写了一一对应的 match，
+/// 其中一臂匹配一个**不存在的变体**（`UnexpectedTokenWithinDeclaration` 在
+/// 0.35 里没有）。rustc 把那一臂当成**变量绑定兜底**，于是同一行同时报
+/// 「unreachable pattern」和「unused variable」—— 两条告警指向一处，而真正的
+/// 含义是「这条永远不执行，而且你以为它在译一种错误」。直接用库的 Display：
+/// 不会漂移，也不会凭空多出一条死臂。
+fn describe(e: &ParseError<'_, BasicParseError<'_>>) -> String {
+    match &e.kind {
+        ParseErrorKind::Basic(b) => b.to_string(),
+        // 我们用 `E = BasicParseError`，标准库的身份 `From` 不会走 Custom。
+        ParseErrorKind::Custom(_) => "custom error".to_string(),
     }
 }
 
@@ -227,7 +206,7 @@ impl<'a> ZstyleParser<'a> {
 impl<'i> AtRuleParser<'i> for ZstyleParser<'_> {
     type Prelude = ();
     type AtRule = Item;
-    type Error = OwnError;
+    type Error = BasicParseError<'i>;
 
     // 默认实现把一切 at-rule 判为 invalid。我们要的是**报错**而不是跳过，
     // 所以显式重写：`@media` / `@layer` / `@keyframes` 全都在这里被拒且给出理由。
@@ -257,7 +236,7 @@ impl<'i> AtRuleParser<'i> for ZstyleParser<'_> {
 impl<'i> QualifiedRuleParser<'i> for ZstyleParser<'_> {
     type Prelude = Selector;
     type QualifiedRule = Item;
-    type Error = OwnError;
+    type Error = BasicParseError<'i>;
 
     fn parse_prelude<'t>(
         &mut self,
@@ -305,7 +284,7 @@ impl<'i> QualifiedRuleParser<'i> for ZstyleParser<'_> {
                     // 一起消失，那是二次伤害。
                     token_errs.push((
                         e.location.line + 1,
-                        describe_kind(&e.kind),
+                        describe(&e),
                         leftover.to_string(),
                     ));
                 }
@@ -324,7 +303,7 @@ impl<'i> QualifiedRuleParser<'i> for ZstyleParser<'_> {
 /// 原则上也可能出现 at-rule 和嵌套规则），我们只 parse 声明、拒绝另外两种。
 impl<'i> DeclarationParser<'i> for ZstyleParser<'_> {
     type Declaration = Item;
-    type Error = OwnError;
+    type Error = BasicParseError<'i>;
 
     fn parse_value<'t>(
         &mut self,
@@ -370,7 +349,7 @@ impl<'i> DeclarationParser<'i> for ZstyleParser<'_> {
     }
 }
 
-impl<'i> RuleBodyItemParser<'i, Item, OwnError> for ZstyleParser<'_> {
+impl<'i> RuleBodyItemParser<'i, Item, BasicParseError<'i>> for ZstyleParser<'_> {
     fn parse_declarations(&self) -> bool {
         true
     }
@@ -406,7 +385,7 @@ pub fn parse(file_name: &str, css: &str) -> ParseResult {
             Err((e, leftover)) => {
                 token_errs.push((
                     e.location.line + 1,
-                    describe_kind(&e.kind),
+                    describe(&e),
                     leftover.to_string(),
                 ));
                 None
@@ -437,7 +416,7 @@ fn parse_selector<'i>(
     input: &mut Parser<'i, '_>,
     p: &mut ZstyleParser<'_>,
     line: u32,
-) -> Result<Selector, ParseError<'i, OwnError>> {
+) -> Result<Selector, ParseError<'i, BasicParseError<'i>>> {
     let _ = p;
     let mut tag: Option<NodeTag> = None;
     let mut names: Vec<&'static str> = Vec::new();

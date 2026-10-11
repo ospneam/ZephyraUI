@@ -186,6 +186,22 @@ fn at_rules_are_rejected_not_ignored() {
     }
 }
 
+/// 报错要**说清是哪一个、为什么**。
+///
+/// cssparser 自己对 at-rule 的默认实现也返回 Err，消息里同样有 "unsupported @"，
+/// 所以上一条测试**抓不到**「我们自己的报错被删掉」。这一条钉住语义层的那句：
+/// 名字 + 分类 + 该怎么办。
+#[test]
+fn an_at_rule_error_names_the_rule_and_says_why() {
+    let msg = bad("@media (min-width: 100px) { Control { width: 1px; } }");
+    for want in [
+        "unsupported @media (conditional rule).",
+        "only Type.class { prop: value; } is supported.",
+    ] {
+        assert!(msg.contains(want), "报错缺 {want:?}:\n{msg}");
+    }
+}
+
 #[test]
 fn a_nested_rule_is_rejected() {
     // CSS Nesting 不做。`parse_qualified()` 返回 false，所以 `{` 出现在块内即错。
