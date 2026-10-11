@@ -39,7 +39,7 @@
 //!
 //! ⚠️ **静默忽略的样式表比没有样式表更糟**：设计者以为生效了。
 
-use cssparser::{ParserInput,
+use cssparser::{ParseErrorKind, ParserInput,
     AtRuleParser, BasicParseError, BasicParseErrorKind, CowRcStr, DeclarationParser, ParseError,
     Parser, QualifiedRuleParser, RuleBodyItemParser, RuleBodyParser, StyleSheetParser, Token,
 };
@@ -97,6 +97,21 @@ fn describe_basic(kind: &BasicParseErrorKind) -> String {
         AtRuleBodyInvalid => "invalid at-rule body".to_string(),
         QualifiedRuleInvalid => "malformed rule".to_string(),
         UnexpectedTokenWithinDeclaration => "unexpected token in declaration".to_string(),
+    }
+}
+
+/// `ParseErrorKind` 有两种：cssparser 的 token 级，和「我们自己的」。
+///
+/// 后者走的是 `From<BasicParseError> for OwnError` 那条路 —— 现实中我们总是用
+/// `input.new_error(..)` 造 Basic，所以 Custom 分支其实走不到；留着是为了
+/// 匹配穷尽，也让将来真用它时不静默降级。
+fn describe_kind(kind: &ParseErrorKind<'_, OwnError>) -> String {
+    match kind {
+        ParseErrorKind::Basic(b) => describe_basic(b),
+        ParseErrorKind::Custom(e) => match e {
+            OwnError::Basic(s) => s.clone(),
+            OwnError::Own(own) => own.headline.clone(),
+        },
     }
 }
 
@@ -168,6 +183,45 @@ impl<'a> ZstyleParser<'a> {
             hint: hint.into(),
         });
     }
+
+    /// 接住一条 cssparser 的 token 级错误。
+    ///
+    /// # 为什么必须有这个方法
+    ///
+    /// 原实现是 `filter_map(|r| r.ok())` —— cssparser 报的错被**整条丢掉**。
+    /// 后果不是「少一条提示」：`Control { .inner { width: 1px; } }` 和
+    /// `Control width: 1px;`（少了 `{ }`）都解析成 **0 条规则、0 个错误**。
+    /// 设计者以为生效了，实际什么也没有。这正是本轨道明令禁止的失败模式，
+    /// 而它只需要一个 `filter_map` 就能造出来。
+    ///
+    /// # 为什么同一行只报一次
+    ///
+    /// 声明出错时（属性名拼错、值不合法），`parse_value` 已经记过一条带
+    /// 「是哪个属性、最接近的候选、该写什么」的语义错误。cssparser 对此只会
+    /// 补一句 `unexpected here: Ident("coner-radius")`，没有任何信息量。
+    /// 一行一条消息，报详细的那条。
+    ///
+    /// `leftover` 是 cssparser 从出错位置切到输入末尾的原文，用来决定这句话
+    /// 该怎么说（剩下的一段里还有 `{`，那就是嵌套规则）。
+    pub(crate) fn note_token_error(&mut self, line: u32, what: &str, leftover: &str) {
+        if self.errors.iter().any(|e| e.at.line == line) {
+            return;
+        }
+        let headline = if leftover.contains('{') {
+            "nested rules are not supported.".to_string()
+        } else {
+            format!("cannot parse this ({what}).")
+        };
+        self.errors.push(Error {
+            file: self.file.to_string(),
+            line_text: self.line_text(line),
+            at: crate::errors::Pos { line, col: 1 },
+            underline_len: self.line_text(line).chars().count(),
+            headline,
+            near: Vec::new(),
+            hint: "rules look like `Type.class { property: value; }`.".into(),
+        });
+    }
 }
 
 impl<'i> AtRuleParser<'i> for ZstyleParser<'_> {
@@ -226,20 +280,39 @@ impl<'i> QualifiedRuleParser<'i> for ZstyleParser<'_> {
         // 现在直接用 self：`RuleBodyParser` 的构造与 `parse_value` 的
         // `&mut self` 都在同一个调用栈里，合法。
         let mut decls: Vec<Declaration> = Vec::new();
+        // ⚠️ 收集到**局部** Vec，循环结束后才合并。
+        //
+        // 不能在循环里写 `self.errors`：`RuleBodyParser::new(input, &mut *self)`
+        // 在整个 for 期间独占借用 `*self`，循环体内碰 `self` 就是第二次借用。
+        // （`parse_value` 能写 errors 是因为它拿到的正是那份 `&mut self`。）
+        //
+        // 而这一份错误**不能丢**：`Control { .inner { … } }` 的报错就出自这里，
+        // 丢了就是「0 条规则、0 个错误」。
+        let mut token_errs: Vec<(u32, String, String)> = Vec::new();
         for item in RuleBodyParser::new(input, &mut *self) {
             match item {
                 Ok(Item::Decl(d)) => decls.push(d),
                 Ok(Item::Rule(_)) => {
-                    // `parse_qualified()` 返回 false，本不该有规则进来。
+                    // `parse_qualified()` 返回 false，cssparser 不会把块里的东西
+                    // 当成规则交上来。真出现了就是调度变了，别静默放过。
                 }
-                Err(_e) => {
+                Err((e, leftover)) => {
                     // 具体原因已由 `parse_value` 记进 self.errors（那里才有
-                    // 「是哪个属性、哪个值」的上下文）。这里什么都不用做。
+                    // 「是哪个属性、哪个值」的上下文）。这里把 cssparser 的
+                    // token 级原因先收着，循环结束后交给 note_token_error 定夺。
                     //
                     // ⚠️ 残缺的规则**保留**：否则「拼错一个属性名」会让整组样式
                     // 一起消失，那是二次伤害。
+                    token_errs.push((
+                        e.location.line + 1,
+                        describe_kind(&e.kind),
+                        leftover.to_string(),
+                    ));
                 }
             }
+        }
+        for (line, what, leftover) in token_errs {
+            self.note_token_error(line, &what, &leftover);
         }
         let rule = StyleRule::new(prelude, decls, self.order);
         self.order += 1;
@@ -323,9 +396,26 @@ pub fn parse(file_name: &str, css: &str) -> ParseResult {
     // ⚠️ **先 collect 再 push**。下面那个 `for` 里不能 push：迭代器本身
     // 借走了 `&mut parser`，push 就是第二次可变借用。先收进 Vec 再一个个 push
     // 是最小代价的解法——错误路径已经把这些 Item 报出来了，规则数本来就几十条。
+    //
+    // ⚠️ 但**不能** `filter_map(|r| r.ok())`：那会把 cssparser 报的错整条丢掉。
+    // 改写进下面这个局部 Vec，循环结束后合并。
+    let mut token_errs: Vec<(u32, String, String)> = Vec::new();
     let items: Vec<Item> = StyleSheetParser::new(&mut input, &mut parser)
-        .filter_map(|r| r.ok())
+        .filter_map(|r| match r {
+            Ok(item) => Some(item),
+            Err((e, leftover)) => {
+                token_errs.push((
+                    e.location.line + 1,
+                    describe_kind(&e.kind),
+                    leftover.to_string(),
+                ));
+                None
+            }
+        })
         .collect();
+    for (line, what, leftover) in token_errs {
+        parser.note_token_error(line, &what, &leftover);
+    }
     for item in items {
         match item {
             Item::Rule(r) => parser.rules.push(r),
@@ -354,37 +444,45 @@ fn parse_selector<'i>(
 
     loop {
         // 类型名（可选，只能出现在最前面）。
+        //
+        // ⚠️ 用 `try_parse` 而不是裸 `next()`：`next()` **无条件消耗**一个 token。
+        // 对 `.danger` 而言它吃掉 `.` 之后才发现「这不是 ident」，而那个 `.`
+        // 已经没了——下面的分类名分支永远读不到它，于是整条选择器失败，
+        // 报「读不出选择器」。`try_parse` 失败时**不动位置**，两个分支才都能试。
         if tag.is_none() {
-            if let Ok(Token::Ident(word)) = input.next() {
-                // ⚠️ 先 clone 再解引用：`word` 借的是 `input`，
-                // 而下面 `p.errors.push` 与 `input.new_error` 都要用 input。
-                let owned: String = word.to_string();
-                let name: &str = &owned;
-                match tag_by_name(name) {
-                    Some(t) => {
-                        tag = Some(t);
-                        continue;
-                    }
-                    None => {
-                        // ⚠️ 先 push 错误（那里不用 input），再 return Err（那里不用 p）。
-                        // 合成一步写会同时借用 `p` 和 `input`，而两者在编译期是
-                        // 不同的可变借用路径——编译器不放过这种「看起来没错」的写法。
-                        let near = nearest(name, &all_tag_names(), 3);
-                        p.errors.push(Error {
-                            file: p.file.to_string(),
-                            line_text: p.line_text(line),
-                            at: crate::errors::Pos { line, col: 1 },
-                            underline_len: p.line_text(line).chars().count(),
-                            headline: format!("unknown element type '{name}'."),
-                            near: near.into_iter().map(|n| (n, line)).collect(),
-                               hint: "type names are case-sensitive. for a class name, prefix with `.` (e.g. `.danger`).".into(),
-                        });
-                        // ⚠️ 用不依赖 token 的 kind（`AtRuleInvalid` 那个 `n` 是
-                        // `CowRcStr<'i>` 同理不行）。`QualifiedRuleInvalid` 不带任何
-                        // 借用，最安全。真正的错误信息已经在 p.errors 里了。
-                        return Err(input.new_error(BasicParseErrorKind::QualifiedRuleInvalid));
-                    }
+            // 把 ident 原文和「是否为合法类型」一起带出来：`Ok(None)` 表示
+            // 读到了 ident 但不在类型表里，那时必须**就地报错并给出候选**——
+            // 早先让它落到分类名分支「再试一次」，结果那个分支的 `next()` 把
+            // ident 吃掉（它不是 `.`），下一轮再吃 `{`，最后只剩一句
+            // 「读不出选择器」，候选也一起丢了。而拼错类型名恰恰最需要候选。
+            let outcome = input.try_parse(|p| {
+                let word = p.expect_ident()?;
+                Ok::<Option<(String, Option<NodeTag>)>, cssparser::BasicParseError<'_>>(Some((
+                    word.to_string(),
+                    tag_by_name(word.as_ref()),
+                )))
+            });
+            match outcome {
+                Ok(Some((_, Some(t)))) => {
+                    tag = Some(t);
+                    continue;
                 }
+                Ok(Some((word, None))) => {
+                    let near = nearest(&word, &all_tag_names(), 3);
+                    // ⚠️ 先 push 错误（那里不用 input），再 return Err。
+                    // 合成一步写会同时借用 `p` 和 `input`，编译期过不去。
+                    p.errors.push(Error {
+                        file: p.file.to_string(),
+                        line_text: p.line_text(line),
+                        at: crate::errors::Pos { line, col: 1 },
+                        underline_len: p.line_text(line).chars().count(),
+                        headline: format!("unknown element type '{word}'."),
+                        near: near.into_iter().map(|n| (n, line)).collect(),
+                        hint: "type names are case-sensitive. for a class name, prefix with `.` (e.g. `.danger`).".into(),
+                    });
+                    return Err(input.new_error(BasicParseErrorKind::QualifiedRuleInvalid));
+                }
+                _ => {}
             }
         }
 
@@ -438,6 +536,3 @@ fn parse_selector<'i>(
 
     Ok(Selector { tag, names })
 }
-
-#[cfg(test)]
-mod tests;

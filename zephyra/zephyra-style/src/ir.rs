@@ -178,6 +178,15 @@ impl StyleSheet {
     /// （见 [`StyleRule::is_empty`]）。
     pub fn from_rules(rules: Vec<StyleRule>) -> Self {
         let mut numbered: Vec<StyleRule> = rules;
+        // ✅ **空规则必须在这里剔除**。`StyleRule::is_empty()` 只是个布尔，
+        // 没人调就什么用都没有——而留着空规则的后果是它挡在排序结果里，
+        // 让「同特异性时后写的赢」的依据变脏。
+        //
+        // ⚠️ 这行被 `git checkout -- ir.rs` 抹掉过一次（当时在隔壁文件做变异
+        // 验证，顺手把整个文件回滚了）。教训：**有未提交改动时绝不对该文件
+        // 用 `git checkout --`**。那次的表现是 `Control { }` 留下 1 条空规则，
+        // 而空规则会让后面的规则看起来「没生效」。
+        numbered.retain(|r| !r.is_empty());
         // 「特异性高的赢；同级时后写的赢」= 按 (特异性, order) 升序排。
         //
         // ⚠️ `order` 是规则**自己**带的原始次序，不是 enumerate 的下标——

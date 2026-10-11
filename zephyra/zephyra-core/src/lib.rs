@@ -98,6 +98,8 @@ mod layout_classification_tests;
 #[cfg(test)]
 mod paint_tests;
 #[cfg(test)]
+mod style_tests;
+#[cfg(test)]
 mod tests;
 
 /// 框架版本。

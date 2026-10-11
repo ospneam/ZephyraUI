@@ -21,3 +21,6 @@ mod props_map;
 mod value;
 
 pub use parse::{parse, ParseResult};
+
+#[cfg(test)]
+mod tests;
