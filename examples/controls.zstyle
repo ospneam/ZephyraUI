@@ -22,3 +22,13 @@ Control {
     cross-align: center;
     spacing: 3px;
 }
+
+/* 按下态：描一圈强调色并加粗。
+ *
+ * 特异性一个分类名（1）> 默认规则零个（0），所以自动盖过上面的默认值，
+ * 不需要任何额外机制 —— 「按没按下」由源码用 .style("pressed") 说，
+ * 「按下长什么样」由这里说。 */
+Control.pressed {
+    border-color: @focus_ring;
+    border-width: 2px;
+}

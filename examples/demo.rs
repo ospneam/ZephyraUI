@@ -31,7 +31,7 @@
 //! ```
 
 use zephyra_core::core::{Spacing, UvRect};
-use zephyra_core::layout::{AlignItems, Direction, MainAxisAlign};
+use zephyra_core::layout::{AlignItems, Direction};
 use zephyra_core::property::{PropertyKey, PropertyValue};
 use zephyra_core::props;
 use zephyra_core::theme::roles;
@@ -56,10 +56,6 @@ mod alloc_probe;
 use zephyra_winit_d3d12::{HostWindow, InputState, View, Z_INDEX};
 #[cfg(all(feature = "d3d11", not(feature = "d3d12")))]
 use zephyra_winit::{HostWindow, InputState, View, Z_INDEX};
-
-/// 工具栏按钮的边长（DIP）。
-/// 按钮边长（DIP）。比只有色块时宽 —— 现在里面要放真实文字，44 太窄。
-const BTN: f32 = 76.0;
 
 /// 工具栏按钮的语义名。同时是元素 key —— 所以必须是 `&'static str`。
 const BUTTONS: [&str; 8] = [
@@ -161,26 +157,19 @@ fn button(name: &'static str, demo: &Demo) -> Element {
     Element::new(NodeTag::Control)
         .with_key(name)
         .with(&props::INTERACTIVE, PropertyValue::bool(true))
-        .with(
-            &props::BORDER_COLOR,
-            // 按下时用强调色描一圈，让"按下去了"在低对比度主题下也看得清。
-            PropertyValue::Resource(
-                if pressed {
-                    roles::FOCUS_RING
-                } else {
-                    roles::STROKE
-                }
-                .into(),
-            ),
-        )
-        .with(
-            &props::BORDER_WIDTH,
-            PropertyValue::float(if pressed { 2.0 } else { 1.0 }),
-        )
+        // NOTE: 状态机制的全部形状。源码只说「我现在是什么状态」，
+        // 样式表只说「这个状态长什么样」，两边不见面。
+        //
+        // 没有分类名 = 没有状态，于是只被 `Control { }` 命中；
+        // 有 "pressed" = 被 `Control.pressed { }` 命中，而那条的特异性
+        // 更高，自动盖过默认值 —— 不引进任何新概念。
+        //
+        // ⚠️ 早先这里写死着 `BORDER_COLOR` / `BORDER_WIDTH` 两个值
+        // （`if pressed { 2.0 } else { 1.0 }`）。那是源码里最后一处样式泄漏：
+        // 换主题改不了它，改样式表也改不了它。
+        .styles(pressed.then_some("pressed"))
         // NOTE: width / height / corner-radius / background / direction /
         // main-align / cross-align / spacing all moved to controls.zstyle.
-        // Only the two state-dependent ones stay here -- describing "what state
-        // this is in" is source logic, not "what it looks like".
 
         .with_children([
             // 图标位：真矢量图标，走 core 的「图标名 → 展平 → 三角化 → Path」。
@@ -244,6 +233,81 @@ fn icon_role(hovered: bool, pressed: bool) -> &'static str {
         roles::CONTENT
     } else {
         roles::CONTENT_SECONDARY
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn demo_with(pressed: bool, name: &'static str) -> Demo {
+        Demo {
+            hovered: None,
+            pressed: pressed.then(|| ElementKey::from(name)),
+        }
+    }
+
+    /// **源码里不许有样式** —— 这条就是那把锁。
+    ///
+    /// 迁移前 `button()` 里写着：
+    /// ```ignore
+    /// .with(&props::BORDER_COLOR, Resource(if pressed { FOCUS_RING } else { STROKE }.into()))
+    /// .with(&props::BORDER_WIDTH, float(if pressed { 2.0 } else { 1.0 }))
+    /// ```
+    /// 那是**最后一个**让「改样式表改不动按钮」的洞：换主题改不了它，
+    /// 改 `controls.zstyle` 也改不了它。
+    ///
+    /// 现在这两个属性只能来自样式表。这条测试不看样式表（那是
+    /// `controls_zstyle.rs` 的职责），只看源码这边**有没有偷偷写回去**。
+    #[test]
+    fn button_source_writes_no_appearance_at_all() {
+        for pressed in [false, true] {
+            let el = button("menu", &demo_with(pressed, "menu"));
+            for key in [&props::BORDER_COLOR, &props::BORDER_WIDTH] {
+                assert_eq!(
+                    el.props().lookup(key),
+                    None,
+                    "{}(pressed={pressed}) must not write {} -- appearance comes from the stylesheet",
+                    key.name(),
+                    key.name()
+                );
+            }
+        }
+    }
+
+    /// 状态靠**分类名**表达，而不是靠给属性塞值。
+    ///
+    /// 这是整个状态机制的形状：源码只说「我现在是什么状态」，
+    /// 「这个状态长什么样」由样式表的 `Control.pressed { }` 说。
+    #[test]
+    fn the_state_reaches_the_element_as_a_class_name() {
+        let pressed = button("menu", &demo_with(true, "menu"));
+        assert_eq!(
+            pressed.style_names(),
+            &["pressed"],
+            "pressing must add the pressed class"
+        );
+
+        let idle = button("menu", &demo_with(false, "menu"));
+        assert!(
+            idle.style_names().is_empty(),
+            "no state must mean no class -- otherwise every button looks pressed"
+        );
+    }
+
+    /// 按下的**是当前这个按钮**，不是所有按钮。
+    ///
+    /// `Demo::pressed` 存的是 key，而 `button()` 拿自己的 key 去比。
+    /// 这条钉住「按钮认得住自己」：写成常量 true 的话，会出现
+    /// 「按一个、全亮」——那种错从截图上很难定位。
+    #[test]
+    fn only_the_pressed_button_gets_the_class() {
+        let demo = demo_with(true, "gear");
+        assert_eq!(button("gear", &demo).style_names(), &["pressed"]);
+        assert!(
+            button("menu", &demo).style_names().is_empty(),
+            "another button must stay idle"
+        );
     }
 }
 
