@@ -164,6 +164,35 @@ impl Node {
         }
     }
 
+    /// 设置**样式表**给的属性值并按影响范围标脏。
+    ///
+    /// 写在 `Styled` 层（低于 `Local`），所以应用代码的 `.with(...)` 仍然覆盖它。
+    ///
+    /// ⚠️ **为什么必须走这个方法而不能 `props_mut()` 直接改**：那样不产生脏标记，
+    /// 于是「改了样式但画面不动」——而样式表正是每帧都在改的那一层。这个洞 B2 才补：
+    /// 之前 `set_styled` 虽返回 `PropertyChange`，但 `Node` 上没有对应入口，
+    /// 唯一的路是 `props_mut()`，而它**绕过了标脏**。
+    ///
+    /// 与 [`Self::set_prop`] 的差别只有一层：写 `Styled` 而不是 `Local`。
+    /// 标脏逻辑**必须完全一致**——两边走偏的症状是
+    /// 「同一种属性，源码里改会重排、样式表里改不会」。
+    ///
+    /// ⚠️ **「值没变就不标脏」这条在这个路径上尤其重要**：`apply` 每帧都会把同一条
+    /// 规则再写一遍。若写同值也算变化，静止界面会永远在重绘——这是
+    /// 「样式表导致 UI 永远不静止」这类 bug 的直接成因。
+    pub fn set_styled_prop(&mut self, key: &'static PropertyKey, value: PropertyValue) {
+        if self.props.set_styled_if_changed(key, value) {
+            self.dirty = self.dirty.merged(if key.affects_layout() {
+                Dirty::Layout
+            } else {
+                Dirty::Paint
+            });
+            if self.dirty.needs_layout() {
+                self.measure_cache = None;
+            }
+        }
+    }
+
     /// 拆下唯一子节点并返回它。
     ///
     /// 给"只想检查某个已布局节点本身"的调用方用：布局必须从根开始（根决定子项矩形），

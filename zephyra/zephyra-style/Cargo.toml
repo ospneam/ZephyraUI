@@ -1,0 +1,16 @@
+[package]
+name = "zephyra-style"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "声明层：把 .zstyle 样式表变成属性值。管「外观从哪来」，不管「外观怎么执行」"
+
+# 这个是纯 CPU、纯算法的 crate：它产出 `PropertyValue` 交给 `zephyra-core` 的属性表，
+# 之后的事（量、画）都在 core 与 base。所以它不碰任何系统 API。
+[dependencies]
+zephyra-core = { path = "../zephyra-core", version = "0.1.0" }
+
+# ⚠️ 这个 crate 里**不能出现 unsafe**：它只做字符串解析、规则匹配、值映射。
+[lints.rust]
+unsafe_code = "forbid"

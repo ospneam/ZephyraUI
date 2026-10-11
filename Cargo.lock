@@ -2095,6 +2095,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "zephyra-style"
+version = "0.1.0"
+dependencies = [
+ "zephyra-core",
+]
+
+[[package]]
 name = "zephyra-winit"
 version = "0.1.0"
 dependencies = [

@@ -535,6 +535,29 @@ impl PropertyStore {
         })
     }
 
+    /// 按**键**写入样式值，返回**值是否真的变了**。
+    ///
+    /// ⚠️ 正是 `apply` 需要的那个判定：样式表每帧都会把同一条规则再写一遍，
+    /// 如果这算「变化」，静止界面会永远在重绘。参见 [`Self::set_local_if_changed`]。
+    pub fn set_styled_if_changed(
+        &mut self,
+        key: &'static PropertyKey,
+        value: PropertyValue,
+    ) -> bool {
+        let id = Self::id_of(key);
+        match self.styled.iter_mut().find(|e| e.id() == id) {
+            Some(existing) if existing.value == value => false,
+            Some(existing) => {
+                existing.value = value;
+                true
+            }
+            None => {
+                self.styled.push(LocalEntry { key, value });
+                true
+            }
+        }
+    }
+
     /// 清除本地值（回落到样式/继承/默认）。
     pub fn clear_local(&mut self, key: &PropertyKey) {
         let id = Self::id_of(key);

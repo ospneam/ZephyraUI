@@ -13,6 +13,7 @@ resolver = "2"
 # 前者能进 core 与效果器层，后者必须留在 base。
 members = [
     "zephyra/zephyra-core",
+    "zephyra/zephyra-style",
     "zephyra/zephyra-fx",
     "zephyra/zephyra-base/zephyra-winit",
     "zephyra/zephyra-base/zephyra-winit-d3d12",
