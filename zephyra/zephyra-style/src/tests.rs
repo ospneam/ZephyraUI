@@ -427,7 +427,7 @@ fn an_event_key_is_not_a_style_name() {
 
 /// A style name must never be confused with an event key, in either direction.
 /// A style name and an event key are separate namespaces.
-
+#[test]
 fn style_and_key_are_independent_namespaces() {
     // Same word, two roles: keyed for events, styled for looks.
     let mut node = Node::from_element(
@@ -459,9 +459,11 @@ fn elements_with_different_styles_do_not_share_styles() {
 
 #[test]
 fn a_dropped_style_does_not_stick_around() {
-    // 这条边界情形**当前实现做不到**——换个不含某条声明的表，旧值会留在 Styled 层。
-    // 记录它是为了让 B4（热重载）知道：它必须「清空 Styled 层 + 重新 apply」，
-    // 而不能只换表。
+    // 这条曾经是**恒真记录**：换表不清 Styled，旧值赖着不走（症状：热重载后样式
+    // 不消失；状态类消失后选中色不消失）。它被标成 "B4 must fix" 等在原地。
+    //
+    // 现在 `apply_node` 每轮先算「本轮要写哪些键」，写完再把「上一轮写了、
+    // 这一轮没人写」的键**拆掉**，所以换表即换样式，不必再由调用方记得清层。
     let with = StyleSheet::from_rules(vec![background_rule(Selector::named("danger"), RED, 0)]);
     let without = StyleSheet::from_rules(vec![StyleRule::new(
         Selector::named("other"),
@@ -477,10 +479,69 @@ fn a_dropped_style_does_not_stick_around() {
     without.apply_all(&mut node);
     assert_eq!(
         background_of(&node),
-        Some(RED),
-        "WARNING: currently **vacuous**: swapping the sheet does not clear Styled, so the old value survives. B4 must fix this -- see the hot-reload section. Recorded so nobody mistakes it for apply leaking state."
+        None,
+        "换表后旧的 Styled 值必须被拆掉 —— 留着的话热重载与状态类消失都会留下残值"
+    );
+}
 
+/// 状态分类名消失后，那条状态规则写的值必须跟着消失。
+///
+/// 与上面那条同源，但走的是**日常路径**（不是换表）：同一个节点，第一帧带
+/// `.checked`、第二帧不带。这是「点一下取消勾选，底色还是选中色」的成因。
+///
+/// 判据里特意让状态规则声明一个**基类没有的键**（`BORDER_WIDTH`）：如果基类也
+/// 声明了它，基类每帧会把残值盖回去，洞就被"恰好"堵住 —— 那正是它长期没被
+/// 发现的原因，所以判据必须踩在那个空隙上。
+#[test]
+fn a_state_class_that_disappears_takes_its_values_with_it() {
+    // 走**真实交互路径**：diff（分类名变化）→ apply（重算样式层）。
+    let sheet = StyleSheet::from_rules(vec![
+        StyleRule::new(
+            Selector::named("row"),
+            vec![Declaration {
+                key: &props::BACKGROUND,
+                value: PropertyValue::color(BLUE),
+            }],
+            0,
+        ),
+        // 状态规则声明一个**基类没有的键** —— 必须踩在这个空隙上，
+        // 否则基类每帧都会把残值盖回去，洞就被"恰好"堵住了。
+        StyleRule::new(
+            Selector {
+                tag: None,
+                names: vec!["row", "checked"],
+            },
+            vec![Declaration {
+                key: &props::BORDER_WIDTH,
+                value: PropertyValue::float(3.0),
+            }],
+            1,
+        ),
+    ]);
 
+    let checked = Element::new(NodeTag::Control).styles(["row", "checked"]);
+    let unchecked = Element::new(NodeTag::Control).styles(["row"]);
+    let mut node = Node::from_element(&checked);
+    sheet.apply_all(&mut node);
+    assert_eq!(
+        node.props().lookup(&props::BORDER_WIDTH).map(|(v, _)| v.clone()),
+        Some(PropertyValue::float(3.0)),
+        "带 `checked` 时 BORDER_WIDTH 应当来自状态规则"
+    );
+
+    // 第二帧：分类名去掉 `checked`（节点被复用，只换分类名）。
+    zephyra_core::diff::diff(&mut node, &unchecked);
+    sheet.apply_all(&mut node);
+    assert_eq!(
+        node.props().lookup(&props::BORDER_WIDTH).map(|(v, _)| v.clone()),
+        None,
+        "`checked` 已经不在分类名里，它写的 BORDER_WIDTH 必须被拆掉 —— \
+         这正是「点一下取消勾选，底色还是选中色」的成因"
+    );
+    assert_eq!(
+        node.props().lookup(&props::BACKGROUND).map(|(v, _)| v.clone()),
+        Some(PropertyValue::color(BLUE)),
+        "基类规则仍然匹配，它的值必须留着（拆的只是没人写的那部分）"
     );
 }
 

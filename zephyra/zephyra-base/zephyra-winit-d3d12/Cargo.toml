@@ -43,6 +43,11 @@ zephyra-fx = { path = "../../zephyra-fx" }
 # 呈现路径。与 `zephyra-winit`（D3D11）共用同一个 crate，于是两个后端的
 # swapchain 参数与 DComp 挂树逻辑天然一致 —— 少一份「两个后端悄悄不一致」的余地。
 zephyra-dcomp = { path = "../zephyra-dcomp" }
+# 窗口外观（暗色模式 / 圆角 / 标题栏颜色）走平台抽象层：
+# 本 crate 只做「句柄转换 + 降级收敛」，能力判定与 DWM 调用在 `zephyra-platform-win`。
+# 这样应用层不出现任何 Win32 代码，而 DWM 细节也不渗进渲染后端。
+zephyra-platform = { path = "../zephyra-platform" }
+zephyra-platform-win = { path = "../zephyra-platform-win" }
 # 窗口与事件。**版本必须与 `zephyra-winit` 一致（都是 0.30）**：两个后端要与同一份
 # 应用代码的宿主接口对得上，`ApplicationHandler` 的类型必须是同一个。
 winit = "0.30"

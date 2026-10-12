@@ -80,6 +80,29 @@ impl AbGlyphSource {
         Ok(Self { font, font_id })
     }
 
+    /// **em 像素 → ab_glyph 的 `PxScale`**。全部字号换算的唯一入口。
+    ///
+    /// # 为什么必须有这一刀
+    ///
+    /// ab_glyph 的 `PxScale::from(x)` 的语义是**行高**（`hhea` 的
+    /// `ascent − descent (+ lineGap)`），不是 em 尺寸：`as_scaled(PxScale::from(45))`
+    /// 之后 `.height() == 45.0`，而 `.height()` 是行高。而 CSS / 本框架的
+    /// `TEXT_SIZE` 给的是 **em**（`font-size`）。
+    ///
+    /// 直接把 em 当 `PxScale` 传的后果：整份文本按 `upem / height_unscaled` 的比例
+    /// 缩小。Segoe UI 的 hhea 行高 = 1.33 em，于是**所有文字一律渲染成 0.75 倍** ——
+    /// 而布局（步进、行高）仍按 em 算：字变小、行距变松、不同字号之间对不齐。
+    /// 实测症状：34px 的 'Z' 位图只有 15×18（应为 19×24）。
+    ///
+    /// 两个调用点（`advance` / `rasterize`）都必须经过这里 —— 漏一个的后果是
+    /// 「步进按 em、位图按行高」，字形互相叠压。
+    fn px_scale(&self, px_em: f32) -> PxScale {
+        let upem = self.font.units_per_em().unwrap_or(1000.0).max(1.0);
+        // hhea 行高（字体单位）。ascent 为正、descent 为负，相减就是总行高。
+        let line = self.font.height_unscaled().max(1.0);
+        PxScale::from(px_em.max(1.0) * line / upem)
+    }
+
     /// 字体里是否真的有这个字形。
     ///
     /// `ab_glyph` 的 `glyph_id` 对缺失字符返回 `.notdef`（id 0），**不是**错误。
@@ -259,19 +282,24 @@ impl GlyphSource for AbGlyphSource {
     }
 
     fn advance(&mut self, glyph_id: u32, px_size: f32) -> f32 {
+        let scale = self.px_scale(px_size);
         self.font
-            .as_scaled(PxScale::from(px_size.max(1.0)))
+            .as_scaled(scale)
             .h_advance(GlyphId(glyph_id.min(u16::MAX as u32) as u16))
     }
 
     fn rasterize(&mut self, glyph_id: u32, px_size: u32) -> Option<AtlasRaster> {
         let px = px_size.max(1) as f32;
         let id = GlyphId(glyph_id.min(u16::MAX as u32) as u16);
-        let scaled = self.font.as_scaled(PxScale::from(px));
+        // em → 行高换算必须走同一个入口：`outline_glyph` 用的是 **Glyph 自带**的
+        // scale（见 `ScaleFont::outline_glyph` 的注释「does not make use of the
+        // associated scale」），所以这里给 `with_scale` 的也必须是换算后的值。
+        let scale = self.px_scale(px);
+        let scaled = self.font.as_scaled(scale);
 
         // 空白字形（空格、零宽字符）没有轮廓 —— 返回 `None`，core 会给它一个零尺寸
         // 图集条目并推进光标（步进仍由 `advance` 给出）。
-        let outlined = scaled.outline_glyph(id.with_scale(px))?;
+        let outlined = scaled.outline_glyph(id.with_scale(scale))?;
 
         let bounds = outlined.px_bounds();
         // ⚠ 尺寸必须用**截断**，不是 `ceil`。
@@ -312,12 +340,17 @@ impl GlyphSource for AbGlyphSource {
         });
 
         Some(AtlasRaster {
-            // offset 是相对**基线原点**的偏移，y 向上为正（字体约定）。
-            // core 在构造 `GlyphQuad::dst` 时做 y 翻转。
+            // offset 是**屏幕方向**（y 向下）相对基线原点的偏移，基线之上为**负**。
             //
-            // 这里用**整数**的 `min`：位图是从 `floor(min)` 开始的，而 dst 矩形要与
-            // 位图严格对齐。若这里报带小数的 `min`，字形会整体偏移 `frac(min)` 像素
-            // —— 在小字号下那是一整个像素的错位，且随字号变化，看起来像"字没对齐"。
+            // ab_glyph 的 `px_bounds` 就是这个约定：`min.y * -scale_factor.vertical`
+            // 把字体坐标（y-up）翻成屏幕坐标（y-down），于是 'h' 的 min.y ≈ −26、
+            // 'p' 的 min.y ≈ −19 而 `min.y + height > 0`（descender 伸到基线下面）。
+            // core 拿它直接加在基线上（`GlyphQuad::dst.y = baseline + offset.y`）。
+            //
+            // ⚠ 这里曾经写成整数 `min.floor()` 并注释"y 向上为正"—— 约定说反了，
+            // 于是 core 的公式也跟着反，每个字形的顶部贴到基线上（同一行基线错开、
+            // descender 消失）。整数部分保留：位图从 `floor(min)` 开始，dst 必须与
+            // 位图严格对齐，否则小字号下整体偏一个像素。
             offset: Point::new(bounds.min.x.floor(), bounds.min.y.floor()),
             width: w,
             height: h,
@@ -342,6 +375,109 @@ mod tests {
             Ok(s) => Some(TextStack::new(s)),
             Err(_) => None,
         }
+    }
+
+    /// `px_scale` 是把 em 翻成 ab_glyph 行高的唯一入口。契约：
+    /// 换算后的 scale 装回字体，`.height()`（行高像素）必须等于
+    /// `em × hhea行高 / upem`。
+    ///
+    /// 这条钉的是本次实测的 bug：ab_glyph 的 `PxScale::from(x)` 是**行高**语义，
+    /// 直接拿 em 传进去（`.height() == em`），Segoe UI（hhea = 1.33 em）的全部
+    /// 文字一律渲成 0.75 倍。此处对 Segoe 期望 15.96 而实测 12 —— 两种写法
+    /// 只差这一个比例，症状是整库文字变小且行距松弛。
+    #[test]
+    fn px_scale_maps_em_to_font_line_height() {
+        use ab_glyph::{Font, ScaleFont};
+        let Ok(bytes) = std::fs::read(FONT_CANDIDATES[0]) else {
+            eprintln!("跳过：找不到系统字体");
+            return;
+        };
+        let src = match AbGlyphSource::from_bytes(0, &bytes) {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+        let upem = src.font.units_per_em().unwrap_or(1000.0).max(1.0);
+        let ratio = src.font.height_unscaled() / upem;
+        for em in [12.0f32, 14.0, 16.0, 34.0, 48.0] {
+            let scaled = src.font.as_scaled(src.px_scale(em));
+            let expect = em * ratio;
+            assert!(
+                (scaled.height() - expect).abs() < 0.01,
+                "px_scale({em}) 的行高应为 {expect:.2}（= em × {ratio:.3}），实测 {}。\
+                 em 与行高混用时这里恰好等于 em —— 那是 0.75 倍文字的成因",
+                scaled.height()
+            );
+        }
+    }
+
+    /// 大写字母的位图必须是**cap 高度**（≈0.7em），不是 0.75 倍缩放后的 0.53em。
+    ///
+    /// 实测过：34px 的 'Z' 位图曾只有 15×18（GDI 基准 19×24）。0.75 这个比例
+    /// 对所有拉丁字体都成立，所以阈值取 0.55em / 0.9em 两侧夹。
+    #[test]
+    fn capital_ink_is_cap_height_not_three_quarters() {
+        use zephyra_core::text::GlyphSource as _;
+        let Ok(bytes) = std::fs::read(FONT_CANDIDATES[0]) else {
+            eprintln!("跳过：找不到系统字体");
+            return;
+        };
+        let mut src = match AbGlyphSource::from_bytes(0, &bytes) {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+        let id = src.glyph_id('H');
+        let r = src.rasterize(id, 34).expect("'H' 必须栅格化出位图");
+        let ratio = r.height as f32 / 34.0;
+        assert!(
+            (0.55..0.90).contains(&ratio),
+            "'H'@34px 位图高 {} = {ratio:.2}em；cap 高度应约 0.7em。\
+             实测 0.5 出头说明字被按 upem/hhea 比例缩小了（em 与行高混用）",
+            r.height
+        );
+    }
+
+    /// offset 必须是**屏幕方向**（y 向下，基线之上为负）。
+    ///
+    /// 这条钉的是第二个 bug：offset 的约定说反后，core 的 `dst.y` 公式也跟着反，
+    /// 每个字形的**顶部贴到基线**上 —— 同一行里 'h' 与 'e' 顶相同、底差一个字高，
+    /// descender 整个不见。实测 34px 行 'e' 顶 71 / 'h' 顶 72（应相差约 7）。
+    #[test]
+    fn raster_offset_is_screen_space_y_down() {
+        use zephyra_core::text::GlyphSource as _;
+        let Ok(bytes) = std::fs::read(FONT_CANDIDATES[0]) else {
+            eprintln!("跳过：找不到系统字体");
+            return;
+        };
+        let mut src = match AbGlyphSource::from_bytes(0, &bytes) {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+        // 'H'：无 descender，整个位图在基线**之上** → offset.y 负、bottom 恰在 0 附近。
+        let h_id = src.glyph_id('H');
+        let h = src.rasterize(h_id, 34).expect("'H'");
+        assert!(
+            h.offset.y < 0.0,
+            "'H' 的 offset.y 应为负（位图在基线之上），实测 {}",
+            h.offset.y
+        );
+        assert!(
+            (h.offset.y + h.height as f32).abs() <= 1.5,
+            "'H' 无 descender，位图底应落在基线上，实测 {}",
+            h.offset.y + h.height as f32
+        );
+        // 'p'：有 descender → 位图底伸到基线**下面**（offset.y + height > 0）。
+        let p_id = src.glyph_id('p');
+        let p = src.rasterize(p_id, 34).expect("'p'");
+        assert!(
+            p.offset.y < 0.0,
+            "'p' 的 offset.y 应为负（位图主体在基线之上），实测 {}",
+            p.offset.y
+        );
+        assert!(
+            p.offset.y + p.height as f32 > 1.0,
+            "'p' 有 descender，位图底应在基线之下，实测 {}",
+            p.offset.y + p.height as f32
+        );
     }
 
     #[test]

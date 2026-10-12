@@ -12,7 +12,24 @@
 //! 一张调试图，得反过来依赖 DX11 的 `surface` —— 一条从 CPU 侧指向图形后端的边。
 //! 那条边会让 DX12 后端**用不了** CPU 诊断能力。
 
-/// 一批 BGRA 像素（**自顶向下**，可能带行距填充）。
+/// 一批像素的通道序（**自顶向下**，可能带行距填充）。
+///
+/// # 为什么必须显式
+///
+/// 两个来源的顺序**不同**：D3D 读回的是 BGRA（`DXGI_FORMAT_B8G8R8A8` 的习惯），
+/// 而 CPU 参考光栅器的画布是 RGBA。`write_bmp` 曾经按死 BGRA 解 —— 于是 CPU
+/// dump 的图 R/B 互换。深色 UI 几乎全是灰，那个错误**肉眼看不出来**（灰交换
+/// 通道还是灰），直到出现一面饱和色的横幅（本次 gallery 的 #16305c 变成棕色
+/// 才暴露）。所以顺序进类型，不進注释。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChannelOrder {
+    /// 每像素 `[r, g, b, a]`（CPU 参考光栅器）。
+    Rgba,
+    /// 每像素 `[b, g, r, a]`（D3D 读回）。
+    Bgra,
+}
+
+/// 一批像素（**自顶向下**，可能带行距填充）。
 ///
 /// # 为什么不能假设「行距 = 宽度 × 4」
 ///
@@ -22,12 +39,14 @@
 ///
 /// # 像素方向
 ///
-/// BGRA、自**顶**向下（GPU 的方向）。写 BMP 时必须逐行翻转，而不能只交换 RGB/BGR
+/// 自**顶**向下（GPU 的方向）。写 BMP 时必须逐行翻转，而不能只交换 RGB/BGR
 /// —— 只换通道会得到上下颠倒的图。
 #[derive(Debug, Clone)]
 pub struct PixelRead {
     /// 像素数据，长度 = `row_pitch * height`。
     pub data: Vec<u8>,
+    /// 通道序。见 [`ChannelOrder`]。
+    pub order: ChannelOrder,
     /// 每行字节数（`>= width * 4`）。
     pub row_pitch: u32,
     /// 像素的真实宽度（从资源描述读出）。
@@ -146,7 +165,14 @@ pub fn write_bmp(path: &str, px: &PixelRead, encode_srgb: bool) -> std::io::Resu
         // 按**像素**步进（4 字节），不是按 3 字节 —— 见上面两个 stride 的说明。
         let mut line = Vec::with_capacity(dst_stride);
         for p in row.chunks_exact(4) {
-            let [b, g, r, a8] = [p[0], p[1], p[2], p[3]];
+            // 按**来源的通道序**拆出 rgba，而不是按死一种。两个来源顺序不同，
+            // 见 [`ChannelOrder`]：猜错的那次让 CPU dump 的图 R/B 互换，
+            // 而深色 UI 全灰所以肉眼看不出来。
+            let [c0, c1, c2, a8] = [p[0], p[1], p[2], p[3]];
+            let (r, g, b) = match px.order {
+                ChannelOrder::Rgba => (c0, c1, c2),
+                ChannelOrder::Bgra => (c2, c1, c0),
+            };
             // 目标纹理是**预乘**的（见 `quad::Vertex::quad` 与两个渲染器的 clear），
             // 而 BMP 要的是直通 alpha —— 所以先反预乘。
             //
@@ -176,6 +202,66 @@ pub fn write_bmp(path: &str, px: &PixelRead, encode_srgb: bool) -> std::io::Resu
         out.extend_from_slice(&line);
     }
     std::fs::write(path, out)
+}
+
+#[cfg(test)]
+mod channel_order_tests {
+    use super::*;
+
+    /// RGBA 输入写出来的 BMP 必须是**原序**：红画素进 B 位、蓝画素进 R 位是全反的。
+    ///
+    /// 这条钉的是本次实测的故障：`write_bmp` 曾按死 BGRA 解，CPU 画布（RGBA）
+    ///  dump 出来的图 R/B 互换 —— 深色 UI 几乎全灰，肉眼看不出来，
+    /// 直到一面饱和色横幅（#16305c 变成棕色）才暴露。
+    #[test]
+    fn rgba_input_keeps_channels() {
+        let px = PixelRead {
+            data: vec![
+                255, 0, 0, 255, // 纯红
+                0, 0, 255, 255, // 纯蓝
+                0, 255, 0, 255, // 纯绿
+                255, 255, 255, 255,
+            ],
+            order: ChannelOrder::Rgba,
+            row_pitch: 16,
+            width: 4,
+            height: 1,
+            declared_width: 4,
+            declared_height: 1,
+        };
+        let dir = std::env::temp_dir().join("zephyra-bmp-test");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("rgba.bmp");
+        write_bmp(path.to_str().unwrap(), &px, false).unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        // 文件头 54 字节；BMP 自底向上，单行时顺序不变；24bpp 下 4 像素 = 12 字节。
+        let px_data = &bytes[54..];
+        // 第一像素 BGR：红 → (0,0,255)
+        assert_eq!(&px_data[0..3], &[0, 0, 255], "red must land in the B slot");
+        // 第二像素：蓝 → (255,0,0)
+        assert_eq!(&px_data[3..6], &[255, 0, 0], "blue must land in the R slot");
+    }
+
+    /// BGRA 输入（D3D 读回）必须走同一条规则，不能为了修 CPU 那条把 GPU 那条弄反。
+    #[test]
+    fn bgra_input_keeps_channels() {
+        let px = PixelRead {
+            // 同一个「纯红」在 BGRA 源里是 [0,0,255,255]。
+            data: vec![0, 0, 255, 255],
+            order: ChannelOrder::Bgra,
+            row_pitch: 4,
+            width: 1,
+            height: 1,
+            declared_width: 1,
+            declared_height: 1,
+        };
+        let dir = std::env::temp_dir().join("zephyra-bmp-test");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("bgra.bmp");
+        write_bmp(path.to_str().unwrap(), &px, false).unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        assert_eq!(&bytes[54..57], &[0, 0, 255], "red must land in the B slot");
+    }
 }
 
 /// 线性 [0,1] → sRGB [0,255]。
@@ -223,6 +309,7 @@ mod tests {
         }
         let px = PixelRead {
             data,
+            order: ChannelOrder::Bgra,
             row_pitch: PITCH as u32,
             width: W,
             height: H,
@@ -248,6 +335,7 @@ mod tests {
     fn 尺寸不匹配_必须查得出来() {
         let px = PixelRead {
             data: vec![0; 600 * 600 * 4],
+            order: ChannelOrder::Bgra,
             row_pitch: 600 * 4,
             width: 600,
             height: 600,

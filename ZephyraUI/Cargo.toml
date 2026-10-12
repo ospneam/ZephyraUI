@@ -1,0 +1,37 @@
+[package]
+name = "zephyra-ui"
+description = "Widget layer on top of zephyra-core, plus a RinUI-style gallery app (the rewritten Demo)"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# 参照 `examples/Cargo.toml` 的同一套取舍：后端由特性开关选，默认 d3d12。
+# `required-features` 只列 d3d12 —— 选 d3d11 时窗口路编不过，而库层
+# （controls / app）与后端无关，`--dump-cpu` 那条路也不需要任何后端。
+[features]
+default = ["d3d12"]
+d3d12 = ["dep:zephyra-winit-d3d12"]
+
+[dependencies]
+zephyra-core = { path = "../zephyra/zephyra-core" }
+zephyra-fx = { path = "../zephyra/zephyra-fx" }
+zephyra-style = { path = "../zephyra/zephyra-style" }
+zstylec = { path = "../zstylec" }
+# 平台能力抽象：应用只依赖 trait，Windows 效果的实现与降级都在实现 crate 里。
+zephyra-platform = { path = "../zephyra/zephyra-base/zephyra-platform" }
+# 演示宿主：真开窗口 + GPU 渲染。只有 bin 用它，库层不依赖任何后端。
+zephyra-winit-d3d12 = { path = "../zephyra/zephyra-base/zephyra-winit-d3d12", optional = true }
+winit = "0.30"
+
+[[bin]]
+name = "gallery"
+# 后端由特性开关选择（默认 d3d12）；`--dump-cpu` 不需要任何后端。
+required-features = ["d3d12"]
+path = "bin/gallery.rs"
+
+# 文字链探针：不开窗口，直接量「一段文本 → 排版 → 图集 → 顶点」。
+# 存在理由：字形串味/错位在成品图里只是"字看起来不对"，没有数字可对；
+# 这个 bin 把每个字符的 uv、advance、measured size 全打出来。
+[[bin]]
+name = "text-probe"
+path = "bin/text_probe.rs"

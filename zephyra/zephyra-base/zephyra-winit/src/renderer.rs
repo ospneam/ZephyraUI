@@ -952,8 +952,7 @@ pub fn render(&mut self, ctx: RenderCtx<'_>) -> RenderReport {
         // ---- 1. 目标级状态：RTV / 视口 / scissor / 清屏 ----
         //
         // 只在帧首做一次。清屏尤其只能一次：离屏 pass 中途会把 RTV 换成离屏 RT，
-        // 而 D3D11 的 `ClearRenderTargetView` **不受 scissor 约束**（见
-        // `draw_range` 里的说明），所以"每段清一次"会把整张目标反复清掉。
+        // 所以"每段清一次"会把整张目标反复清掉。
         self.bind_target(&env, rtv, size, damage);
         let ca = clear.a;
         unsafe {
@@ -963,6 +962,11 @@ pub fn render(&mut self, ctx: RenderCtx<'_>) -> RenderReport {
             // ⚠ 但必须**预乘**：目标纹理从此与顶点色在同一个预乘空间里。漏掉这一步
             // 的话，一个半透明的 clear 色会让整帧偏亮，且只有非 1.0 的 clear 色才
             // 暴露 —— 而默认 clear 是全 1.0 或全 0.0，于是永远看不出来。
+            //
+            // 这里**整屏清**，而宿主保证传进来的 `damage` 是 [`Damage::Full`]
+            // （见 `HostWindow::acquire_and_render`）：本后端的渲染目标就是 flip
+            // model 的后缓冲，`Present` 之后内容未定义 ——「整屏清 + 只画脏区」
+            // 会把交互帧的整屏抹成底色（这正是它一度表现的故障）。
             context.ClearRenderTargetView(rtv, &[clear.r * ca, clear.g * ca, clear.b * ca, ca]);
         }
 
@@ -1047,9 +1051,16 @@ pub fn render(&mut self, ctx: RenderCtx<'_>) -> RenderReport {
 
             // ---- 帧内 scissor ----
             //
-            // ⚠️⚠️ **D3D11 的 `ClearRenderTargetView` 不受 scissor 约束** ——
-            // 这是 D3D11 与 D3D12 的一处真实差异（D3D12 命令列表上的 clear **会**被
-            // scissor 裁掉）。所以本后端里清屏永远是全屏的，scissor 只限制**绘制**。
+            // ⚠️ **清屏区域由 `ClearRenderTargetView` 的 `pRects` 决定，与 scissor
+            // 无关** —— 原文断言「D3D11 的 clear 不受 scissor 约束、D3D12 受」是错的，
+            // 两个后端的语义一样（`pRects == NULL` ⇒ 清整张目标）。
+            //
+            // 错在这里的代价很具体：每帧整屏清成底色、再只画脏矩形 ⇒ **任何交互帧
+            // 都把没脏的部分抹掉**（点一下勾选框，整个界面花成一片底色）。首帧
+            // 完全正常（首帧是 `Damage::Full`），所以这个缺陷只在交互之后出现，
+            // 与布局、内容、像素都无关，看起来像"渲染坏了"。
+            //
+            // 现在 [`Self::clear_region`] 按脏区清，与 scissor 对齐。
             //
             // DIP → 像素的比例**不能假设为 1**。`RenderCtx::damage` 是 DIP，而
             // scissor 用像素；当前宿主恰好把像素尺寸当 DIP 传进来，于是比例是 1，

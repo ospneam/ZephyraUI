@@ -635,6 +635,28 @@ fn 真实图标的三角化面积合理() {
 }
 
 #[test]
+fn 所有内置图标都不是空的() {
+    // 为什么单独一条：`所有内置图标都能三角化` 在 `is_empty()` 时是
+    // `continue` —— 一个**解析成空图标**的内置资源（根节点 `fill="none"`
+    // 之类的），在那里会安静地"通过"。而它的症状在界面上是「某个图标不显示」：
+    // 没有报错、没有告警、图还在、就是一片空白。
+    //
+    // 一张内置表里的图标**不许有空的**：要么能用，要么根本不该登记 ——
+    // 不存在"先登记着以后再说"。
+    for (name, src) in crate::icon::assets::REGISTRY {
+        let text = match src {
+            crate::icon::IconSource::Svg(s) => s,
+            crate::icon::IconSource::Path(_) => continue,
+        };
+        let icon = crate::icon::parse_svg(text).unwrap_or_else(|e| panic!("图标 {name} 解析失败: {e}"));
+        assert!(
+            !icon.is_empty(),
+            "内置图标 {name} 解析成了空图标（无路径段或填充为 none）"
+        );
+    }
+}
+
+#[test]
 fn 所有内置图标都能三角化() {
     // 回归网：任何一个内置图标三角化失败或产出零面积，都说明几何管线坏了
     for (name, src) in crate::icon::assets::REGISTRY {

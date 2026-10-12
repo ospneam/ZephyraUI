@@ -233,6 +233,12 @@ impl InputRouter {
                     // 那属于"在空白处按下"，此时松开应当什么都不发生。
                     self.pressed = Some(id.clone());
                     out.push(RoutedEvent::Press(id.clone()));
+                    // ⚠️ `pressed` 变了就必须 `revision++`。
+                    //
+                    // 宿主靠 `revision` 变化决定「要不要重绘」，而按下态是**画出来的**
+                    // （`.pressed` 分类名 → 样式层换色）。漏了这一行，症状是
+                    // 「按钮按下时没有按下样式，直到鼠标动一下才出现」。
+                    self.revision += 1;
                 }
             }
             PointerPhase::Move => {
@@ -256,6 +262,17 @@ impl InputRouter {
                     if same {
                         out.push(RoutedEvent::Click(pressed));
                     }
+                    // ⚠️ `pressed` 被清空同样要 `revision++`。
+                    //
+                    // 这一行曾经是**整个交互链路最隐蔽的一处漏**：宿主要靠
+                    // `revision` 变化决定「这一帧要不要重绘」，而 `Click` 之后
+                    // 应用通常立刻改了状态（切页、勾选、展开…）。若此时 hover
+                    // 恰好没变（鼠标没动 —— 点按钮时最常见），`revision` 不变 ⇒
+                    // 宿主判定「什么都没变」⇒ **不重绘**。
+                    //
+                    // 症状：第一次点击「没反应」，把鼠标移开再移回来才生效 ——
+                    // 而画面上没有任何异常，看不出是重绘漏了。
+                    self.revision += 1;
                 }
                 // 抬起后悬停立刻跟上指针当前位置：一次"按下→拖出→拖回"结束时，
                 // 悬停应已经是"在按钮上"，否则画面会停在无高亮状态直到下次移动。

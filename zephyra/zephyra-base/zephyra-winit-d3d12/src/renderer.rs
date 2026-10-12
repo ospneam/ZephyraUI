@@ -227,6 +227,12 @@ struct StreamBuffer {
     head: std::cell::Cell<u64>,
     /// 还没做过任何一次上传（`resident` 仍停在 `COMMON`）。
     fresh: std::cell::Cell<bool>,
+    /// 帧内被替换掉的旧 `StreamBuffer`，留到帧尾（`record` 帧首清空）。
+    ///
+    /// 帧内扩容发生在**已经上传过之后**：此刻本次 `record` 里记下了往旧块的
+    /// `CopyBufferRegion`。GPU 要等执行到那条命令才读完，所以旧块不能当场丢 ——
+    /// 见 [`Self::reserve`]。
+    retire: Vec<StreamBuffer>,
 }
 
 /// 一次 `record` 的输入。
@@ -695,9 +701,18 @@ struct CmdEnv<'a> {
 
 /// 由脏区算出帧内 scissor。
 ///
-/// ⚠ D3D12 的 `ClearRenderTargetView` **会**被 scissor 裁掉（D3D11 不会 —— 那是两个
-/// 后端的一处真实差异，见 D3D11 那边 `bind_target` 的注释）。所以本后端里清屏也在
-/// scissor 之内。
+/// # 清屏与 scissor 是**两件事**（曾经在这里写错过）
+///
+/// 原文断言「D3D12 的 `ClearRenderTargetView` 受 scissor 裁掉，D3D11 不受」——
+/// **这是错的，而且错得很贵**。两个后端的 clear 区域都由 `ClearRenderTargetView`
+/// 的 `pRects` 参数决定：`pRects == NULL` 清**整张**目标，与 scissor 无关。
+///
+/// 错在这里的直接后果：每帧整屏清成 surface 色，再只画脏矩形 ⇒ **任何交互帧
+/// （hover / 按下 / 勾选）都会把界面上没脏的部分抹成一片底色**。症状是
+/// 「点一下之后界面花掉」，而且首帧完全正常（首帧 `Damage::Full`），
+/// 于是「渲染有问题」这件事只会在交互之后出现，与像素、内容、布局都无关。
+///
+/// 现在清屏走 [`damage_clear_rects`]：脏矩形就只清那一块。
 ///
 /// 退化矩形回退到**全屏**而不是照设：D3D12 的 scissor 是半开区间 `[left, right)`，
 /// `right <= left` 时什么都不画，而「脏区为空」更可能是调用方算错。
@@ -733,6 +748,20 @@ fn damage_scissor(size: (u32, u32), damage: zephyra_core::frame::Damage) -> RECT
                     bottom: size.1 as i32,
                 }
             }
+        }
+    }
+}
+
+/// 清屏区域：`Full` → `NULL`（整张），`Rect` → 那一块。
+///
+/// 返回的 `RECT` 只在这一帧有效（栈上），所以借用它的 `Option` 也一样短命 ——
+/// 调用点必须在自己的作用域里用完，不能存进 `CmdEnv`。
+fn damage_clear_rects(size: (u32, u32), damage: zephyra_core::frame::Damage) -> (Option<RECT>, Option<[RECT; 1]>) {
+    match damage {
+        zephyra_core::frame::Damage::Full => (None, None),
+        other => {
+            let r = damage_scissor(size, other);
+            (Some(r), Some([r]))
         }
     }
 }
@@ -1542,6 +1571,10 @@ pub fn record(&mut self, ctx: RenderCtx<'_>) -> Result<RenderReport, SurfaceErro
     // 暂存区末尾，撞上 `record_upload` 的越界检查才失败，于是错在离原因很远的地方。
     self.vertex.head.set(0);
     self.index.head.set(0);
+    // 上一帧退役的旧缓冲到此作废：`begin_frame` 已经 `wait_gpu`，GPU 空闲，
+    // 它们引用的所有 `CopyBufferRegion` 都读完了。
+    self.vertex.clear_retired();
+    self.index.clear_retired();
     //
     // ⚠ `t0` **也**必须先绑一次（绑图集兜住）：D3D12 的根描述符表在命令列表打开时
     // 是**未设置**的，而未设置在调试层不一定报错 —— 症状是采样读到随机内容，于是某个
@@ -1558,9 +1591,19 @@ pub fn record(&mut self, ctx: RenderCtx<'_>) -> Result<RenderReport, SurfaceErro
     // 是全 1.0 或全 0.0，于是永远看不出来。
     //
     // `Color` 存的是**线性** 0..1，而 `ClearRenderTargetView` 要的也是线性。
+    //
+    // ⚠⚠ `pRects` 决定清屏区域，**与 scissor 无关**（见 [`damage_scissor`] 的说明）。
+    // 这里必须按脏区清：整屏清 + 只画脏区 = 脏区之外全被抹成 clear 色，而
+    // 「点一下之后界面花掉」正是这么来的。
     let ca = clear.a;
+    let (_sc, clear_rects) = damage_clear_rects(size, damage);
+    let rect_slice: Option<&[RECT]> = clear_rects.as_ref().map(|r| r.as_slice());
     unsafe {
-        list.ClearRenderTargetView(rtv, &[clear.r * ca, clear.g * ca, clear.b * ca, ca], None);
+        list.ClearRenderTargetView(
+            rtv,
+            &[clear.r * ca, clear.g * ca, clear.b * ca, ca],
+            rect_slice,
+        );
     }
 
     // ---- 2. 分段 ----
@@ -1693,16 +1736,11 @@ fn upload_geometry(
     report: &mut RenderReport,
 ) -> Result<(), SurfaceError> {
     let needed = report.vertex_bytes.max(64);
-    if needed > self.vertex_capacity {
-        let grown = needed.next_power_of_two();
-        // 扩容会重建资源，所以顶点已写好的内容会丢 —— 所以扩容发生在**写入**之前。
-        if let Ok(b) =
-            StreamBuffer::new(device, grown, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER)
-        {
-            self.vertex = b;
-            self.vertex_capacity = grown;
-            report.reallocated = true;
-        }
+    // 容量判据必须含已经花掉的 `head` —— 主路径与离屏 pass 共用这条缓冲，
+    // 见 `StreamBuffer::reserve`。
+    if self.vertex.reserve(device, needed)? {
+        self.vertex_capacity = self.vertex.size;
+        report.reallocated = true;
     }
     // 索引要逐四边形加顶点基址，而四边形数逐帧可变，所以索引每帧都不同。
     //
@@ -1710,13 +1748,7 @@ fn upload_geometry(
     // 也除进去，而路径顶点数是 3 的倍数，整数截断会让四边形段的基址全部错位。
     if !scratch.indices.is_empty() {
         let need = (scratch.indices.len() * 2) as u64;
-        if need > self.index.size {
-            if let Ok(b) =
-                StreamBuffer::new(device, need.next_power_of_two(), D3D12_RESOURCE_STATE_INDEX_BUFFER)
-            {
-                self.index = b;
-            }
-        }
+        self.index.reserve(device, need)?;
         self.index
             .record_upload(list, bytemuck::cast_slice(&scratch.indices))?;
     }
@@ -2108,25 +2140,14 @@ fn replay(
         samples: u32,
     ) -> Result<(), SurfaceError> {
         let bytes = (4 * std::mem::size_of::<Vertex>()) as u64;
+        // 与 `upload_geometry` 同一条缓冲：主路径可能刚把暂存区用到某个位置，
+        // 所以这里也要按「head + 本段」判容量（见 `StreamBuffer::reserve`）。
+        if self.vertex.reserve(device, bytes)? {
+            self.vertex_capacity = self.vertex.size;
+        }
         let idx = quad::expand_indices_with_paths(1, 0).0;
-        if bytes > self.vertex_capacity {
-            let grown = bytes.next_power_of_two();
-            if let Ok(b) = StreamBuffer::new(
-                device,
-                grown,
-                D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER,
-            ) {
-                self.vertex = b;
-                self.vertex_capacity = grown;
-            }
-        }
         let need = (idx.len() * 2) as u64;
-        if need > self.index.size {
-            if let Ok(b) = StreamBuffer::new(device, need.next_power_of_two(), D3D12_RESOURCE_STATE_INDEX_BUFFER)
-            {
-                self.index = b;
-            }
-        }
+        self.index.reserve(device, need)?;
         self.vertex
             .record_upload(list, bytemuck::cast_slice(quad))?;
         self.index
@@ -2199,6 +2220,55 @@ impl UploadBuffer {
     }
 }
 
+/// 流上传的**源偏移对齐**（`CopyBufferRegion` 的 `SrcOffset` 要求）。
+///
+/// 缓冲本身只要 4 字节，但用 256 与纹理上传的规则一致，省掉"这里为什么是 4"
+/// 的解释成本。
+const UPLOAD_ALIGN: u64 = 256;
+
+/// 流上传段落落在哪的**唯一定义**：起点与结束。
+///
+/// # 为什么必须是**这一个**函数
+///
+/// [`StreamBuffer::reserve`]（决定要不要扩容）与 [`StreamBuffer::record_upload`]
+/// （真正记录拷贝）必须对"这一段落在哪"给出**同一个**答案。它们曾各算一遍，
+/// 于是 `reserve` 少算了对齐那一项：
+///
+/// - `reserve` 判的是 `head + extra <= size`；
+/// - `record_upload` 实际用的起点是 `align_up(head)`。
+///
+/// `head = 8000`、缓冲 8192、`extra = 12` 时，前者算 `8012 <= 8192` 放行，
+/// 后者把起点推到 **8192** 再放 12 字节 → 越界。报错形如
+/// 「本段要 12 字节，从 8192 起放不下（暂存区 8192 字节）」——
+///
+/// - 12 字节正是 `draw_pass_quad` 传的一枚四边形（6 个 `u16` 索引，无路径）；
+/// - 8192 是索引流缓冲 `next_power_of_two` 之后的容量；
+/// - 起点正好顶在末尾，是"只差那点对齐"的形状，不是"缓冲真的太小"。
+///
+/// 症状是**整帧被丢**（`record` 一路上抛到宿主），表现为"界面某一帧起全不更新"
+/// —— 与样式没加载、与 GPU 坏掉都长得不一样，极难归因。
+///
+/// 所以这里把调用点收敛到**一个**函数上，并把不变式写成测试（见 `renderer::tests`）。
+/// 将来再加第三种上传路径，没有"再单独算一遍"的机会。
+fn upload_span(head: u64, bytes: u64) -> (u64, u64) {
+    // ⚠️ **两处**都要饱和。
+    //
+    // `head + UPLOAD_ALIGN - 1` 自己就会溢出（早先的写法只给最后一步加了
+    // `saturating_add`，保护错了操作数）。回绕的后果比 panic 更糟：`off`
+    // 变成一个很小的数 → `reserve` 判 `want <= size` **放行** →
+    // `record_upload` 从头写，覆盖同帧已录制的其它段。那是静默的内存损坏，
+    // 而不是一条看得见的报错。
+    let off = head
+        .saturating_add(UPLOAD_ALIGN - 1)
+        & !(UPLOAD_ALIGN - 1);
+    (off, off.saturating_add(bytes))
+}
+
+/// 从 `head` 起再放 `bytes` 字节，会占到的**结束偏移**。
+fn upload_end(head: u64, bytes: u64) -> u64 {
+    upload_span(head, bytes).1
+}
+
 impl StreamBuffer {
     /// 建一块 `size` 字节的流缓冲。
     ///
@@ -2230,7 +2300,58 @@ impl StreamBuffer {
             // ⚠ 这个错误**单帧看不出来**：验证层要等第二次 `ExecuteCommandLists`
             // 才开始比对，于是「只渲一帧」的测试全绿，而真实宿主每帧都在报错。
             fresh: std::cell::Cell::new(true),
+            retire: Vec::new(),
         })
+    }
+
+    /// 为「还要上传 `extra` 字节」预留空间；不足就整块重建。返回是否重建过。
+    ///
+    /// # 判据必须含 `head`
+    ///
+    /// 「本段要多少」不等于「本帧已花了多少」：主路径（[`Renderer::record`] →
+    /// `upload_geometry`）与离屏 pass（`draw_pass_quad`：模糊 / 投影 / 多级链）
+    /// 传的是**同一条** `StreamBuffer`。只看 `extra` 的判据会在主路径刚好把
+    /// 暂存区用满时放行离屏 pass，于是 `record_upload` 在最后一个字节处越界 ——
+    /// 而那个错误一路上抛，**整帧被丢**。症状是「界面某一帧起全不更新」，与
+    /// 样式没加载、与 GPU 坏掉都长得不一样，极难归因。
+    ///
+    /// demo 实测过这个场景：demo.zstyle 全量迁移后圆角变多，主路径顶点涨到
+    /// 128KB 用满初始容量，随后三个投影样张的离屏 pass 各传 240 字节全数失败。
+    ///
+    /// # 为什么重建而不是回绕游标
+    ///
+    /// 回绕会覆盖 GPU 还没读完的段。而重建的前提是安全的：`record` 帧首
+    /// `begin_frame` 已 `wait_gpu`，进入本函数时 GPU 空闲；旧块被移进
+    /// [`Self::retire`] 活到帧尾，本次已记录的拷贝不受影响。
+    fn reserve(&mut self, device: &ID3D12Device, extra: u64) -> Result<bool, SurfaceError> {
+        // ⚠️ `extra` 之外还必须给 **256 字节对齐**留出余量。
+        //
+        // [`Self::record_upload`] 把 `head` 向上取整到 256 的倍数才开始放
+        // （`CopyBufferRegion` 的 `SrcOffset` 要求对齐）。所以「本段要 `extra`
+        // 字节」**不等于**「从对齐后的偏移起要 `extra` 字节」——
+        // 最坏情况对齐会把起点再往后推 255 字节。
+        //
+        // 不把这份余量算进判据的后果很具体：主路径刚好把暂存区用满时
+        // （`head + extra <= size` 通过了），`record_upload` 却因对齐越界，
+        // 抛错**整帧被丢**。症状是"界面某一帧起全不更新"。
+        // 这个错此前报的是「本段要 12 字节，从 8192 起放不下」——
+        // 12 字节的东西放在 8KB 边界上，正是"只差那点对齐"的形状。
+        let want = upload_end(self.head.get(), extra.max(1));
+        if want <= self.size {
+            return Ok(false);
+        }
+        let grown = want.next_power_of_two();
+        let mut old = std::mem::replace(self, StreamBuffer::new(device, grown, self.draw_state)?);
+        // 旧块连它自己退役的旧块一起继续留着：同一次 record 里可能多次扩容。
+        let mut carried = std::mem::take(&mut old.retire);
+        carried.push(old);
+        self.retire = carried;
+        Ok(true)
+    }
+
+    /// 清空退役列表。**只在 `record` 帧首调用**（那时 GPU 已空闲）。
+    fn clear_retired(&mut self) {
+        self.retire = Vec::new();
     }
 
     /// 记录「把新内容搬进常驻缓冲」所需的屏障、拷贝与状态还原。
@@ -2258,12 +2379,13 @@ impl StreamBuffer {
         if bytes.is_empty() {
             return Ok(());
         }
-        let n = (bytes.len() as u64).min(self.size);
         // `CopyBufferRegion` 的 `SrcOffset` 要求对齐（缓冲只要 4 字节，但用 256 与
         // 纹理的规则一致，省掉「这里为什么是 4」的解释成本）。
-        const ALIGN: u64 = 256;
-        let off = (self.head.get() + ALIGN - 1) & !(ALIGN - 1);
-        let end = off + n;
+        let n = (bytes.len() as u64).min(self.size);
+        // 起点与结束都从**同一个** helper 来：早先这里自己算 `off`，而 `end` 走
+        // 另一条算式，两者一旦漂移，`record_upload` 的检查就不再等于 `reserve`
+        // 的判据 —— 那正是本次要修的 bug 的成因。
+        let (off, end) = upload_span(self.head.get(), n);
         if end > self.size {
             return Err(SurfaceError::invalid(format!(
                 "上传暂存区不够：本段要 {n} 字节，从 {off} 起放不下（暂存区 {} 字节）。\
@@ -2554,5 +2676,138 @@ mod tests {
              「必须设一位」那条规则只适用于单节点 API 清单（命令队列/命令列表/\
              描述符堆/查询堆），PSO 不在其中。"
         );
+    }
+
+    /// 回归：`upload_end` 必须**含对齐**那一项。
+    ///
+    /// # 这个 bug 的形状（值得原样保留在测试里）
+    ///
+    /// 索引流缓冲 `next_power_of_two` 之后是 8192；主路径（`upload_geometry`）
+    /// 把 `head` 推到 8000；随后离屏 pass（`draw_pass_quad`）要传一枚四边形的
+    /// 索引 —— `expand_indices_with_paths(1, 0)` 是 6 个 `u16` = **12 字节**。
+    ///
+    /// 旧实现里 `reserve` 判 `head + extra <= size`：`8012 <= 8192` **放行**；
+    /// 而 `record_upload` 把起点对齐到 **8192** 再放 12 字节 → 越界，整帧被丢。
+    ///
+    /// 判据直接写成那个形状：`head = 8000` 时，12 字节**必须放不下**。
+    /// 若哪天有人把对齐项从 `upload_end` 里去掉，这条立刻红。
+    #[test]
+    fn 上传结束偏移_必须含_256_字节对齐() {
+        // 对齐把起点从 8000 推到 8192，于是 12 字节放不下。
+        assert_eq!(
+            upload_end(8000, 12),
+            8192 + 12,
+            "起点应当被推到 8192（8000 的下一个 256 倍数）"
+        );
+        assert!(
+            upload_end(8000, 12) > 8192,
+            "回归：旧实现算成 8012 <= 8192 于是放行，随后 record_upload 越界"
+        );
+        // 对齐前就在边界上时，判据与实际一致（不该多要一整个对齐块）。
+        assert_eq!(upload_end(8192, 12), 8204);
+        assert_eq!(upload_end(0, 12), 12);
+    }
+
+    /// `upload_end` 对 `head` 单调不减 —— `reserve` 靠它判断"再放一段会不会超"，
+    /// 若出现非单调就会出现"更大的 head 反而放得下"的荒谬情形。
+    #[test]
+    fn 上传结束偏移_对_head_单调不减() {
+        let mut prev = 0u64;
+        for head in (0..40_000u64).step_by(37) {
+            let cur = upload_end(head, 64);
+            assert!(
+                cur >= prev,
+                "head={head}: upload_end={cur} 小于上一个 {prev}"
+            );
+            prev = cur;
+        }
+    }
+
+    /// `head` 大到接近 `u64::MAX` 时，`reserve` 必须**永远判为要扩容**。
+    ///
+    /// # 为什么这是饱和的正确判据（而不是「end > head」）
+    ///
+    /// 先排除一个**看起来**该守、实际守不住的属性：`off < head` 在这种输入下
+    /// 确实可能出现（`u64::MAX` 被掩掉低位后反而变小）。但它是**不可达**的 ——
+    /// 此时 `want` 也必然是一个天文数字，`reserve` 必然扩容、`head` 归零，
+    /// `record_upload` 永远不会拿着这个 `head` 跑。
+    ///
+    /// 真正要防的是**回绕**：若 `head + ALIGN - 1` 溢出后回绕成小数，
+    /// `want` 会突然变小，于是 `want <= size` 成立、扩容被跳过，
+    /// `record_upload` 从老远的老位置写 —— **覆盖同帧已录制的其它段**。
+    /// 那不是看得见的报错，是静默的内存损坏。
+    ///
+    /// 所以判据取真实后果：荒谬 `head` 的 `want` 必须大到不可能被当成「放得下」。
+    #[test]
+    fn 上传结束偏移_荒谬的_head_必须判为放不下() {
+        // 1GB 远超任何暂存区（初始 64KB / 4KB，扩容上限也就几 MB）。
+        const IMPOSSIBLE: u64 = 1 << 30;
+        for head in [
+            u64::MAX - 8,
+            u64::MAX - 256,
+            u64::MAX - 255,
+            u64::MAX - 1,
+            u64::MAX,
+        ] {
+            let want = upload_end(head, 64);
+            assert!(
+                want > IMPOSSIBLE,
+                "head={head} 算出 want={want}，小到会被当成「放得下」—— 溢出回绕了"
+            );
+            // 且不能 panic（本测试本身跑过就说明这一步）。
+        }
+    }
+
+    /// 现实域内 `upload_end` 必须**精确等于**「对齐后的起点 + 字节数」。
+    ///
+    /// 上一条管「不可达的荒谬输入」，这一条管「真会跑到的输入」：
+    /// 缓冲容量最大不过几十 MB，`head` 不可能离开。[`UPLOAD_ALIGN`] 的对齐项
+    /// 在这个域里必须精确，不能有半点漂移。
+    #[test]
+    fn 上传结束偏移_现实域内精确() {
+        let align = |v: u64| (v + UPLOAD_ALIGN - 1) & !(UPLOAD_ALIGN - 1);
+        for &head in &[0u64, 1, 255, 256, 257, 7919, 8000, 8180, 8192, 8193, 65_536] {
+            for &bytes in &[0u64, 1, 12, 64, 300, 4096] {
+                assert_eq!(
+                    upload_end(head, bytes),
+                    align(head) + bytes,
+                    "head={head} bytes={bytes}"
+                );
+            }
+        }
+    }
+
+    /// 起点必须**真的对齐**，且 `head` 未对齐时起点必须严格后移。
+    ///
+    /// 这一条是 bug 的另一半：对齐项存在的意义就是把起点推后。
+    /// 若哪天有人把 `& !(ALIGN-1)` 去掉，「12 字节放不进 8192 边界上」的回归
+    /// 会以另一种形式回来。
+    #[test]
+    fn 上传起点_真的对齐() {
+        for head in 0..3000u64 {
+            let (off, _) = upload_span(head, 0);
+            assert_eq!(off % UPLOAD_ALIGN, 0, "head={head} 的起点 {off} 没对齐");
+            assert!(off >= head, "head={head} 的起点 {off} 跑到 head 前面了");
+        }
+    }
+
+    /// `end - off` 必须**正好**等于请求的字节数。
+    ///
+    /// 原实现里 `off` 与 `end` 是两条算式（`off` 单独算、`end = off + n`）。
+    /// 一旦有人改了其中一条而漏了另一条，`end - off != n` 会立刻在这里现形 ——
+    /// 而它的实际后果是 memcpy 与游标推进量不一致，也就是"拷了 N 字节却只推进 M"，
+    /// 下一段会重叠覆盖上一段。那类损坏**没有报错**，只是画面随机错。
+    #[test]
+    fn 上传区间_长度守恒() {
+        for head in 0..4000u64 {
+            for bytes in [0u64, 1, 12, 64, 300, 4096, u64::MAX / 2, u64::MAX] {
+                let (off, end) = upload_span(head, bytes);
+                assert_eq!(
+                    end - off,
+                    bytes.min(u64::MAX - off),
+                    "head={head} bytes={bytes}：区间长度不等于请求长度"
+                );
+            }
+        }
     }
 }

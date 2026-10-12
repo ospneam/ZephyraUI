@@ -1,0 +1,2122 @@
+/* ZephyraUI 控件层外观。
+ *
+ * 与 examples 的两个 .zstyle 同一套规矩：源码只发分类名，这里说长相。
+ * 度量照 RinUI（themes/dark.qml 的 appearance）：
+ *   buttonRadius 5 · smallRadius 3 · borderWidth 1 · sliderHandle 20 ·
+ *   progressBar 高 3 · badge 高 16 · navItem 高 37 · ToolButton 40×40。
+ *
+ * # 特异性次序（写规则的顺序就是优先级的一部分）
+ *
+ * 同级（同样分类名数量）按出现次序后者赢。因此：
+ *   · 变体规则（standard/accent/subtle/checked/selected/severity）
+ *     放在**状态规则**（hovered/pressed）之前，交叉态用 3 名规则显式收口；
+ *   · generic 状态规则不写 background —— 那会把 accent 按钮 hover 成灰。
+ */
+
+/* ---- 通用叶子 ---- */
+
+Container.glyph {
+    width: 20px;
+    height: 20px;
+    icon-color: @content;
+}
+
+/* 分隔线：横向铺满要靠父容器的 cross-align: stretch（core 没有 flex-grow，
+ * 而 stretch 正是它的对应物）。见各父容器规则里的 cross-align。 */
+Container.divider {
+    height: 1px;
+    background: @divider;
+}
+
+Container.divider-v {
+    width: 1px;
+    height: 20px;
+    background: @divider;
+}
+
+/* ---- 排版档位（RinUI Typography） ---- */
+
+Text.text-title {
+    text-size: 20px;
+    text-color: @content;
+}
+
+Text.text-subtitle {
+    text-size: 16px;
+    text-color: @content;
+}
+
+Text.text-body {
+    text-size: 14px;
+    text-color: @content;
+}
+
+Text.text-body-strong {
+    text-size: 14px;
+    text-color: @content;
+}
+
+Text.text-caption {
+    text-size: 12px;
+    text-color: @content_secondary;
+}
+
+/* ---- Button ---- */
+
+Control.button {
+    direction: horizontal;
+    main-align: center;
+    cross-align: center;
+    spacing: 8px;
+    padding: 6px;
+    corner-radius: 5px;
+    height: 32px;
+    border-width: 1px;
+}
+
+Control.button.standard {
+    background: @control_fill;
+    border-color: @control_border;
+}
+
+Control.button.accent {
+    background: @accent_fill;
+    border-color: @accent_fill;
+}
+
+Control.button.subtle {
+    background: transparent;
+    border-color: transparent;
+}
+
+/* 状态规则：只碰 border 这类与变体无关的量；background 全部走 3 名交叉规则。 */
+Control.button.hovered {
+    border-color: @control_border_strong;
+}
+
+Control.button.standard.hovered {
+    background: @control_fill_hover;
+}
+
+Control.button.standard.pressed {
+    background: @control_fill_pressed;
+}
+
+Control.button.subtle.hovered {
+    background: @control_secondary;
+}
+
+Control.button.subtle.pressed {
+    background: @control_tertiary;
+}
+
+/* accent 的三个交叉态都保持强调底 —— RinUI 的 highlighted 按下只压字不换底。 */
+Control.button.accent.hovered {
+    background: @accent_fill;
+}
+
+Control.button.accent.pressed {
+    background: @accent_fill;
+}
+
+Text.btn-label {
+    text-size: 14px;
+    text-color: @content;
+}
+
+Text.btn-label.hovered {
+    text-color: @content;
+}
+
+Text.btn-label.pressed {
+    text-color: @content;
+}
+
+/* 变体后置：与 hovered/pressed 同级时赢（次序在文件后面）。 */
+Text.btn-label.accent {
+    text-color: @on_accent_fill;
+}
+
+Text.btn-label.accent.hovered {
+    text-color: @on_accent_fill;
+}
+
+Text.btn-label.accent.pressed {
+    text-color: @on_accent_fill;
+}
+
+Container.btn-icon {
+    width: 16px;
+    height: 16px;
+    icon-color: @content_secondary;
+}
+
+Container.btn-icon.hovered {
+    icon-color: @content;
+}
+
+Container.btn-icon.pressed {
+    icon-color: @content;
+}
+
+Container.btn-icon.accent {
+    icon-color: @on_accent_fill;
+}
+
+Container.btn-icon.accent.hovered {
+    icon-color: @on_accent_fill;
+}
+
+Container.btn-icon.accent.pressed {
+    icon-color: @on_accent_fill;
+}
+
+/* ---- ToolButton（40×40） ---- */
+
+Control.tool-button {
+    width: 40px;
+    height: 40px;
+    corner-radius: 5px;
+    padding: 10px;
+    direction: horizontal;
+    main-align: center;
+    cross-align: center;
+    background: @control_fill;
+    border-width: 1px;
+    border-color: @control_border;
+}
+
+Control.tool-button.hovered {
+    background: @control_fill_hover;
+    border-color: @control_border_strong;
+}
+
+Control.tool-button.pressed {
+    background: @control_fill_pressed;
+}
+
+Container.tool-icon {
+    width: 20px;
+    height: 20px;
+    icon-color: @content;
+}
+
+Container.tool-icon.hovered {
+    icon-color: @content;
+}
+
+Container.tool-icon.pressed {
+    icon-color: @content;
+}
+
+/* ---- PillButton ---- */
+
+Control.pill {
+    direction: horizontal;
+    main-align: center;
+    cross-align: center;
+    spacing: 8px;
+    padding: 8px;
+    height: 32px;
+    corner-radius: 99px;
+    background: @control_fill;
+    border-width: 1px;
+    border-color: @control_border;
+}
+
+Control.pill.checked {
+    background: @accent_fill;
+    border-color: @accent_fill;
+}
+
+Control.pill.hovered {
+    background: @control_fill_hover;
+}
+
+Control.pill.checked.hovered {
+    background: @accent_fill;
+}
+
+Control.pill.pressed {
+    background: @control_fill_pressed;
+}
+
+Control.pill.checked.pressed {
+    background: @accent_fill;
+}
+
+Text.pill-label {
+    text-size: 13px;
+    text-color: @content;
+}
+
+Text.pill-label.hovered {
+    text-color: @content;
+}
+
+Text.pill-label.checked {
+    text-color: @on_accent_fill;
+}
+
+Text.pill-label.checked.hovered {
+    text-color: @on_accent_fill;
+}
+
+Container.pill-icon {
+    width: 16px;
+    height: 16px;
+    icon-color: @content_secondary;
+}
+
+Container.pill-icon.checked {
+    icon-color: @on_accent_fill;
+}
+
+Container.pill-icon.checked.hovered {
+    icon-color: @on_accent_fill;
+}
+
+/* ---- CheckBox / RadioButton（同一骨架，两套词） ---- */
+
+Control.check-box {
+    direction: horizontal;
+    cross-align: center;
+    spacing: 8px;
+    height: 20px;
+}
+
+Control.radio-box {
+    direction: horizontal;
+    cross-align: center;
+    spacing: 8px;
+    height: 20px;
+}
+
+Container.check-indicator {
+    width: 20px;
+    height: 20px;
+    corner-radius: 5px;
+    background: @control_fill;
+    border-width: 1px;
+    border-color: @control_border_strong;
+}
+
+Container.radio-indicator {
+    width: 20px;
+    height: 20px;
+    corner-radius: 99px;
+    background: @control_fill;
+    border-width: 1px;
+    border-color: @control_border_strong;
+}
+
+Container.check-indicator.checked {
+    background: @accent_fill;
+    border-color: @accent_fill;
+}
+
+Container.radio-indicator.checked {
+    background: @accent_fill;
+    border-color: @accent_fill;
+}
+
+Container.check-indicator.hovered {
+    background: @control_secondary;
+}
+
+Container.radio-indicator.hovered {
+    background: @control_secondary;
+}
+
+Container.check-indicator.checked.hovered {
+    background: @accent_fill;
+}
+
+Container.radio-indicator.checked.hovered {
+    background: @accent_fill;
+}
+
+/* 选中标记：常驻子节点，未选中时透明（不产生绘制命令也不占视觉）。 */
+Container.check-mark {
+    width: 8px;
+    height: 8px;
+    corner-radius: 2px;
+    background: transparent;
+}
+
+Container.check-mark.checked {
+    background: @on_accent_fill;
+}
+
+Container.radio-dot {
+    width: 8px;
+    height: 8px;
+    corner-radius: 99px;
+    background: transparent;
+}
+
+Container.radio-dot.checked {
+    background: @on_accent_fill;
+}
+
+Text.check-label {
+    text-size: 14px;
+    text-color: @content_secondary;
+}
+
+Text.check-label.checked {
+    text-color: @content;
+}
+
+Text.check-label.hovered {
+    text-color: @content;
+}
+
+/* ---- ToggleSwitch ---- */
+
+Control.switch {
+    direction: horizontal;
+    cross-align: center;
+    height: 20px;
+}
+
+/* 关：把手靠左（main-align 的默认 start）；开：靠右 + 强调底。
+ * 位置是布局属性，由样式表给 —— 源码不写坐标，也没有数据几何。 */
+Container.switch-track {
+    width: 40px;
+    height: 20px;
+    corner-radius: 99px;
+    padding: 4px;
+    direction: horizontal;
+    main-align: start;
+    cross-align: center;
+    background: @control_strong;
+    border-width: 1px;
+    border-color: @content_disabled;
+}
+
+Container.switch-track.on {
+    main-align: end;
+    background: @accent_fill;
+    border-color: @accent_fill;
+}
+
+Container.switch-knob {
+    width: 12px;
+    height: 12px;
+    corner-radius: 99px;
+    background: @content;
+}
+
+/* ---- Slider ---- */
+
+Control.slider {
+    direction: horizontal;
+    cross-align: center;
+    spacing: 12px;
+    height: 32px;
+}
+
+Container.slider-track {
+    width: 220px;
+    height: 4px;
+    corner-radius: 99px;
+    direction: horizontal;
+    main-align: start;
+    cross-align: center;
+    background: @control_strong;
+}
+
+Container.slider-fill {
+    height: 4px;
+    corner-radius: 99px;
+    background: @accent_fill;
+}
+
+Container.slider-thumb {
+    width: 20px;
+    height: 20px;
+    corner-radius: 99px;
+    background: @content;
+    border-width: 1px;
+    border-color: @accent_fill;
+}
+
+Text.slider-value {
+    text-size: 12px;
+    text-color: @content_secondary;
+}
+
+/* ---- ProgressBar（3px 药丸） ---- */
+
+Control.progress {
+    width: 240px;
+    height: 3px;
+    corner-radius: 99px;
+    direction: horizontal;
+    main-align: start;
+    cross-align: center;
+    background: @control_strong;
+}
+
+Container.progress-fill {
+    height: 3px;
+    corner-radius: 99px;
+    background: @accent_fill;
+}
+
+/* running = 默认档（强调色）。显式写：源码会发 `.running` 分类名。 */
+Container.progress-fill.running {
+    background: @accent_fill;
+}
+
+Container.progress-fill.paused {
+    background: @caution;
+}
+
+Container.progress-fill.error {
+    background: @critical;
+}
+
+/* ---- InfoBadge ---- */
+
+Control.badge {
+    direction: horizontal;
+    main-align: center;
+    cross-align: center;
+    height: 16px;
+    corner-radius: 99px;
+    padding: 8px;
+    background: @accent_fill;
+    border-width: 1px;
+    border-color: @accent_fill;
+}
+
+Control.badge.success {
+    background: @success;
+    border-color: @success;
+}
+
+Control.badge.caution {
+    background: @caution;
+    border-color: @caution;
+}
+
+Control.badge.error {
+    background: @critical;
+    border-color: @critical;
+}
+
+Control.badge.outline {
+    background: transparent;
+}
+
+Control.badge.outline.success {
+    border-color: @success;
+}
+
+Control.badge.outline.caution {
+    border-color: @caution;
+}
+
+Control.badge.outline.error {
+    border-color: @critical;
+}
+
+/* info 档 = 默认强调色。显式写出来而不是靠默认值：源码会发 `.info` 分类名，
+ * 而「没有同名规则」在门禁眼里就是拼错（静默失效的最隐蔽形态）。 */
+Control.badge.info {
+    background: @accent_fill;
+    border-color: @accent_fill;
+}
+
+Control.badge.outline.info {
+    background: transparent;
+    border-color: @accent_fill;
+}
+
+Text.badge-text {
+    text-size: 12px;
+    text-color: @on_accent_fill;
+}
+
+Text.badge-text.outline {
+    text-color: @accent_fill;
+}
+
+Text.badge-text.outline.success {
+    text-color: @success;
+}
+
+Text.badge-text.outline.caution {
+    text-color: @caution;
+}
+
+Text.badge-text.outline.error {
+    text-color: @critical;
+}
+
+Text.badge-text.info {
+    text-color: @on_accent_fill;
+}
+
+Text.badge-text.outline.info {
+    text-color: @accent_fill;
+}
+
+Container.badge-dot {
+    width: 4px;
+    height: 4px;
+    corner-radius: 99px;
+    background: @accent_fill;
+}
+
+Container.badge-dot.info {
+    background: @accent_fill;
+}
+
+Container.badge-dot.success {
+    background: @success;
+}
+
+Container.badge-dot.caution {
+    background: @caution;
+}
+
+Container.badge-dot.error {
+    background: @critical;
+}
+
+/* ---- Card 族 ---- */
+
+Container.card {
+    background: @card;
+    corner-radius: 3px;
+    padding: 12px;
+    border-width: 1px;
+    border-color: @card_border;
+}
+
+Container.setting-card {
+    background: @card;
+    corner-radius: 3px;
+    padding: 12px;
+    border-width: 1px;
+    border-color: @card_border;
+    direction: horizontal;
+    main-align: space-between;
+    cross-align: center;
+    height: 56px;
+}
+
+Container.setting-texts {
+    direction: vertical;
+    spacing: 2px;
+}
+
+Text.setting-title {
+    text-size: 14px;
+    text-color: @content;
+}
+
+Text.setting-desc {
+    text-size: 12px;
+    text-color: @content_secondary;
+}
+
+Container.setting-control {
+    direction: horizontal;
+    main-align: end;
+    cross-align: center;
+}
+
+Container.clip-card {
+    background: @card_secondary;
+    corner-radius: 3px;
+    padding: 10px;
+    direction: vertical;
+    spacing: 8px;
+    width: 200px;
+    /* 不写 height：描述会换行，行数随文案而变（catalog 里 1~4 行都有）。
+     * 写死 84px 时两行以上的卡片会**溢出**，压到下一行卡片上 ——
+     * 而且溢出的文字正好落在下一张卡的标题位置，看起来像"排版乱了"
+     * 而不是"卡片太矮"。
+     *
+     * ⚠️ 但这样一来同一行的卡片高度会不一致，而 core 没有
+     * `align-items: stretch` 之外的等高机制 —— 所以行容器给
+     * `cross-align: stretch`（`Container.row`），让同排卡片等高。
+     */
+}
+
+Container.clip-icon {
+    width: 24px;
+    height: 24px;
+    icon-color: @accent_fill;
+}
+
+Container.clip-texts {
+    direction: vertical;
+    spacing: 2px;
+}
+
+Text.clip-desc {
+    text-size: 12px;
+    text-color: @content_secondary;
+    /* text-max-width：文本**换行**的最大宽度。
+     *
+     * ⚠️ 不设它会怎样（踩过）：`Text` 节点按**整行文本宽度**参与布局，
+     * 既不换行也不裁剪。catalog 的描述句长 40~60 字符，于是每一张卡的
+     * 描述都横向溢出到相邻卡片上 —— 44 张卡叠成一团糊字，而且
+     * 画面上"看起来像字体太大"，很难联想到是缺一个宽度。
+     *
+     * 宽度取 `Container.clip-card` 的 200px 减去左右 padding 各 10px。
+     * 这是**排版几何**，所以归样式表，不该写进源码。
+     */
+    text-max-width: 180px;
+}
+
+/* 同上：标题也可能比卡宽（"CalendarDatePicker" 这种）。
+ * 单行的裁剪 core 还不支持（见 MIGRATION 的能力边界），所以这里只给换行：
+ * 标题换成两行也不会溢出。 */
+Text.clip-title {
+    text-size: 13px;
+    text-color: @content;
+    text-max-width: 180px;
+}
+
+Container.expander {
+    background: @card;
+    corner-radius: 3px;
+    border-width: 1px;
+    border-color: @card_border;
+    direction: vertical;
+}
+
+Container.expander-header {
+    direction: horizontal;
+    main-align: space-between;
+    cross-align: center;
+    height: 40px;
+    padding: 12px;
+}
+
+Text.expander-title {
+    text-size: 14px;
+    text-color: @content;
+}
+
+Container.expander-chevron {
+    width: 12px;
+    height: 12px;
+    icon-color: @content_secondary;
+}
+
+Container.expander-chevron.closed {
+    icon-color: @content_secondary;
+}
+
+Container.expander-chevron.open {
+    icon-color: @content;
+}
+
+Container.expander-content {
+    direction: vertical;
+    spacing: 8px;
+    padding: 12px;
+}
+
+/* ---- Segmented ---- */
+
+Container.segmented {
+    direction: horizontal;
+    spacing: 3px;
+    padding: 3px;
+    corner-radius: 5px;
+    background: @control_fill;
+    border-width: 1px;
+    border-color: @control_border;
+}
+
+Control.seg-item {
+    height: 24px;
+    padding: 12px;
+    direction: horizontal;
+    main-align: center;
+    cross-align: center;
+    corner-radius: 3px;
+    background: transparent;
+}
+
+Control.seg-item.selected {
+    background: @accent_fill;
+}
+
+Control.seg-item.hovered {
+    background: @control_secondary;
+}
+
+Control.seg-item.selected.hovered {
+    background: @accent_fill;
+}
+
+Text.seg-label {
+    text-size: 12px;
+    text-color: @content_secondary;
+}
+
+Text.seg-label.hovered {
+    text-color: @content;
+}
+
+Text.seg-label.selected {
+    text-color: @on_accent_fill;
+}
+
+Text.seg-label.selected.hovered {
+    text-color: @on_accent_fill;
+}
+
+/* ---- NavigationItem ---- */
+
+Control.nav-item {
+    direction: horizontal;
+    cross-align: center;
+    spacing: 12px;
+    height: 37px;
+    padding: 8px;
+    corner-radius: 5px;
+    background: transparent;
+}
+
+Control.nav-item.selected {
+    background: @control_secondary;
+}
+
+Control.nav-item.hovered {
+    background: @control_secondary;
+}
+
+Control.nav-item.selected.hovered {
+    background: @control_tertiary;
+}
+
+/* 左侧强调条：常驻，未选中时透明（不画也不占视觉，但布局位一直在）。 */
+Container.nav-bar {
+    width: 3px;
+    height: 16px;
+    corner-radius: 99px;
+    background: transparent;
+}
+
+Container.nav-bar.selected {
+    background: @accent_fill;
+}
+
+Container.nav-icon {
+    width: 20px;
+    height: 20px;
+    icon-color: @content_secondary;
+}
+
+Container.nav-icon.hovered {
+    icon-color: @content;
+}
+
+Container.nav-icon.selected {
+    icon-color: @accent_fill;
+}
+
+Container.nav-icon.selected.hovered {
+    icon-color: @accent_fill;
+}
+
+Text.nav-label {
+    text-size: 14px;
+    text-color: @content_secondary;
+}
+
+Text.nav-label.hovered {
+    text-color: @content;
+}
+
+Text.nav-label.selected {
+    text-color: @content;
+}
+
+Text.nav-label.selected.hovered {
+    text-color: @content;
+}
+
+/* ================================================================
+ * Batch A —— BasicInput 第二批
+ * RoundButton / Hyperlink / DropDownButton / ComboBox / SpinBox /
+ * ColorPicker。度量与状态链见 controls/forms.rs 的模块文档。
+ * ================================================================ */
+
+/* ---- RoundButton（正圆 / 全圆角） ---- */
+
+Control.round {
+    width: 40px;
+    height: 40px;
+    corner-radius: 99px;
+    padding: 6px;
+    direction: horizontal;
+    main-align: center;
+    cross-align: center;
+    spacing: 8px;
+    background: @control_tertiary;
+    border-width: 1px;
+    border-color: @control_border;
+}
+
+Control.round.hovered {
+    background: @control_secondary;
+    border-color: @control_border_strong;
+}
+
+Control.round.pressed {
+    background: @control_tertiary;
+}
+
+Control.round.checked {
+    background: @accent_fill;
+    border-color: @accent_fill;
+}
+
+Container.round-icon {
+    width: 16px;
+    height: 16px;
+    icon-color: @content;
+}
+
+Container.round-icon.checked {
+    icon-color: @on_accent_fill;
+}
+
+Text.round-label {
+    text-size: 13px;
+    text-color: @content;
+}
+
+Text.round-label.checked {
+    text-color: @on_accent_fill;
+}
+
+/* ---- Hyperlink（accent 字 + 下划线） ---- */
+
+/* 竖排：下划线是常驻子节点，靠父容器的 stretch 拉到与文字同宽。 */
+Control.hyperlink {
+    direction: vertical;
+    cross-align: stretch;
+    spacing: 2px;
+    padding: 2px;
+}
+
+Text.hyperlink-label {
+    text-size: 14px;
+    text-color: @accent_fill;
+}
+
+Container.link-underline {
+    height: 1px;
+    background: @accent_fill;
+}
+
+/* ---- DropDownButton ---- */
+
+Control.drop-down {
+    direction: horizontal;
+    main-align: center;
+    cross-align: center;
+    spacing: 8px;
+    padding: 6px;
+    height: 32px;
+    corner-radius: 5px;
+    background: @control_fill;
+    border-width: 1px;
+    border-color: @control_border;
+}
+
+Control.drop-down.hovered {
+    background: @control_fill_hover;
+    border-color: @control_border_strong;
+}
+
+Control.drop-down.pressed {
+    background: @control_fill_pressed;
+}
+
+Control.drop-down.open {
+    background: @control_secondary;
+}
+
+Text.dd-label {
+    text-size: 14px;
+    text-color: @content;
+}
+
+Container.dd-icon {
+    width: 16px;
+    height: 16px;
+    icon-color: @content_secondary;
+}
+
+Container.dd-chevron {
+    width: 12px;
+    height: 12px;
+    icon-color: @content_secondary;
+}
+
+/* ---- ComboBox ---- */
+
+Control.combo-box {
+    direction: horizontal;
+    main-align: space-between;
+    cross-align: center;
+    spacing: 8px;
+    padding: 6px;
+    height: 32px;
+    width: 200px;
+    corner-radius: 5px;
+    background: @control_fill;
+    border-width: 1px;
+    border-color: @control_border;
+}
+
+Control.combo-box.hovered {
+    background: @control_fill_hover;
+}
+
+Control.combo-box.pressed {
+    background: @control_fill_pressed;
+}
+
+Text.combo-value {
+    text-size: 14px;
+    text-color: @content;
+}
+
+Container.combo-chevron {
+    width: 12px;
+    height: 12px;
+    icon-color: @content_secondary;
+}
+
+/* ---- SpinBox ---- */
+
+Control.spin-box {
+    direction: horizontal;
+    main-align: start;
+    cross-align: center;
+    spacing: 8px;
+    padding: 4px;
+    height: 32px;
+    width: 160px;
+    corner-radius: 5px;
+    background: @control_fill;
+    border-width: 1px;
+    border-color: @control_border;
+}
+
+Control.spin-box.hovered {
+    background: @control_fill_hover;
+}
+
+Text.spin-value {
+    text-size: 14px;
+    text-color: @content;
+}
+
+/* 上/下步进钮：32×24 扁平（RinUI SpinBox 的 up/down.indicator）。 */
+Control.spin-step {
+    width: 32px;
+    height: 24px;
+    corner-radius: 3px;
+    direction: horizontal;
+    main-align: center;
+    cross-align: center;
+    background: transparent;
+}
+
+Control.spin-step.hovered {
+    background: @control_secondary;
+}
+
+Control.spin-step.pressed {
+    background: @control_tertiary;
+}
+
+Container.spin-step-icon {
+    width: 12px;
+    height: 12px;
+    icon-color: @content_secondary;
+}
+
+/* ---- ColorPicker（默认色板） ---- */
+
+Container.color-picker {
+    direction: vertical;
+    spacing: 8px;
+}
+
+Container.swatch-row {
+    direction: horizontal;
+    spacing: 6px;
+}
+
+Container.swatch {
+    width: 24px;
+    height: 24px;
+    corner-radius: 3px;
+    background: @control_fill;
+    border-width: 1px;
+    border-color: @card_border;
+}
+
+Container.swatch.selected {
+    border-width: 2px;
+    border-color: @content;
+}
+
+/* 16 个默认色格。**颜色是字面量**，但它在样式表里而不是源码里 ——
+ * 与 demo.zstyle 的 #1a336b（样张色）同一先例：默认色板是数据，
+ * 应用在自己的样式表里改写 sw-0..15 即可换肤。 */
+Container.sw-0 { background: #e81123; }
+Container.sw-1 { background: #ea5800; }
+Container.sw-2 { background: #fff100; }
+Container.sw-3 { background: #00cc6a; }
+Container.sw-4 { background: #00b7c3; }
+Container.sw-5 { background: #0078d4; }
+Container.sw-6 { background: #6b69d6; }
+Container.sw-7 { background: #b146c2; }
+Container.sw-8 { background: #e3008c; }
+Container.sw-9 { background: #8a8886; }
+Container.sw-10 { background: #69797e; }
+Container.sw-11 { background: #4a5459; }
+Container.sw-12 { background: #107c10; }
+Container.sw-13 { background: #016393; }
+Container.sw-14 { background: #881798; }
+Container.sw-15 { background: #5c2e91; }
+
+/* ================================================================
+ * Batch C —— StatusAndInfo 第二批
+ * ProgressRing / InfoBar / Toast / ToolTip / BusyIndicator /
+ * PageIndicator。度量见 controls/status.rs 的模块文档。
+ * ================================================================ */
+
+/* ---- ProgressRing（圆环 + 中央数值） ---- */
+
+Container.progress-ring {
+    direction: horizontal;
+    main-align: center;
+    cross-align: center;
+}
+
+/* 圆环 = 56×56 正圆 + 6px 粗边 + 透明底。core 的 border 就是描边环；
+ * 弧进度不可用（core 无绝对定位，见 status.rs 模块文档第 1 条）。 */
+Container.ring-track {
+    width: 56px;
+    height: 56px;
+    corner-radius: 99px;
+    background: transparent;
+    border-width: 6px;
+    border-color: @control_strong;
+    direction: horizontal;
+    main-align: center;
+    cross-align: center;
+}
+
+Container.ring-track.running {
+    border-color: @accent_fill;
+}
+
+Container.ring-track.paused {
+    border-color: @caution;
+}
+
+Container.ring-track.error {
+    border-color: @critical;
+}
+
+Text.ring-value {
+    text-size: 12px;
+    text-color: @content;
+}
+
+/* ---- InfoBar ---- */
+
+Container.info-bar {
+    direction: horizontal;
+    main-align: start;
+    cross-align: center;
+    spacing: 12px;
+    padding: 12px;
+    width: 420px;
+    corner-radius: 5px;
+    background: @surface_alt;
+}
+
+Container.info-bar.success {
+    background: @success_bg;
+}
+
+Container.info-bar.caution {
+    background: @caution_bg;
+}
+
+Container.info-bar.error {
+    background: @critical_bg;
+}
+
+Container.bar-icon {
+    width: 16px;
+    height: 16px;
+    icon-color: @content;
+}
+
+Container.bar-icon.success {
+    icon-color: @success;
+}
+
+Container.bar-icon.caution {
+    icon-color: @caution;
+}
+
+Container.bar-icon.error {
+    icon-color: @critical;
+}
+
+Container.bar-texts {
+    direction: vertical;
+    spacing: 2px;
+}
+
+Text.bar-title {
+    text-size: 13px;
+    text-color: @content;
+}
+
+Text.bar-text {
+    text-size: 12px;
+    text-color: @content_secondary;
+}
+
+Control.bar-close {
+    width: 26px;
+    height: 22px;
+    corner-radius: 3px;
+    direction: horizontal;
+    main-align: center;
+    cross-align: center;
+    background: transparent;
+}
+
+Control.bar-close.hovered {
+    background: @control_secondary;
+}
+
+Container.bar-close-icon {
+    width: 12px;
+    height: 12px;
+    icon-color: @content_secondary;
+}
+
+/* ---- Toast（实心严重级底 + 白字） ---- */
+
+Container.toast {
+    direction: horizontal;
+    main-align: start;
+    cross-align: center;
+    spacing: 12px;
+    padding: 12px;
+    width: 320px;
+    corner-radius: 5px;
+    background: @accent_fill;
+}
+
+Container.toast.success {
+    background: @success;
+}
+
+Container.toast.caution {
+    background: @caution;
+}
+
+Container.toast.error {
+    background: @critical;
+}
+
+/* Toast 的白字：类直接发在文本节点上（无后代选择器）。 */
+Text.bar-title.success {
+    text-color: #ffffff;
+}
+
+Text.bar-title.caution {
+    text-color: #ffffff;
+}
+
+Text.bar-title.error {
+    text-color: #ffffff;
+}
+
+Text.bar-text.success {
+    text-color: #ffffff;
+}
+
+Text.bar-text.caution {
+    text-color: #ffffff;
+}
+
+Text.bar-text.error {
+    text-color: #ffffff;
+}
+
+/* ---- ToolTip ---- */
+
+Container.tool-tip {
+    direction: horizontal;
+    main-align: center;
+    cross-align: center;
+    padding: 8px;
+    corner-radius: 5px;
+    background: @layer;
+    border-width: 1px;
+    border-color: @card_border;
+}
+
+Text.tip-text {
+    text-size: 12px;
+    text-color: @content;
+}
+
+/* ---- BusyIndicator（三点，大小档轮换） ---- */
+
+Container.busy {
+    direction: horizontal;
+    cross-align: center;
+    spacing: 8px;
+}
+
+Container.busy-dot {
+    corner-radius: 99px;
+    background: @accent_fill;
+}
+
+Container.busy-dot.dot-lg {
+    width: 12px;
+    height: 12px;
+}
+
+Container.busy-dot.dot-md {
+    width: 9px;
+    height: 9px;
+}
+
+Container.busy-dot.dot-sm {
+    width: 6px;
+    height: 6px;
+}
+
+/* ---- PageIndicator ---- */
+
+Container.page-indicator {
+    direction: horizontal;
+    cross-align: center;
+    spacing: 6px;
+}
+
+Container.pip {
+    width: 6px;
+    height: 6px;
+    corner-radius: 99px;
+    background: @control_strong;
+}
+
+Container.pip.selected {
+    width: 16px;
+    background: @accent_fill;
+}
+
+/* ================================================================
+ * Batch D —— MenusAndToolbars
+ * MenuBar / Menu / MenuItem / MenuItemGroup。度量见 controls/menu.rs。
+ * ================================================================ */
+
+/* ---- MenuBar ---- */
+
+Container.menu-bar {
+    direction: horizontal;
+    spacing: 2px;
+    padding: 4px;
+    cross-align: center;
+}
+
+Container.menu-bar-item {
+    height: 32px;
+    padding: 6px;
+    corner-radius: 5px;
+    direction: horizontal;
+    main-align: center;
+    cross-align: center;
+    background: transparent;
+}
+
+Container.menu-bar-item.hovered {
+    background: @control_secondary;
+}
+
+Container.menu-bar-item.open {
+    background: @control_tertiary;
+}
+
+Text.bar-item-label {
+    text-size: 14px;
+    text-color: @content;
+}
+
+/* ---- Menu（内联卡） ---- */
+
+Container.menu {
+    direction: vertical;
+    spacing: 0px;
+    padding: 3px;
+    width: 200px;
+    /* 同 list-view：项要铺满整行宽，悬停底色才对得上（Fluent 的菜单项是整行高亮）。 */
+    cross-align: stretch;
+    corner-radius: 5px;
+    background: @card;
+    border-width: 1px;
+    border-color: @card_border;
+}
+
+Container.menu-item {
+    height: 34px;
+    padding: 8px;
+    corner-radius: 3px;
+    direction: horizontal;
+    main-align: start;
+    cross-align: center;
+    spacing: 8px;
+    background: transparent;
+}
+
+Container.menu-item.hovered {
+    background: @control_secondary;
+}
+
+Container.menu-item.pressed {
+    background: @control_tertiary;
+}
+
+Text.menu-item-label {
+    text-size: 14px;
+    text-color: @content;
+}
+
+/* check 指示器：选中 = accent 小方（ RinUI 用勾，内置集里用实心方表达）。 */
+Container.menu-check {
+    width: 12px;
+    height: 12px;
+    corner-radius: 2px;
+    background: transparent;
+}
+
+Container.menu-check.checked {
+    background: @accent_fill;
+}
+
+/* 子菜单箭头：无常驻内容时颜色透明（不画也不占视觉）。 */
+Container.menu-arrow {
+    width: 12px;
+    height: 12px;
+    icon-color: transparent;
+}
+
+Container.menu-arrow.on {
+    icon-color: @content_secondary;
+}
+
+/* ================================================================
+ * Batch E —— Navigation 第二批
+ * NavigationSubItem / SelectorBar / SelectorBarItem / ErrorPage。
+ * 度量见 controls/navigation.rs 的模块文档。
+ * ================================================================ */
+
+/* ---- NavigationSubItem ---- */
+
+Control.nav-sub {
+    direction: horizontal;
+    cross-align: center;
+    spacing: 12px;
+    height: 40px;
+    padding: 8px;
+    corner-radius: 3px;
+    background: transparent;
+}
+
+Control.nav-sub.selected {
+    background: @control_secondary;
+}
+
+Control.nav-sub.hovered {
+    background: @control_secondary;
+}
+
+/* 缩进空档：常驻，宽度即缩进量（core 没有 margin）。 */
+Container.nav-indent {
+    width: 20px;
+    height: 1px;
+    background: transparent;
+}
+
+Container.sub-icon {
+    width: 16px;
+    height: 16px;
+    icon-color: @content_secondary;
+}
+
+Container.sub-icon.selected {
+    icon-color: @accent_fill;
+}
+
+Text.sub-label {
+    text-size: 13px;
+    text-color: @content_secondary;
+}
+
+Text.sub-label.selected {
+    text-color: @content;
+}
+
+/* ---- SelectorBar（无容器底的 Tab 行） ---- */
+
+Container.selector-bar {
+    direction: horizontal;
+    spacing: 4px;
+    cross-align: center;
+}
+
+Control.selector-item {
+    height: 32px;
+    padding: 12px;
+    corner-radius: 3px;
+    direction: horizontal;
+    main-align: center;
+    cross-align: center;
+    background: transparent;
+    border-width: 1px;
+    border-color: transparent;
+}
+
+Control.selector-item.hovered {
+    background: @control_secondary;
+}
+
+Control.selector-item.selected {
+    background: @control_fill;
+    border-color: @control_border;
+}
+
+Text.selector-label {
+    text-size: 13px;
+    text-color: @content_secondary;
+}
+
+Text.selector-label.selected {
+    text-color: @content;
+}
+
+/* ---- ErrorPage ---- */
+
+Container.error-page {
+    direction: vertical;
+    main-align: center;
+    cross-align: center;
+    spacing: 8px;
+    padding: 24px;
+}
+
+Container.error-gap {
+    height: 64px;
+}
+
+Container.error-icon {
+    width: 48px;
+    height: 48px;
+    icon-color: @critical;
+}
+
+Text.error-title {
+    text-size: 16px;
+    text-color: @content;
+}
+
+Text.error-message {
+    text-size: 14px;
+    text-color: @content_secondary;
+}
+
+/* ================================================================
+ * Batch F —— ListAndCollections
+ * ListView / TableView / SwipeView / Avatar / SettingExpander /
+ * SettingItem。度量见 controls/collections.rs 的模块文档。
+ * ================================================================ */
+
+/* ---- ListView ---- */
+
+Container.list-view {
+    direction: vertical;
+    spacing: 2px;
+    padding: 3px;
+    width: 260px;
+    /* stretch：行必须铺满整行宽。默认 Start 下行的宽度 = 内容宽，于是
+     * 「选中 / 悬停」的底色只盖住文字那一小段 —— 看起来像选中块没对齐。 */
+    cross-align: stretch;
+    corner-radius: 5px;
+    background: @card;
+    border-width: 1px;
+    border-color: @card_border;
+}
+
+Control.list-row {
+    height: 40px;
+    padding: 8px;
+    corner-radius: 5px;
+    direction: horizontal;
+    main-align: start;
+    cross-align: center;
+    background: transparent;
+}
+
+Control.list-row.hovered {
+    background: @control_secondary;
+}
+
+Control.list-row.selected {
+    background: @control_fill;
+    border-width: 1px;
+    border-color: @control_border;
+}
+
+Text.list-label {
+    text-size: 14px;
+    text-color: @content;
+}
+
+/* ---- TableView ---- */
+
+Container.table-view {
+    direction: vertical;
+    spacing: 0px;
+    width: 420px;
+    corner-radius: 5px;
+    background: @card;
+    border-width: 1px;
+    border-color: @card_border;
+}
+
+Container.table-head-row {
+    direction: horizontal;
+    spacing: 12px;
+    height: 36px;
+    cross-align: center;
+    padding: 12px;
+    background: @surface_alt;
+}
+
+Text.table-head {
+    text-size: 12px;
+    text-color: @content_secondary;
+}
+
+Container.table-row {
+    direction: horizontal;
+    spacing: 12px;
+    height: 40px;
+    cross-align: center;
+    padding: 12px;
+    border-width: 1px;
+    border-color: @divider;
+}
+
+Text.table-cell {
+    text-size: 13px;
+    text-color: @content;
+}
+
+/* ---- SwipeView ---- */
+
+Container.swipe-view {
+    direction: vertical;
+    spacing: 12px;
+    width: 320px;
+}
+
+Container.swipe-card {
+    direction: vertical;
+    spacing: 8px;
+    padding: 16px;
+    height: 100px;
+    corner-radius: 5px;
+    background: @card;
+    border-width: 1px;
+    border-color: @card_border;
+}
+
+Text.swipe-title {
+    text-size: 16px;
+    text-color: @content;
+}
+
+Text.swipe-desc {
+    text-size: 13px;
+    text-color: @content_secondary;
+}
+
+Container.swipe-pips {
+    direction: horizontal;
+    spacing: 6px;
+    main-align: center;
+}
+
+Container.swipe-pip {
+    width: 6px;
+    height: 6px;
+    corner-radius: 99px;
+    background: @control_strong;
+}
+
+Container.swipe-pip.selected {
+    width: 16px;
+    background: @accent_fill;
+}
+
+/* ---- Avatar ---- */
+
+Container.avatar {
+    width: 32px;
+    height: 32px;
+    corner-radius: 99px;
+    background: @control_strong;
+    direction: horizontal;
+    main-align: center;
+    cross-align: center;
+}
+
+Container.avatar.accent {
+    background: @accent_fill;
+}
+
+Text.avatar-text {
+    text-size: 12px;
+    text-color: @content;
+}
+
+Text.avatar-text.accent {
+    text-color: #ffffff;
+}
+
+/* ---- SettingItem / SettingExpander ---- */
+
+Container.setting-item {
+    direction: horizontal;
+    cross-align: center;
+    spacing: 12px;
+    padding: 12px;
+    corner-radius: 3px;
+    background: @card;
+    border-width: 1px;
+    border-color: @card_border;
+    height: 56px;
+    width: 420px;
+}
+
+Container.setting-icon {
+    width: 20px;
+    height: 20px;
+    icon-color: @accent_fill;
+}
+
+Container.setting-expander {
+    direction: vertical;
+    width: 420px;
+    corner-radius: 5px;
+    background: @card;
+    border-width: 1px;
+    border-color: @card_border;
+}
+
+Container.setting-header {
+    direction: horizontal;
+    main-align: space-between;
+    cross-align: center;
+    height: 56px;
+    padding: 12px;
+}
+
+Container.setting-chevron {
+    width: 12px;
+    height: 12px;
+    icon-color: @content_secondary;
+}
+
+Container.setting-chevron.open {
+    icon-color: @content;
+}
+
+Container.setting-content {
+    direction: vertical;
+    spacing: 8px;
+    padding: 12px;
+}
+
+/* ================================================================
+ * Batch G —— Layout / Styles / Dialogs / DateAndTime
+ * AcrylicBrush / RoundedCornerOverlay / Dialog / DatePicker /
+ * TimePicker。度量见 controls/dialogs.rs 的模块文档。
+ * ================================================================ */
+
+/* ---- AcrylicBrush（语义降级：半透明卡） ---- */
+
+Container.acrylic-card {
+    direction: vertical;
+    spacing: 8px;
+    padding: 16px;
+    width: 260px;
+    corner-radius: 5px;
+    background: @card;
+    border-width: 1px;
+    border-color: @card_border;
+}
+
+/* ---- RoundedCornerOverlay ---- */
+
+Container.corner-overlay {
+    direction: vertical;
+    spacing: 8px;
+    padding: 16px;
+    width: 260px;
+    background: transparent;
+    border-width: 1px;
+    border-color: @card_border;
+}
+
+Container.corner-overlay.r7 {
+    corner-radius: 7px;
+}
+
+Container.corner-overlay.r3 {
+    corner-radius: 3px;
+}
+
+/* ---- Dialog ---- */
+
+Container.dialog {
+    direction: vertical;
+    spacing: 12px;
+    padding: 24px;
+    width: 420px;
+    corner-radius: 7px;
+    background: @surface_alt;
+    border-width: 1px;
+    border-color: @card_border;
+}
+
+Text.dialog-title {
+    text-size: 20px;
+    text-color: @content;
+}
+
+Text.dialog-text {
+    text-size: 14px;
+    text-color: @content_secondary;
+}
+
+Container.dialog-buttons {
+    direction: horizontal;
+    main-align: end;
+    spacing: 8px;
+}
+
+/* ---- DatePicker ---- */
+
+Container.date-picker {
+    direction: vertical;
+    spacing: 4px;
+    padding: 12px;
+    width: 300px;
+    corner-radius: 5px;
+    background: @card;
+    border-width: 1px;
+    border-color: @card_border;
+}
+
+Container.dp-heads {
+    direction: horizontal;
+    spacing: 4px;
+}
+
+Text.dp-head {
+    text-size: 12px;
+    text-color: @content_secondary;
+}
+
+Container.dp-row {
+    direction: horizontal;
+    spacing: 4px;
+}
+
+Container.dp-cell {
+    width: 36px;
+    height: 36px;
+    direction: horizontal;
+    main-align: center;
+    cross-align: center;
+}
+
+Container.dp-day {
+    width: 32px;
+    height: 32px;
+    corner-radius: 99px;
+    direction: horizontal;
+    main-align: center;
+    cross-align: center;
+    background: transparent;
+}
+
+Container.dp-day.selected {
+    background: @accent_fill;
+}
+
+Text.dp-day-label {
+    text-size: 12px;
+    text-color: @content;
+}
+
+Text.dp-day-label.selected {
+    text-color: @on_accent_fill;
+}
+
+/* ---- TimePicker ---- */
+
+Container.time-picker {
+    direction: horizontal;
+    spacing: 12px;
+    padding: 12px;
+    corner-radius: 5px;
+    background: @card;
+    border-width: 1px;
+    border-color: @card_border;
+}
+
+Container.tp-col {
+    direction: vertical;
+    spacing: 2px;
+}
+
+Container.tp-item {
+    width: 64px;
+    height: 32px;
+    padding: 8px;
+    corner-radius: 3px;
+    direction: horizontal;
+    main-align: center;
+    cross-align: center;
+    background: transparent;
+}
+
+Container.tp-item.selected {
+    background: @accent_fill;
+}
+
+Text.tp-label {
+    text-size: 13px;
+    text-color: @content;
+}
+
+Text.tp-label.selected {
+    text-color: @on_accent_fill;
+}
+
+/* ================================================================
+ * Batch B —— Text 族
+ * TextField / TextArea / ScrollableTextArea / AutoSuggestBox /
+ * TextInputMenu。度量见 controls/text_input.rs 的模块文档。
+ * ================================================================ */
+
+/* ---- TextField ---- */
+
+Control.text-field {
+    direction: horizontal;
+    main-align: space-between;
+    cross-align: center;
+    spacing: 8px;
+    padding: 6px;
+    height: 32px;
+    width: 220px;
+    corner-radius: 5px;
+    background: @control_fill;
+    border-width: 1px;
+    border-color: @control_border;
+}
+
+Control.text-field.hovered {
+    background: @control_fill_hover;
+}
+
+/* focused：底部指示条 2px accent（RinUI 的 activeFocus 档）。 */
+Control.text-field.focused {
+    border-color: @accent_fill;
+    border-width: 2px;
+}
+
+Text.field-text {
+    text-size: 14px;
+    text-color: @content;
+}
+
+Text.field-text.placeholder {
+    text-color: @content_disabled;
+}
+
+Control.field-clear {
+    width: 26px;
+    height: 22px;
+    corner-radius: 3px;
+    direction: horizontal;
+    main-align: center;
+    cross-align: center;
+    background: transparent;
+}
+
+Control.field-clear.hovered {
+    background: @control_secondary;
+}
+
+Container.field-clear-icon {
+    width: 12px;
+    height: 12px;
+    icon-color: @content_secondary;
+}
+
+Container.field-clear-icon.hovered {
+    icon-color: @content;
+}
+
+/* ---- TextArea / ScrollableTextArea ---- */
+
+Container.text-area {
+    direction: vertical;
+    spacing: 4px;
+    padding: 12px;
+    width: 320px;
+    corner-radius: 5px;
+    background: @control_fill;
+    border-width: 1px;
+    border-color: @control_border;
+}
+
+Text.area-line {
+    text-size: 14px;
+    text-color: @content;
+}
+
+Container.scroll-area {
+    direction: horizontal;
+    spacing: 8px;
+    cross-align: stretch;
+}
+
+Container.scrollbar {
+    width: 6px;
+    corner-radius: 99px;
+    background: @control_fill;
+    direction: vertical;
+    main-align: start;
+    padding: 0px;
+}
+
+Container.scroll-thumb {
+    width: 6px;
+    corner-radius: 99px;
+    background: @control_strong;
+}
+
+/* ---- AutoSuggestBox ---- */
+
+Container.suggest-list {
+    direction: vertical;
+    spacing: 0px;
+    padding: 3px;
+    cross-align: stretch;
+    corner-radius: 5px;
+    background: @card;
+    border-width: 1px;
+    border-color: @card_border;
+}
+
+Container.suggest-row {
+    height: 32px;
+    padding: 8px;
+    corner-radius: 3px;
+    direction: horizontal;
+    main-align: start;
+    cross-align: center;
+    background: transparent;
+}
+
+Container.suggest-row.selected {
+    background: @control_secondary;
+}
+
+Text.suggest-label {
+    text-size: 13px;
+    text-color: @content;
+}
+
+/* ---- TextInputMenu ---- */
+
+Container.context-menu {
+    direction: vertical;
+    spacing: 0px;
+    padding: 3px;
+    width: 180px;
+    cross-align: stretch;
+    corner-radius: 5px;
+    background: @card;
+    border-width: 1px;
+    border-color: @card_border;
+}
+
+Container.menu-item {
+    height: 32px;
+    padding: 8px;
+    corner-radius: 3px;
+    direction: horizontal;
+    main-align: start;
+    cross-align: center;
+    background: transparent;
+}
+
+Container.menu-item.hovered {
+    background: @control_secondary;
+}
+
+Text.menu-label {
+    text-size: 13px;
+    text-color: @content;
+}
+
+Container.menu-separator {
+    height: 1px;
+    background: @divider;
+}
+
+Container.clip-card.hovered {
+    background: @control_fill;
+}
+
+Container.clip-card.pressed {
+    background: @control_secondary;
+    corner-radius: 2px;
+}

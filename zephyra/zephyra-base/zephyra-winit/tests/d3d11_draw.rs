@@ -757,8 +757,22 @@ fn translucent_quad_composites_in_premultiplied_space() {
 /// 两条断言：
 /// 1. 两份 `.hlsl`（D3D11 与 D3D12）必须**逐字节相同**。两边各存一份，改了其中
 ///    一份忘了另一份，同样是无声失败（两个后端画出不同的东西）。
-/// 2. `.bin` 的修改时间**不得早于** `.hlsl`。用 `>=` 而不是 `>`：全新 clone 里两者
-///    同一时刻落地，`>` 会误报。
+/// 2. `.bin` 的修改时间**不得早于** `.hlsl` —— 留 2 秒宽限，见
+///    [`FRESHNESS_TOLERANCE`]。
+///
+/// # 为什么要有 2 秒宽限
+///
+/// 文件系统与批量操作的时间戳不是精确的：FAT 的粒度就是 2 秒，而 checkout /
+/// 解压 / 拷贝整棵仓会把一堆文件的 mtime 刷成**同一瞬间**、彼此差几毫秒
+/// （本机实测：全部 `.bin` 与 `.hlsl` 落在同一秒内，`.hlsl` 反而晚 3ms）。
+/// 拿严格 `>=` 去比这种噪声，于是「我什么也没改」也能红 —— 那是一条会自己
+/// 骗人的门禁，真出事时人就不信它了。
+///
+/// 宽限 2 秒 > 任何噪声，又远小于「改完着色器隔一会儿才编译」的真实间隔；
+/// 门槛的**意图**（忘了跑 fxc 就必须失败）一点没松：真忘了编译，`.bin` 会比
+/// 源码旧**很多**秒，第一次编译产物的批量落地也只会差这一两秒。
+const FRESHNESS_TOLERANCE: std::time::Duration = std::time::Duration::from_secs(2);
+
 #[test]
 fn shader_assets_are_in_sync() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -802,7 +816,7 @@ fn shader_assets_are_in_sync() {
             .modified()
             .expect("modified() 可用");
         assert!(
-            bin_time >= src_time,
+            bin_time + FRESHNESS_TOLERANCE >= src_time,
             "{bin_name} 比 zephyra.hlsl 旧 —— 改了着色器但忘了重新编译。\
              命令：fxc /nologo /T ps_5_0 /E PSMain /Fo zephyra.ps.bin zephyra.hlsl（VS 用 vs_5_0 / VSMain）"
         );
@@ -2185,7 +2199,6 @@ fn a_longer_filter_chain_blurs_more_than_a_single_blur() {
 ///
 /// 只有一趟时，源写进的是刚被清成全 0 的 RT，叠加 0 等于不叠加。所以要三趟：
 /// 第二趟起目标里已经有内容了。
-#[test]
 /// 模糊趟**不累加**：一趟接一趟的模糊不改变整体亮度。
 ///
 /// # 这条在抓什么
@@ -2313,7 +2326,6 @@ fn composite_blends_over_the_destination() {
 ///
 /// 两者只在**蓝通道**上差 127。用不透明源时 `a = 1`，两种混合状态完全等价 ——
 /// 于是这条判据在源不透明时是真空的。
-#[test]
 /// DropShadow：影子**确实按 offset 平移了**。
 ///
 /// # 判据为什么必须有底色

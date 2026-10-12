@@ -1,0 +1,27 @@
+[package]
+name = "zephyra-platform-win"
+description = "Windows implementation of the zephyra-platform capability trait (DWM window attributes, OS version)"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+zephyra-platform = { path = "../zephyra-platform" }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+  # DwmSetWindowAttribute / DwmGetWindowAttribute
+  "Win32_Graphics_Dwm",
+  # HWND / BOOL / COLORREF
+  "Win32_Foundation",
+  # RtlGetVersion：拿真实 build 号，不靠 manifest 猜
+  "Win32_System_Diagnostics_Debug",
+  # 注册表读 AppsUseLightTheme / SystemUsesLightTheme
+  "Win32_System_Registry",
+] }
+
+# 与 `zephyra-winit-d3d12` 同：整个 crate 是 **Windows 专属**，
+# 进 workspace members 但**不进 default-members**。
+# 理由：引入 Win32 API 后 `unsafe` 与 COM 边界都不该出现在默认构建里。
+[lib]
+path = "src/lib.rs"

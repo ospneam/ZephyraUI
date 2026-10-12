@@ -125,6 +125,8 @@ fn 字形图集里有正确的字形() {
     zephyra_winit::write_bmp(
         &path,
         &zephyra_winit::surface::PixelRead {
+            // 本测试自建的像素是 **RGBA**（每像素逐个 push r,g,b,a）。
+            order: zephyra_fx::pixels::ChannelOrder::Rgba,
             width: out_w,
             height: out_h,
             row_pitch: out_w * 4,

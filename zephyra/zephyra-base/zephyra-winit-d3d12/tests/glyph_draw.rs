@@ -241,9 +241,10 @@ fn 字形_在GPU上与CPU参考图一致() {
         if ok {
             return;
         }
-        let dump = |name: &str, px: &[u8]| {
+        let dump = |name: &str, px: &[u8], order: zephyra_fx::pixels::ChannelOrder| {
             let img = zephyra_fx::PixelRead {
                 data: px.to_vec(),
+                order,
                 row_pitch: SIZE * 4,
                 width: SIZE,
                 height: SIZE,
@@ -256,8 +257,9 @@ fn 字形_在GPU上与CPU参考图一致() {
                 /* encode_srgb */ false,
             );
         };
-        dump("glyph-cpu", &canvas.pixels);
-        dump("glyph-gpu", &pixels);
+        // 两侧的通道序**不同**：CPU 画布是 RGBA，DXGI 读回是 BGRA。
+        dump("glyph-cpu", &canvas.pixels, zephyra_fx::pixels::ChannelOrder::Rgba);
+        dump("glyph-gpu", &pixels, zephyra_fx::pixels::ChannelOrder::Bgra);
         eprintln!(
             "[glyph] 已把两侧落盘到 {}/glyph-{{cpu,gpu}}.bmp",
             env!("CARGO_TARGET_TMPDIR")

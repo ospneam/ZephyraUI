@@ -1,0 +1,12 @@
+[package]
+name = "zephyra-platform"
+description = "Platform capability abstraction: what the OS can do, behind a trait, with zero platform code"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+
+# 无 feature：本 crate **一行平台代码都没有**，它是"能力"的定义处，
+# 由 `zephyra-platform-win`（Windows 实现）或 `stub`（其它平台）填充。
+# 应用只依赖这里的 trait —— Linux 适配时只新增一个实现 crate，不动上层。

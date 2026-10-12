@@ -201,6 +201,56 @@ impl Node {
         }
     }
 
+    /// 拆掉**本轮没人再声明**的样式值，按影响范围标脏。
+    ///
+    /// [`Self::set_styled_prop`] 是「写」，本方法是「拆」—— 两者缺一不可，
+    /// 少了拆的那一半，状态类消失后旧值会永久赖在节点上（症状：点一下取消勾选，
+    /// 底色还是选中色；见 [`crate::property::PropertyStore::retain_styled`]）。
+    ///
+    /// 返回被拆下的键，供测试与诊断用。**只有真的拆下了东西才标脏** ——
+    /// `apply` 每帧都跑一遍，写同值不算变化（见 [`Self::set_styled_prop`]），
+    /// 拆不存在的东西也必须同样安静，否则静止界面会永远在重绘。
+    pub fn retain_styled_props(&mut self, keep: impl Fn(&'static PropertyKey) -> bool) -> Vec<&'static PropertyKey> {
+        let removed = self.props.retain_styled(keep);
+        for key in &removed {
+            self.dirty = self.dirty.merged(if key.affects_layout() {
+                Dirty::Layout
+            } else {
+                Dirty::Paint
+            });
+        }
+        if !removed.is_empty() && self.dirty.needs_layout() {
+            self.measure_cache = None;
+        }
+        removed
+    }
+
+    /// 拆掉**本帧声明里没有**的本地属性，返回被拆下的键。
+    ///
+    /// 声明树是**真值**：`.with(...)` 这一帧没写的东西，就不该留在节点上。
+    /// 与 [`Self::retain_styled_props`] 同源（只写不清 → 残值静默留存），区别是
+    /// 这一层来自源码而不是样式表。
+    ///
+    /// 症状举例：控件写 `if closable { } else { .with(COLLAPSED, true) }`，
+    /// 宿主把 `closable` 翻回 true 之后 `COLLAPSED` 仍赖着 —— 元素永远折叠着。
+    pub fn retain_local_props(
+        &mut self,
+        keep: impl Fn(&'static PropertyKey) -> bool,
+    ) -> Vec<&'static PropertyKey> {
+        let removed = self.props.retain_local(keep);
+        for key in &removed {
+            self.dirty = self.dirty.merged(if key.affects_layout() {
+                Dirty::Layout
+            } else {
+                Dirty::Paint
+            });
+        }
+        if !removed.is_empty() && self.dirty.needs_layout() {
+            self.measure_cache = None;
+        }
+        removed
+    }
+
     /// 拆下唯一子节点并返回它。
     ///
     /// 给"只想检查某个已布局节点本身"的调用方用：布局必须从根开始（根决定子项矩形），

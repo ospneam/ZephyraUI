@@ -274,7 +274,7 @@ impl FrameCache {
         let some_dirty = match self.node.as_ref() {
             // 重排过就必然要重绘（`layout` 给每个节点标了 `Dirty::Layout`），
             // 所以不必再走一遍树 —— 直接进渲染。
-            Some(node) if need_layout => true,
+            Some(_node) if need_layout => true,
             Some(node) => scan(node, ctx, &mut dirty_rects),
             // 树建不起来（`element` 与 `Node::from_element` 抛不出东西，纯防御）。
             None => true,

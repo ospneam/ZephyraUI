@@ -1,19 +1,26 @@
 //! 对账：拿新 [`crate::element::Element`] 树与旧 [`Node`] 树配对。
 //!
-//! # 按类型与位置配对
+//! # 按身份（key）配对，其次按位置
 //!
 //! diff 的第一步是把新旧子节点配对。规则：
 //!
-//! 1. 同位置同类型 → 就地更新；
-//! 2. 同位置不同类型 → 视为替换（丢弃旧 Node，建新的）；
-//! 3. 类型不匹配时向前/向后找同类型的旧节点 → 移动（保状态）；
-//! 4. 都找不到 → 插入。
+//! 1. **有 key 的按 key 配对** —— key 就是组件实例的身份（见
+//!    [`crate::element::Element::with_key`] 的约定）；
+//! 2. 无 key 的按位置配对；
+//! 3. 同位置（或同 key）但**类型不同** → 视为替换（丢弃旧 Node，建新的）；
+//! 4. 配对上的节点逐层对账属性；没被认领的旧节点一律丢弃。
 //!
-//! 规则 3 是「列表里插一项不该让后面全部重建状态」的关键。带 key 的子节点直接
-//! 按 key 配对，跳过扫描。
+//! 规则 1 是「列表里插一项不该让后面全部重建状态」的关键。
+//!
+//! ⚠️ **key 不同 = 身份不同 = 不能复用**。纯按位置配对隐含一条约定
+//! 「同一位置永远是同一类节点」，而换页就违反它：`page` 的子节点从 `home`
+//! 变成 `basic-input`，两者都是 `Container`，于是旧页面被就地改造成新页面，
+//! 改不掉的旧节点**留在树上成为幽灵**（带着自己的样式与矩形继续绘制）。
+//! 症状是「点了导航之后界面花掉」，且对 diff 而言每一步都合法 —— 无报错、无告警。
 
 use crate::element::Element;
 use crate::node::{Dirty, Node};
+use crate::property::PropertyKey;
 
 /// diff 结果摘要（供测试与诊断）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -73,7 +80,9 @@ pub fn diff(node: &mut Node, element: &Element) -> DiffStats {
     //
     // 区分不是优化而是正确性：`Spacing` 变了却只标 Paint，子项位置就不会更新，
     // 而画面上"看起来"只少了一个格子——这类 bug 极难从截图看出来。
+    let mut local_keys: Vec<&'static PropertyKey> = Vec::new();
     for (key, value) in element.props().iter_local() {
+        local_keys.push(key);
         if node.props_mut().set_local_if_changed(key, value.clone()) {
             let level = if key.affects_layout() {
                 Dirty::Layout
@@ -82,6 +91,22 @@ pub fn diff(node: &mut Node, element: &Element) -> DiffStats {
             };
             node.mark_dirty(level);
         }
+    }
+    // 拆掉「上一帧声明过、这一帧不再声明」的本地属性。
+    //
+    // ⚠️ 声明树是**真值**：`.with(...)` 这一帧没写的东西，就不该留在节点上。
+    // 只写不拆的症状很具体：`if closable { … } else { with(COLLAPSED) }` 这种
+    // 写法一旦从 true 翻回 false，`COLLAPSED=true` 会**永远**赖着（元素被折叠、
+    // 不占位、不绘制），而声明树里明明已经没有了 —— 于是「关掉之后再打开，
+    // 它不见了」。
+    // 键的身份是**地址**（`PropertyKey` 没有 `PartialEq`，见 property.rs），
+    // 所以比对一律用 `ptr::eq` —— 与本文件其余处一致。
+    for key in node.retain_local_props(|k| local_keys.iter().any(|x| std::ptr::eq(*x, k))) {
+        node.mark_dirty(if key.affects_layout() {
+            Dirty::Layout
+        } else {
+            Dirty::Paint
+        });
     }
 
     // 样式分类名对账。**必须整表替换而不是追加**：声明树每帧重建，所以
@@ -98,35 +123,87 @@ pub fn diff(node: &mut Node, element: &Element) -> DiffStats {
     }
 
     // 子节点对账。
-    let old_len = node.children().len();
-    let new_len = element.children().len();
-    let common = old_len.min(new_len);
-    for i in 0..common {
-        let child = &mut node.children_mut()[i];
-        let child_before = child.dirty();
-        let child_stats = diff(child, &element.children()[i]);
-        stats.reused += child_stats.reused;
-        stats.inserted += child_stats.inserted;
-        stats.removed += child_stats.removed;
-        stats.moved += child_stats.moved;
-        stats.dirtied += child_stats.dirtied;
-        stats.needs_layout += child_stats.needs_layout;
-        if child.dirty() != child_before {
-            stats.dirtied += 1;
-            if child.dirty().needs_layout() {
+    //
+    // **身份优先：有 key 的按 key 配对，无 key 的按位置。**
+    //
+    // # 为什么不能只按位置
+    //
+    // 按位置配对隐含一条约定：「同一位置永远是同一类节点」。**换页就违反它** ——
+    // `page` 的子节点从 `home` 变成 `basic-input`，两者 tag 都是 `Container`，
+    // 于是位置配对把**旧页面的整棵树**就地改造成新页面：能改的属性改掉了，
+    // 改不掉的（旧节点更多时多出来的那些）**留在树上成为幽灵节点**，
+    // 带着自己的样式值、自己的矩形继续绘制。
+    //
+    // 症状是「点了导航之后界面花掉」，而且**不报错、不告警**：对 diff 来说
+    // 每一步都是合法的 —— 它确实按声明树把每一处都"对上了"。
+    //
+    // # 判据
+    //
+    // key 不同 = 身份不同 = 不能复用，整棵替换。这是保留式布局唯一站得住的判据：
+    // 组件实例的身份由 key 给出（同 key 同身份），于是「复用」永远是安全的。
+    let mut pool: Vec<Option<Node>> = node.children_mut().drain(..).map(Some).collect();
+    let mut out: Vec<Node> = Vec::with_capacity(element.children().len());
+    let mut moved = 0usize;
+    for (i, el) in element.children().iter().enumerate() {
+        // 先找同 key 的旧节点；同位置优先（身份与位置一致是绝大多数情况），
+        // 否则全表扫 —— 后者让「列表里插一项」只动被插处，而不必整段替换。
+        let slot = match el.key() {
+            Some(k) => {
+                let same_pos = pool
+                    .get(i)
+                    .and_then(|c| c.as_ref())
+                    .filter(|c| c.key() == Some(k))
+                    .map(|_| i);
+                same_pos.or_else(|| {
+                    pool.iter()
+                        .position(|c| c.as_ref().and_then(|n| n.key()) == Some(k))
+                })
+            }
+            // 无 key：按位置拿第一个还没被认领的（保持旧行为）。
+            None => pool.iter().position(|c| c.is_some()),
+        };
+        match slot.and_then(|j| pool[j].take()) {
+            Some(mut child) if child.tag() == el.tag() => {
+                if slot != Some(i) {
+                    moved += 1;
+                }
+                let child_before = child.dirty();
+                let child_stats = diff(&mut child, el);
+                stats.reused += child_stats.reused;
+                stats.inserted += child_stats.inserted;
+                stats.removed += child_stats.removed;
+                stats.moved += child_stats.moved;
+                stats.dirtied += child_stats.dirtied;
+                stats.needs_layout += child_stats.needs_layout;
+                if child.dirty() != child_before {
+                    stats.dirtied += 1;
+                    if child.dirty().needs_layout() {
+                        stats.needs_layout += 1;
+                    }
+                }
+                out.push(child);
+            }
+            Some(_old) => {
+                // 同 key 但 tag 变了（或没有 key 而 tag 变了）：旧节点整个丢弃。
+                out.push(Node::from_element(el));
+                stats.inserted += 1;
+                stats.removed += 1;
+                stats.needs_layout += 1;
+            }
+            None => {
+                out.push(Node::from_element(el));
+                stats.inserted += 1;
                 stats.needs_layout += 1;
             }
         }
     }
-    for i in common..new_len {
-        node.children_mut()
-            .push(Node::from_element(&element.children()[i]));
-        stats.inserted += 1;
-        stats.needs_layout += 1;
+    let dropped = pool.iter().filter(|c| c.is_some()).count();
+    if dropped > 0 {
+        stats.removed += dropped;
     }
-    if new_len < old_len {
-        stats.removed += old_len - new_len;
-        node.children_mut().truncate(new_len);
+    node.children_mut().append(&mut out);
+    if dropped > 0 || moved > 0 {
+        stats.moved += moved;
         // `merge_dirty` 而不是 `mark_dirty`：子节点已各自递归对账过了，这里只
         // 标自己。用 `mark_dirty` 会把 Structure 传播到所有剩余子节点。
         node.merge_dirty(Dirty::Structure);

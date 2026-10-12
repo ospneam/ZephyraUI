@@ -19,7 +19,7 @@
 //! | 空规则 | 被剔除，**且不报错** |
 //! | 报错格式 | 行号 + 列号 + 原文 + 下划线 + 候选 |
 
-use zephyra_core::property::{PropertyValue, ValueSource};
+use zephyra_core::property::ValueSource;
 use zephyra_core::props;
 
 use crate::{parse, ParseResult};

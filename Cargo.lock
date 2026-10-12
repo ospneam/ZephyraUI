@@ -2204,10 +2204,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "zephyra-platform"
+version = "0.1.0"
+
+[[package]]
+name = "zephyra-platform-win"
+version = "0.1.0"
+dependencies = [
+ "windows",
+ "zephyra-platform",
+]
+
+[[package]]
 name = "zephyra-style"
 version = "0.1.0"
 dependencies = [
  "zephyra-core",
+]
+
+[[package]]
+name = "zephyra-ui"
+version = "0.1.0"
+dependencies = [
+ "winit",
+ "zephyra-core",
+ "zephyra-fx",
+ "zephyra-platform",
+ "zephyra-style",
+ "zephyra-winit-d3d12",
+ "zstylec",
 ]
 
 [[package]]
@@ -2236,6 +2261,8 @@ dependencies = [
  "zephyra-core",
  "zephyra-dcomp",
  "zephyra-fx",
+ "zephyra-platform",
+ "zephyra-platform-win",
 ]
 
 [[package]]

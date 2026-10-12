@@ -38,10 +38,6 @@ struct Case {
 }
 
 /// 造一个带分类名的节点，施加**合并后**的样式表，回读（值, 来源）。
-fn styled(names: &[&'static str], key: &'static zephyra_core::property::PropertyKey) -> (Option<PropertyValue>, ValueSource) {
-    styled_tag(NodeTag::Control, names, key)
-}
-
 fn styled_tag(
     t: NodeTag,
     names: &[&'static str],

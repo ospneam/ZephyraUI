@@ -521,6 +521,56 @@ impl PropertyStore {
         })
     }
 
+    /// 只保留 `keep` 认可的那些样式值，返回**被拆下的键**（调用方据此标脏）。
+    ///
+    /// # 为什么样式层需要"拆"这件事
+    ///
+    /// [`Self::set_styled_if_changed`] 只会**写**。而样式表是条件性的：某个分类名
+    /// 这一帧不匹配时，**没有任何声明会提到那些键**，于是上一帧的值原样留着。
+    ///
+    /// 症状是「点一下取消勾选，底色还是选中色」—— 状态类已经没了，值还在。
+    /// 它安静到极处：没有报错、没有告警、`report` 一切正常，而画面是错的。
+    ///
+    /// 之所以一直没被发现，是因为**多数**样式表里每个状态规则都会和基类规则
+    /// 声明同一批键，于是基类每帧都把它盖回去，洞被"恰好"堵住。只要有一条状态
+    /// 规则声明了基类没有的键，残值立刻显形。
+    pub fn retain_styled(
+        &mut self,
+        keep: impl Fn(&'static PropertyKey) -> bool,
+    ) -> Vec<&'static PropertyKey> {
+        let mut removed = Vec::new();
+        self.styled.retain(|e| {
+            if keep(e.key) {
+                true
+            } else {
+                removed.push(e.key);
+                false
+            }
+        });
+        removed
+    }
+
+    /// 只保留 `keep` 认可的那些**本地**值，返回被拆下的键。
+    ///
+    /// 与 [`Self::retain_styled`] 同一件事在另一层：声明树里没有的属性，
+    /// 保留节点上就不该留着。症状同样是静默的残留（`COLLAPSED` / `ICON_NAME`
+    /// 这类"本帧不设"的属性会赖着不走）。
+    pub fn retain_local(
+        &mut self,
+        keep: impl Fn(&'static PropertyKey) -> bool,
+    ) -> Vec<&'static PropertyKey> {
+        let mut removed = Vec::new();
+        self.local.retain(|e| {
+            if keep(e.key) {
+                true
+            } else {
+                removed.push(e.key);
+                false
+            }
+        });
+        removed
+    }
+
     /// 设置样式值（低于本地值）。
     pub fn set_styled(
         &mut self,

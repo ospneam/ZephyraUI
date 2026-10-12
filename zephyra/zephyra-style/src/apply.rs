@@ -19,6 +19,7 @@
 //! **先测再写结论**，本仓已沉淀「性能判断必须来自计时」。
 
 use zephyra_core::node::Node;
+use zephyra_core::property::{PropertyKey, PropertyValue};
 
 use crate::ir::StyleSheet;
 
@@ -65,11 +66,12 @@ fn apply_node(sheet: &StyleSheet, node: &mut Node) {
     // 两者混用会让「这个 key 是不是也能当选择器」变成说不清的问题。
     let names: Vec<&str> = node.style_names().iter().copied().collect();
 
-    // 按序往下写，后面的覆盖前面的。
+    // 先算「本轮这个节点要写哪些键」，再写、再拆。
     //
-    // ⚠️ 这里的「覆盖」靠 `set_styled` 的 upsert 语义：同一个键写第二次是**替换**
-    // 而不是追加。所以两条规则声明同一个属性时，后写的那条就是最终值——
-    // 不需要「先收集再选」。
+    // 顺序语义与原来逐条写**完全一致**：规则按表内顺序遍历，同一个键写第二次
+    // 是替换，所以后写的赢（见 `upsert`）。先收集只是为了让「谁该被拆」有个
+    // 明确的答案，而不是靠"下一轮有没有人提到它"这种隐式推断。
+    let mut want: Vec<(&'static PropertyKey, &PropertyValue)> = Vec::new();
     for rule in sheet.rules() {
         if rule.is_empty() {
             continue;
@@ -78,7 +80,23 @@ fn apply_node(sheet: &StyleSheet, node: &mut Node) {
             continue;
         }
         for decl in &rule.declarations {
-            node.set_styled_prop(decl.key, decl.value.clone());
+            match want.iter_mut().find(|(k, _)| std::ptr::eq(*k, decl.key)) {
+                Some(slot) => slot.1 = &decl.value,
+                None => want.push((decl.key, &decl.value)),
+            }
         }
     }
+    for (key, value) in &want {
+        node.set_styled_prop(key, (*value).clone());
+    }
+    // 拆掉「上一轮写了、这一轮没人写」的键。
+    //
+    // ⚠️ 这一步是**必须**的，不是洁癖：状态分类名消失后，没有任何声明会提到
+    // 那些键，不拆就永久留着。症状是「取消勾选后底色还是选中色」——
+    // 静默、无告警、统计正常，而画面是错的。
+    //
+    // 之所以长期没人撞上：多数样式表里每条状态规则都和基类规则声明同一批键，
+    // 基类每帧把残值盖回去，洞被"恰好"堵住 —— 直到有一条状态规则声明了
+    // 基类没有的键（例如只给 `.checked` 加 `border-width`）。
+    node.retain_styled_props(|key| want.iter().any(|(k, _)| std::ptr::eq(*k, key)));
 }

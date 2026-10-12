@@ -96,6 +96,81 @@ impl CpuCanvas {
         self.pixels[i + 3] = ((a + dst_a * inv) * 255.0).round().clamp(0.0, 255.0) as u8;
     }
 
+    /// 画一个三角形（`chunk` 是 3 个顶点，`kind::PATH`）。
+    ///
+    /// # 为什么这里也需要一个光栅器
+    ///
+    /// `Command::Path` 是**唯一**不走 SDF 的图元：它在 `quad::expand` 里已经被
+    /// 展平成三角形（多边形没有解析距离，边缘 AA 靠 MSAA），所以 CPU 侧只能
+    /// 按三角形逐个填。
+    ///
+    /// ⚠️ 本方法曾经**不存在** —— `draw_batch` 只遍历 `solid` 与 `images` 两段，
+    /// 于是 `paths` 整段从未被光栅化。症状极其安静：`report.path_triangles`
+    /// 照常增长（几何统计看着很健康），图里却一个图标都没有。而 `--dump-cpu`
+    /// 正是本仓**唯一**的像素级自验手段 —— 也就是说「图标在参考图里看不见」
+    /// 这件事，靠人眼看图是发现不了的（没人会怀疑"图上少东西"是自己看错）。
+    ///
+    /// 这与历史上 `images` 那段是**同一个洞**（那里的注释还留着）。教训一致：
+    /// 新增图元段时，必须同时问「谁消费它」，而不只是「谁生产它」。
+    ///
+    /// 覆盖率用 4×4 子采样近似 MSAA：GPU 上是多点采样，这里要在**没有**
+    /// 多点采样的前提下给出可看的边缘（硬边会让参考图看起来像渲染坏了）。
+    fn triangle(&mut self, chunk: &[Vertex]) {
+        if chunk.len() < 3 {
+            return;
+        }
+        let to_px = |ndc: [f32; 2]| {
+            (
+                (ndc[0] * 0.5 + 0.5) * self.width as f32,
+                (0.5 - ndc[1] * 0.5) * self.height as f32,
+            )
+        };
+        let p = [to_px(chunk[0].position), to_px(chunk[1].position), to_px(chunk[2].position)];
+        // 有向面积：0 = 退化（三点共线），`expand` 已经滤过一次，这里是兜底。
+        let area = (p[1].0 - p[0].0) * (p[2].1 - p[0].1) - (p[2].0 - p[0].0) * (p[1].1 - p[0].1);
+        if area.abs() < 1e-9 {
+            return;
+        }
+        let min_x = p.iter().map(|q| q.0).fold(f32::MAX, f32::min);
+        let max_x = p.iter().map(|q| q.0).fold(f32::MIN, f32::max);
+        let min_y = p.iter().map(|q| q.1).fold(f32::MAX, f32::min);
+        let max_y = p.iter().map(|q| q.1).fold(f32::MIN, f32::max);
+        let x0 = min_x.floor().max(0.0) as i32;
+        let x1 = max_x.ceil().min(self.width as f32) as i32;
+        let y0 = min_y.floor().max(0.0) as i32;
+        let y1 = max_y.ceil().min(self.height as f32) as i32;
+
+        // 边函数：三点同号即在三角形内（与绕向无关，所以 CW / CCW 都对）。
+        let edge = |a: (f32, f32), b: (f32, f32), s: (f32, f32)| {
+            (b.0 - a.0) * (s.1 - a.1) - (b.1 - a.1) * (s.0 - a.0)
+        };
+        const SUBS: usize = 4;
+        let color = chunk[0].color;
+        for py in y0..y1 {
+            for px in x0..x1 {
+                let mut hits = 0u32;
+                for sy in 0..SUBS {
+                    for sx in 0..SUBS {
+                        let s = (
+                            px as f32 + (sx as f32 + 0.5) / SUBS as f32,
+                            py as f32 + (sy as f32 + 0.5) / SUBS as f32,
+                        );
+                        let e = [edge(p[1], p[2], s), edge(p[2], p[0], s), edge(p[0], p[1], s)];
+                        if (e[0] >= 0.0 && e[1] >= 0.0 && e[2] >= 0.0)
+                            || (e[0] <= 0.0 && e[1] <= 0.0 && e[2] <= 0.0)
+                        {
+                            hits += 1;
+                        }
+                    }
+                }
+                if hits > 0 {
+                    // 顶点色已是预乘（见 `quad::Vertex::path`），`blend` 正是按预乘合成。
+                    self.blend(px, py, color, hits as f32 / (SUBS * SUBS) as f32);
+                }
+            }
+        }
+    }
+
     /// 画一个四边形（`chunk` 是 4 个顶点，顺序与 `quad::quad` 一致）。
     ///
     /// # 为什么**逐像素**判覆盖率，而不是两个三角形
@@ -330,11 +405,89 @@ pub fn draw_batch(canvas: &mut CpuCanvas, batch: &quad::QuadBatch, atlas: Option
     for chunk in batch.images.chunks_exact(4) {
         canvas.quad(chunk, atlas);
     }
+    // 多边形（`Command::Path`，矢量图标全走这里）**也画**。
+    //
+    // ⚠️ 过去这里是空的，于是 `paths` 整段从未被光栅化 —— 与上面 `images`
+    // 那条完全同型的洞：几何统计照常增长（`path_triangles` 有数），图里却
+    // 一个图标都没有。自验图是本仓唯一的像素级判据，它少画一类图元，
+    // 等于把一整类缺陷永久地藏了起来。
+    for chunk in batch.paths.chunks_exact(3) {
+        canvas.triangle(chunk);
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 一个 `Command::Path` 批次：画布中央那个三角形。
+    ///
+    /// ⚠️ [`zephyra_core::paint::Vertex::position`] 是 **DIP 屏幕坐标**（不是
+    /// NDC）—— DIP→NDC 的换算在 `quad::expand` 里做。写成 NDC 会让三角形落到
+    /// 画布外，而症状是「画布是空的」，看起来像光栅器坏了。
+    fn path_batch() -> quad::QuadBatch {
+        let mut l = zephyra_core::paint::DisplayList::new();
+        let v = |x: f32, y: f32| zephyra_core::paint::Vertex {
+            position: zephyra_core::core::Point::new(x, y),
+            uv: zephyra_core::core::Point::new(0.0, 0.0),
+        };
+        l.push(
+            zephyra_core::paint::SortKey {
+                layer: zephyra_core::paint::Layer::Content,
+                z: 0,
+                order: 0,
+            },
+            zephyra_core::paint::Command::Path {
+                vertices: std::sync::Arc::new([v(30.0, 10.0), v(70.0, 10.0), v(50.0, 40.0)]),
+                fill: zephyra_core::core::Color::rgb(1.0, 0.0, 0.0),
+                filter: Default::default(),
+                blend: Default::default(),
+            },
+        );
+        l.sort();
+        quad::expand(&l, (100, 100), |_| true)
+    }
+
+    /// 矢量图标（`Command::Path`）必须真的出现在 CPU 参考图里。
+    ///
+    /// # 这条在钉什么
+    ///
+    /// `draw_batch` 曾经只遍历 `solid` 与 `images` 两段，`paths` 整段从未被
+    /// 光栅化 —— 与历史上 `images` 那段同型的洞。症状安静到无法靠人眼发现：
+    /// `report.path_triangles` 照常有数（统计看着很健康），图里却一个图标都没有，
+    /// 而 `--dump-cpu` 是本仓唯一的像素级自验手段。
+    ///
+    /// 判据分两半，缺一不可：
+    /// 1. 三角形的**内部**像素必须是白色（证明确实画了）；
+    /// 2. 三角形**外面**必须保持清屏色（证明没有把整块乱糊）。
+    /// 只断言第 1 条的话，「无条件填满画布」也能过。
+    #[test]
+    fn 多边形被光栅化到画布上() {
+        let batch = path_batch();
+        assert_eq!(
+            batch.report.path_triangles, 1,
+            "这个批次应当正好是一个三角形（否则下面的判据在测别的东西）"
+        );
+        assert_eq!(
+            batch.paths.len(),
+            3,
+            "`paths` 段应当带着那 3 个顶点（`report` 与顶点流必须对得上）"
+        );
+        let mut canvas = CpuCanvas::new(100, 100, [0.0; 4]);
+        draw_batch(&mut canvas, &batch, None);
+
+        let at = |x: u32, y: u32| canvas.pixels[(y as usize * 100 + x as usize) * 4 + 3];
+        assert!(
+            at(50, 20) > 200,
+            "三角形内部 (50,20) 的 alpha = {}，应当接近不透明 —— `paths` 段没有光栅化",
+            at(50, 20)
+        );
+        assert_eq!(
+            at(2, 2),
+            0,
+            "三角形外的 (2,2) 应当仍是清屏色（alpha=0）—— 说明光栅化把整块都糊上了"
+        );
+    }
 
     /// 把 `batches` 里**第一张图像**的 `uv` 换成整张纹理。
     ///

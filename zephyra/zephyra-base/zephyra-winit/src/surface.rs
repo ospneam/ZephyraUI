@@ -891,6 +891,9 @@ impl Surface {
             self.context.Unmap(&stg, 0);
             Ok(PixelRead {
                 data,
+                // DXGI 的 B8G8R8A8 读回是 **BGRA** 序（与 CPU 画布的 RGBA 相反，
+                // 见 `ChannelOrder`）。
+                order: zephyra_fx::pixels::ChannelOrder::Bgra,
                 row_pitch: row_pitch as u32,
                 width: actual_w,
                 height: actual_h,

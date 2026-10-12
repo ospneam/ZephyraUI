@@ -407,8 +407,18 @@ impl<V: View> HostWindow<V> {
     ///
     /// `damage` 只用于**帧内** scissor —— 它不能用来跳过回放，原因见
     /// `Renderer::render` 里关于 flip model 的说明。
-    fn acquire_and_render(&mut self, damage: Damage) -> RenderReport {
-        self.acquire_and_render_inner(true, damage)
+    fn acquire_and_render(&mut self, _damage: Damage) -> RenderReport {
+        // # 「只重画脏区」的前提：脏区之外的上一帧画面**还在渲染目标里**
+        //
+        // flip model 的后缓冲在 `Present` 之后**内容未定义** —— 它是会被丢弃的
+        // 临时目标，不是「上一帧那张图」。本后端的渲染目标**就是**那个后缓冲
+        // （没有 MSAA 中间纹理），所以按脏区绘制等于把未定义像素留在屏幕上：
+        // 症状是「点一下之后界面花成一整片底色，只有那一小块是对的」。
+        //
+        // 因此这里强制整帧，**忽略**调用方给的 `damage`。代价写在明处：交互帧
+        // 整帧重绘；换来的是画面永远对。（D3D12 后端有 MSAA 中间纹理，
+        // 那条路上按脏区绘制才成立，见它的 `render_pass`。）
+        self.acquire_and_render_inner(true, Damage::Full)
     }
 
     fn acquire_and_render_inner(&mut self, allow_dump: bool, damage: Damage) -> RenderReport {

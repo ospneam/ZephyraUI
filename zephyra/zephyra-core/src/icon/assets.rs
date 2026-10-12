@@ -17,12 +17,22 @@ use super::IconSource;
 
 /// 相机。
 pub const CAMERA: &str = include_str!("assets/icons/camera.svg");
+/// 日历。
+pub const CALENDAR: &str = include_str!("assets/icons/calendar.svg");
+/// 向下 V 形（下拉 / 展开指示）。
+pub const CHEVRON_DOWN: &str = include_str!("assets/icons/chevron-down.svg");
+/// 向上 V 形（收起 / 数值加）。
+pub const CHEVRON_UP: &str = include_str!("assets/icons/chevron-up.svg");
+/// 时钟。
+pub const CLOCK: &str = include_str!("assets/icons/clock.svg");
 /// 关闭（资源文件名为 `dismiss`，`assets` 中无 `close.svg`）。
 pub const DISMISS: &str = include_str!("assets/icons/dismiss.svg");
 /// 橡皮擦。
 pub const ERASER: &str = include_str!("assets/icons/eraser.svg");
 /// 齿轮。
 pub const GEAR: &str = include_str!("assets/icons/gear.svg");
+/// 房子（主页）。
+pub const HOME: &str = include_str!("assets/icons/home.svg");
 /// 图片。
 pub const IMAGE: &str = include_str!("assets/icons/image.svg");
 /// 补光灯（关）。
@@ -41,6 +51,20 @@ pub const PEN: &str = include_str!("assets/icons/pen.svg");
 pub const SETTINGS: &str = include_str!("assets/icons/settings.svg");
 /// 撤销。
 pub const UNDO: &str = include_str!("assets/icons/undo.svg");
+/// 对勾。
+pub const CHECK: &str = include_str!("assets/icons/check.svg");
+/// 放大镜。
+pub const SEARCH: &str = include_str!("assets/icons/search.svg");
+/// 四格宫。
+pub const GRID: &str = include_str!("assets/icons/grid.svg");
+/// 五角星。
+pub const STAR: &str = include_str!("assets/icons/star.svg");
+/// 文档页。
+pub const DOC: &str = include_str!("assets/icons/doc.svg");
+/// 铃铛。
+pub const BELL: &str = include_str!("assets/icons/bell.svg");
+/// 三条滑条（调节）。
+pub const SLIDERS: &str = include_str!("assets/icons/sliders.svg");
 
 /// 名字 → 图标源。
 ///
@@ -51,9 +75,18 @@ pub const UNDO: &str = include_str!("assets/icons/undo.svg");
 /// 读代码的人才不用去查资源目录才能知道这个图标是什么。
 pub const REGISTRY: &[(&str, IconSource)] = &[
     ("camera", IconSource::Svg(CAMERA)),
+    ("calendar", IconSource::Svg(CALENDAR)),
+    ("check", IconSource::Svg(CHECK)),
+    ("chevron-down", IconSource::Svg(CHEVRON_DOWN)),
+    ("chevron-up", IconSource::Svg(CHEVRON_UP)),
+    ("clock", IconSource::Svg(CLOCK)),
     ("close", IconSource::Svg(DISMISS)),
+    ("doc", IconSource::Svg(DOC)),
     ("eraser", IconSource::Svg(ERASER)),
     ("gear", IconSource::Svg(GEAR)),
+    ("grid", IconSource::Svg(GRID)),
+    ("bell", IconSource::Svg(BELL)),
+    ("home", IconSource::Svg(HOME)),
     ("image", IconSource::Svg(IMAGE)),
     ("light", IconSource::Svg(LIGHT)),
     ("light-off", IconSource::Svg(LIGHT_OFF)),
@@ -61,6 +94,9 @@ pub const REGISTRY: &[(&str, IconSource)] = &[
     ("minimize", IconSource::Svg(MINIMIZE)),
     ("move", IconSource::Svg(MOVE)),
     ("pen", IconSource::Svg(PEN)),
+    ("search", IconSource::Svg(SEARCH)),
     ("settings", IconSource::Svg(SETTINGS)),
+    ("sliders", IconSource::Svg(SLIDERS)),
+    ("star", IconSource::Svg(STAR)),
     ("undo", IconSource::Svg(UNDO)),
 ];

@@ -393,9 +393,17 @@ impl<S: GlyphSource> TextRender for TextStack<S> {
                         entry.uv.width * inv,
                         entry.uv.height * inv,
                     ),
+                    // offset 是**屏幕方向**（y 向下）相对基线原点的偏移：基线之上
+                    // 为**负**（ab_glyph 的 `px_bounds` 就是这个约定，见其
+                    // `min.y * -scale_factor.vertical`）。
+                    //
+                    // ⚠ 这条公式曾经写成 `baseline - offset.y - height`（把 offset
+                    // 当成 y-up 的正值）。后果不是偏移一两个像素，而是**每个字形的
+                    // 顶部都贴到基线上**：'h' 与 'e' 顶在同一条线、底相差一个字高 ——
+                    // 同一行字的基线互相错开，descender 整个消失。
                     dst: Rect::new(
                         baseline_x + entry.offset.x,
-                        baseline_y - entry.offset.y - entry.size.height,
+                        baseline_y + entry.offset.y,
                         entry.size.width,
                         entry.size.height,
                     ),
@@ -446,6 +454,53 @@ impl GlyphSource for FixedWidth {
     }
 }
 
+/// 测试用字形来源：offset **随字符变化**（模仿 ab_glyph 的 y-down 约定）。
+///
+/// `FixedWidth` 的 offset 恒为 0 —— 那种替身测不出基线公式（所有字形都退化成
+/// 同一个矩形）。真实字体里 'a' / 'h' / 'p' 的 offset 各不相同，基线公式的
+/// 符号错误**只有**在 offset 有符号时才暴露。
+#[derive(Debug, Default, Clone)]
+pub struct VaryingOffset {
+    advance: f32,
+    /// 位图全高（像素）。
+    full: f32,
+    width: f32,
+}
+
+impl GlyphSource for VaryingOffset {
+    fn glyph_id(&mut self, ch: char) -> u32 {
+        ch as u32
+    }
+
+    fn advance(&mut self, _glyph_id: u32, _px_size: f32) -> f32 {
+        self.advance
+    }
+
+    fn rasterize(&mut self, glyph_id: u32, _px_size: u32) -> Option<AtlasRaster> {
+        // (位图顶在基线之上的像素数, 位图底在基线之下的像素数)
+        let (top, below) = match char::from_u32(glyph_id)? {
+            // x-height 档：a e n
+            'a' | 'e' | 'n' => (self.full * 0.7, 0.0),
+            // 升部档：h l
+            'h' | 'l' => (self.full, 0.0),
+            // descender 档：p y
+            'p' | 'y' => (self.full * 0.7, self.full * 0.3),
+            _ => (self.full * 0.7, 0.0),
+        };
+        Some(AtlasRaster {
+            // y-down：基线之上为负。
+            offset: Point::new(0.0, -top),
+            width: self.width as u32,
+            height: (top + below) as u32,
+            coverage: vec![255u8; ((self.width as u32) * (top + below) as u32).max(4) as usize],
+        })
+    }
+
+    fn font_id(&self) -> u32 {
+        0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -453,6 +508,54 @@ mod tests {
 
     fn stack(advance: f32) -> TextStack<FixedWidth> {
         TextStack::new(FixedWidth { advance })
+    }
+
+    /// 同一行的字形必须**共用一条基线**：无 descender 的字，位图底落在基线上。
+    ///
+    /// 这条钉的是本次实测的第二个 bug：`dst.y` 公式把 offset 的符号搞反
+    /// （offset 是 y-down、基线之上为负），于是每个字形的**顶部**贴到基线上 ——
+    /// 'h' 与 'e' 顶相同、底差一个字高，descender 整个消失。
+    /// `FixedWidth` 的 offset 恒 0，测不出这条；所以用 `VaryingOffset`。
+    #[test]
+    fn glyphs_on_one_line_share_a_baseline() {
+        let mut s = TextStack::new(VaryingOffset {
+            advance: 10.0,
+            full: 20.0,
+            width: 8.0,
+        });
+        let style = TextStyle {
+            size: 20.0,
+            ..Default::default()
+        };
+        let shaped = s.shape("ahep", &style, None);
+        let origin = Point::new(0.0, 0.0);
+        let (_atlas, quads) = s.glyph_quads(&shaped, origin, &style).unwrap();
+        assert_eq!(quads.len(), 4, "a h e p 各一个四边形");
+
+        let bottom = |q: &GlyphQuad| q.dst.y + q.dst.height;
+        // a / h / e 都无 descender：底必须相等（= 基线）。
+        let bottoms = [bottom(&quads[0]), bottom(&quads[1]), bottom(&quads[2])];
+        for b in bottoms {
+            assert!(
+                (b - bottoms[0]).abs() < 0.001,
+                "同一行无 descender 的字必须共基线：{:?}",
+                bottoms
+            );
+        }
+        // p 有 descender：底必须**低于**基线（比基线大）。
+        assert!(
+            bottom(&quads[3]) > bottoms[0] + 1.0,
+            "p 的 descender 必须伸到基线之下：{} vs 基线 {}",
+            bottom(&quads[3]),
+            bottoms[0]
+        );
+        // 升部字（h）的顶必须**高于** x-height 字（a）的顶。
+        assert!(
+            quads[1].dst.y < quads[0].dst.y - 1.0,
+            "h 的顶应高于 a 的顶：{} vs {}",
+            quads[1].dst.y,
+            quads[0].dst.y
+        );
     }
 
     #[test]

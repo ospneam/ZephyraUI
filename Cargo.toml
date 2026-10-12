@@ -20,7 +20,19 @@ members = [
     "zephyra/zephyra-base/zephyra-winit-d3d12",
     "zephyra/zephyra-base/zephyra-camera",
     "zephyra/zephyra-base/zephyra-dcomp",
+    # 平台能力抽象 + Windows 实现。`zephyra-platform` 本身**不含平台代码**
+    # （可进 default-members，但暂无独立产物需要默认构建，故一并归到"按需选"）。
+    # `zephyra-platform-win` 含 Win32 API，与 dcomp/camera 同一条理由不进
+    # default-members：默认构建不该出现 unsafe 与 COM 边界。
+    "zephyra/zephyra-base/zephyra-platform",
+    "zephyra/zephyra-base/zephyra-platform-win",
     "examples",
+    # core 之上的 UI 控件层 + RinUI 风格 gallery 应用。
+    # 进 members 而**不进** default-members：它的默认 feature 是 d3d12 后端，
+    # 与 `examples` 不同，它编译的是一个完整控件库（编译量更大，且与
+    # acceptance 用的 `examples` 目标不同）。用 `-p zephyra-ui --bin gallery`
+    # 显式选中——「选哪后端、编哪个 bin」都留在命令里。
+    "ZephyraUI",
 ]
 # `zephyra-camera` 与 `zephyra-dcomp` 进 members 但**不进** default-members：它们是
 # 成员（可以被 `-p` 选中、共享工作区的依赖解析），但不会被无差别的 `cargo build` /

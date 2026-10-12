@@ -138,12 +138,31 @@ impl<V: View> CpuHost<V> {
         self.size
     }
 
+    /// 装一个样式注入点（每帧 diff 之后、布局之前调用）。
+    ///
+    /// # 为什么离线路径也要它
+    ///
+    /// `--dump-cpu` 的图是**给人看的判据**：它若不走样式表，画出来就是
+    /// 「属性默认值」的样子，与窗口画面（有样式）不同 —— 于是「CPU 图」
+    /// 从参考变成误导。两条路必须吃同一份样式表。
+    pub fn set_styler(&mut self, styler: Box<dyn zephyra_core::styler::Styler>) {
+        self.cache.set_styler(styler);
+    }
+
     /// 改尺寸（等价于窗口 resize）。会触发下一帧重排。
     ///
     /// 不用显式标脏：`FrameCache` 每次 [`Self::frame_timed`] 都比对视口，尺寸变了
     /// 自然走重排 + 整帧重绘。少一个状态位，少一处能忘的地方。
     pub fn resize(&mut self, size: (u32, u32)) {
         self.size = size;
+    }
+
+    /// 切主题（Light / Dark）。与 `HostWindow::set_theme` 同一手法：
+    /// `Theme` 是 `Copy`，`Box::leak` 成 `&'static`；换Theme 必须作废缓存，
+    /// 否则稳态帧会整帧跳过，新主题要等下一次别的事件才上屏。
+    pub fn set_theme(&mut self, variant: zephyra_core::theme::ThemeVariant) {
+        self.theme = Box::leak(Box::new(zephyra_core::theme::Theme::builtin(variant)));
+        self.cache.invalidate();
     }
 
     /// 当前 hover 目标的 key。
@@ -302,6 +321,10 @@ impl<V: View> CpuHost<V> {
         crate::write_bmp(
             path,
             &crate::pixels::PixelRead {
+                // CPU 画布是 **RGBA**（`cpu_raster::CpuCanvas`），与 D3D 读回的
+                // BGRA 是两种顺序 —— 顺序进类型，猜错就让 dump 图 R/B 互换，
+                // 而深色 UI 全灰，肉眼看不出来（本次 banner 变棕色才暴露）。
+                order: crate::pixels::ChannelOrder::Rgba,
                 width: canvas.width,
                 height: canvas.height,
                 row_pitch: canvas.width * 4,

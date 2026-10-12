@@ -86,6 +86,11 @@ pub struct HostWindow<V: View> {
     engine: std::cell::RefCell<TextEngine>,
     /// 已上传的图集字形数，用来避免每帧重传 4MB。
     atlas_revision_uploaded: u64,
+    /// 窗口背后**真的**挂着系统背景材质（Mica/Acrylic）。
+    ///
+    /// ⚠️ 记的是「实际生效」而不是「应用请求了」——平台不支持时后者为真、
+    /// 前者为假，而两者对 clear 色（透明 vs 不透明）与根背景的处理**不同**。
+    backdrop_active: bool,
     /// 帧计数。只给 `trace` 用。
     frames: usize,
     /// 图像纹理表：`Command::Image` 的句柄 → SRV 描述符位置。
@@ -94,19 +99,60 @@ pub struct HostWindow<V: View> {
     window: Arc<Window>,
 }
 
+/// 未指定尺寸时的默认客户区尺寸。
+///
+/// winit 的默认值在本机是 640×480 —— 对按视口自适应的应用够用，对**固定画布**
+/// 的应用（`width: 1400px` 那类）会裁掉一大块。要固定画布就用
+/// [`HostWindow::new_lenient_sized`]。
+pub const DEFAULT_WINDOW_SIZE: (u32, u32) = (1100, 700);
+
 impl<V: View> HostWindow<V> {
     /// 建窗口与 GPU 资源，**找不到系统字体时不 panic**。
     ///
     /// 字体缺失不该让整个应用起不来：文本不显示，其余部分照常。这与「崩溃」之间的
     /// 差别很大 —— 后者让「这台机器没装字体」变成「这个程序不能跑」。
     pub fn new_lenient(event_loop: &ActiveEventLoop, view: V) -> Self {
-        let attrs = Window::default_attributes().with_title("ZephyraUI (D3D12)");
+        Self::new_lenient_sized(event_loop, view, DEFAULT_WINDOW_SIZE)
+    }
+
+    /// [`Self::new_lenient`] + **指定初始客户区尺寸**（**物理像素**）。
+    ///
+    /// # 为什么必须有这条
+    ///
+    /// `winit` 在不给尺寸时用系统默认值（本机是 **640×480**），而按固定画布
+    /// 布局的应用（`Container.window { width: 1400px }` 那类）会在这个窗口里
+    /// 被**裁掉一大块** —— 而且裁得毫无提示：布局是对的、绘制是对的，
+    /// 只是有一多半在窗口外，看起来像「排版坏了」。
+    ///
+    /// # 为什么是**物理**像素而不是逻辑像素
+    ///
+    /// 核心里布局的单位是**像素**，而且宿主把交换链的像素尺寸原样当作视口传进去
+    /// （见 [`Self::client_size`]）—— 即整条链是「像素对像素」的。若这里收逻辑
+    /// 尺寸，高 DPI 下窗口会被放大（实测 125%：逻辑 1400×800 → 物理 1750×1000），
+    /// 于是固定画布的内容只占窗口左上角，右/下留出空白：布局没错、绘制没错，
+    /// 只是"窗口比界面大了一圈"。
+    ///
+    /// 症状与「布局算错」难以区分，所以画布尺寸必须由**应用**按像素给。
+    /// `new_lenient` 保留默认尺寸，是为了不改变既有调用点（按视口自适应的应用
+    /// 不受影响）。
+    pub fn new_lenient_sized(event_loop: &ActiveEventLoop, view: V, size: (u32, u32)) -> Self {
+        let attrs = Window::default_attributes()
+            .with_title("ZephyraUI (D3D12)")
+            .with_inner_size(winit::dpi::PhysicalSize::new(size.0, size.1));
         let window = Arc::new(
             event_loop
                 .create_window(attrs)
                 .expect("create_window（D3D12 后端）"),
         );
         let size = window.inner_size();
+        // 宿主必须能**自己说出**坐标系：「点哪儿不好使」这类问题的头号嫌疑就是
+        // 事件坐标（物理）与布局坐标（DIP）不在一个空间里，而画面永远是"对的"，
+        // 只有命中会偏 —— 不把这三个数打出来就只能靠猜。
+        eprintln!(
+            "[zephyra-d3d12] 窗口: inner_size(物理) {:?} scale {}",
+            window.inner_size(),
+            window.scale_factor()
+        );
 
         // 文本引擎：core 的 `TextStack` + ab_glyph 字形来源。找不到字体时退回禁用模式。
         let (engine, note) = zephyra_fx::from_system_font();
@@ -174,6 +220,7 @@ impl<V: View> HostWindow<V> {
             dirty: true,
             engine: std::cell::RefCell::new(engine),
             atlas_revision_uploaded: 0,
+            backdrop_active: false,
             frames: 0,
             textures: TextureTable::new(),
             window,
@@ -189,6 +236,28 @@ impl<V: View> HostWindow<V> {
     /// wrong property name and the app will not launch.
     pub fn set_styler(&mut self, styler: Box<dyn zephyra_core::styler::Styler>) {
         self.cache.set_styler(styler);
+    }
+
+    /// 切换主题（Light / Dark）。
+    ///
+    /// # 为什么必须显式作废缓存
+    ///
+    /// 资源键是**读取时**解析的（`resolve_resource` 不写回属性表），所以换主题
+    /// 不需要动树——但 `FrameCache` 可能正处在稳态（`Unchanged`），那一帧会整帧
+    /// 跳过，新主题要等下一次别的事件才上屏。这里立刻 `invalidate`，让下一帧
+    /// 必然重画重解析。与 `set_styler` 同一个理由。
+    ///
+    /// `Theme` 是 `Copy` + 这里 `Box::leak` 成 `&'static`：与构造时同一手法
+    /// （进程内切主题次数有界，泄漏的是两份 200 字节的结构）。
+    pub fn set_theme(&mut self, variant: zephyra_core::theme::ThemeVariant) {
+        let theme: &'static Theme = Box::leak(Box::new(Theme::builtin(variant)));
+        self.theme = theme;
+        self.cache.invalidate();
+    }
+
+    /// 当前主题变体（应用据此判断「想切的」与「在用的」是否一致）。
+    pub fn theme_variant(&self) -> zephyra_core::theme::ThemeVariant {
+        self.theme.variant
     }
 
     /// 图像纹理表（只读）。
@@ -249,6 +318,42 @@ impl<V: View> HostWindow<V> {
     /// 当前 hover 的节点 key。
     pub fn hovered(&self) -> Option<&ElementKey> {
         self.router.hovered()
+    }
+
+    /// 按应用请求设置窗口外观（暗色模式 / 圆角 / 标题栏与边框颜色）。
+    ///
+    /// # 为什么要宿主转发一层，而不是让应用直接调 `zephyra-platform-win`
+    ///
+    /// 三个理由，都不是"省一行代码"：
+    ///
+    /// 1. **句柄转换是本 crate 的事**：应用拿到的是 `&Window`，`HWND` 只有
+    ///    拿到 `window.hwnd()` 的那一层才该碰；
+    /// 2. **能力降级要在这里收敛**：平台不支持时不该让应用拿到一个"我以为
+    ///    设上了"的结果 —— [`ApplyOutcome`] 逐项如实返回；
+    /// 3. **可移植性**：应用调的是宿主方法，Linux 上宿主内部换成别的实现，
+    ///    应用代码一个字不改。
+    ///
+    /// 返回值即 [`ApplyOutcome`]，逐项说明"哪些真的生效了"。
+    ///
+    /// 取 `&mut self`：它会记下材质是否生效（影响每帧的 clear 色）。
+    pub fn apply_window_chrome(
+        &mut self,
+        chrome: zephyra_platform::WindowChrome,
+    ) -> zephyra_platform::ApplyOutcome {
+        // 复用本文件已有的句柄提取（`raw_window_handle` 路径），不重复造轮子。
+        // 拿不到（理论上只在非 Windows 上）⇒ 0 号句柄 ⇒ 平台层静默跳过。
+        let raw = hwnd_of(self.window.as_ref()).unwrap_or(0) as usize;
+        let outcome =
+            zephyra_platform_win::current()
+                .apply_window_chrome(zephyra_platform::WindowHandle::from_raw(raw), chrome);
+        // 记下「材质是否真的生效」：它决定 clear 用不用透明色（见 `render_pass`）。
+        // 请求 Mica 但平台不支持 ⇒ 仍是实色 clear，不能当成已生效。
+        self.backdrop_active = outcome.backdrop && chrome.backdrop != zephyra_platform::BackdropKind::None;
+        if trace_enabled() {
+            // 「界面全对、就是标题栏没变暗」这类问题只有这一行能查。
+            eprintln!("[trace] 窗口外观 {chrome:?} -> {outcome}");
+        }
+        outcome
     }
 
     /// 拉取调试层消息（`ZEPHYRA_D3D12_DEBUG=1` 时才有内容）。
@@ -368,6 +473,28 @@ impl<V: View> HostWindow<V> {
     ///
     /// 因此这里把两件事记进**同一条命令列表**：要么都成，要么都不成。
     fn render_pass(&mut self, damage: Damage) -> RenderReport {
+        // # 「只重画脏区」的前提：脏区之外的上一帧画面**还在渲染目标里**
+        //
+        // flip model（`CreateSwapChainForComposition` 恒为 FLIP_SEQUENTIAL）的
+        // 后缓冲在 `Present` 之后**内容未定义** —— 它是会被丢弃的临时目标，
+        // 不是"上一帧那张图"。
+        //
+        // 分两种情况：
+        //
+        // - **MSAA 开**：渲染目标是**自有的**多重采样纹理（`chain.msaa_rtv()`），
+        //   逐帧存活、不被系统丢弃；帧末整体 resolve 进后缓冲。所以脏区之外的
+        //   上一帧内容确实还在 —— 只清脏区、只画脏区是对的。
+        // - **MSAA 关**：渲染目标**就是**那个会被丢弃的后缓冲 ⇒ 脏区之外是
+        //   未定义内容。此时按脏区绘制等于把未定义像素推上屏（实测：整屏变底色，
+        //   只有脏区那一小块是对的）。所以这里**强制整帧**。
+        //
+        // 代价是诚实的：MSAA 关时每个交互帧都整帧重绘。取舍写在明处 ——
+        // 画面错与画面慢之间，这个仓选画面。
+        let damage = if self.chain.samples() > 1 {
+            damage
+        } else {
+            Damage::Full
+        };
         if let Err(e) = self.gpu.begin_frame() {
             eprintln!("[zephyra-d3d12] 开帧失败: {e}");
             self.drain_debug();
@@ -418,7 +545,19 @@ impl<V: View> HostWindow<V> {
                 }
             }
         };
-        let clear = self.theme.surface;
+        // 清屏色：默认是主题底色（不透明）。
+        //
+        // **启用系统背景材质时改成全透明**：材质（Mica/Acrylic）是 DWM 画在
+        // 窗口**背后**的，只有我们把后缓冲清成 alpha=0、且应用根背景半透明，
+        // 材质才透得出来。清成不透明底色 = 材质被自己的 clear 挡住，等于没开。
+        //
+        // 判据是「材质是否真的生效」（`ApplyOutcome.backdrop`），而不是
+        // 「应用是否请求了」——请求了但平台不支持时，仍��不透明色。
+        let clear = if self.backdrop_active {
+            self.theme.surface.with_alpha(0.0)
+        } else {
+            self.theme.surface
+        };
         // 可分离 / 非可分离混合模式要读 `dst`，必须把后缓冲当**资源**传进去。
         // 取失败时传 `None`：那 14 个模式会退回 `SrcOver`，画面仍然正确只是少了效果。
         let rt = self.chain.back_buffer().ok();
@@ -553,6 +692,9 @@ fn list_kind_histogram(&self) -> Vec<usize> {
     /// 处理指针移动。返回是否产生了路由事件。
     pub fn on_cursor_moved(&mut self, x: f32, y: f32) -> bool {
         self.pointer_pos = (x, y);
+        if trace_enabled() {
+            eprintln!("[trace] CursorMoved ({x:.1}, {y:.1})");
+        }
         let theme = self.theme;
         self.route(|router, node, out| {
             router.on_pointer(
@@ -626,6 +768,14 @@ fn list_kind_histogram(&self) -> Vec<usize> {
         let changed = self.router.revision() != before;
         if changed {
             self.dirty = true;
+        }
+        if trace_enabled() {
+            // 「点哪儿不好使」的唯一一手证据：坐标 → 处理目标。
+            // 画面永远是对的，命中偏了也只有这一行能看出来。
+            eprintln!(
+                "[trace] 指针 ({:.0}, {:.0}) → {:?}",
+                self.pointer_pos.0, self.pointer_pos.1, self.router.hovered()
+            );
         }
         changed
     }

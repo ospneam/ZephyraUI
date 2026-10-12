@@ -115,8 +115,42 @@ pub struct Theme {
     pub accent_fill: Color,
     /// 语义层：强调填充上的文本。
     pub on_accent_fill: Color,
-    /// 语义层：焦点环。
+    /// 语义层：焦点环（外圈，强调色那一圈）。
     pub focus_ring: Color,
+    /// 语义层：焦点环内圈（RinUI 的 focusBorderInner，深/浅主题各一极）。
+    pub focus_inner: Color,
+    /// 语义层：卡片底（RinUI cardColor，半透明叠加在 surface 上）。
+    pub card: Color,
+    /// 语义层：卡片次级底。
+    pub card_secondary: Color,
+    /// 语义层：卡片描边。
+    pub card_border: Color,
+    /// 语义层：控件次级填充（hover 档）。
+    pub control_secondary: Color,
+    /// 语义层：控件三级填充（pressed 档）。
+    pub control_tertiary: Color,
+    /// 语义层：控件强填充（滑条轨道一类的实心底）。
+    pub control_strong: Color,
+    /// 语义层：控件描边。
+    pub control_border: Color,
+    /// 语义层：控件强描边（未选中复选框的框）。
+    pub control_border_strong: Color,
+    /// 语义层：分隔线。
+    pub divider: Color,
+    /// 语义层：浮层底（RinUI layerColor，内容卡片那一层）。
+    pub layer: Color,
+    /// 语义层：成功严重级色（InfoBadge / ProgressBar）。
+    pub success: Color,
+    /// 语义层：注意严重级色。
+    pub caution: Color,
+    /// 语义层：严重错误色。
+    pub critical: Color,
+    /// 语义层：成功严重级的**背景**档（InfoBar / Toast 卡底）。
+    pub success_bg: Color,
+    /// 语义层：注意严重级的背景档。
+    pub caution_bg: Color,
+    /// 语义层：严重错误的背景档。
+    pub critical_bg: Color,
     /// 全局间距刻度（控件外边距等默认间距来源）。
     pub spacing: Spacing,
 }
@@ -165,6 +199,27 @@ impl Theme {
             accent_fill: palette.accent,
             on_accent_fill: palette.accent_dark,
             focus_ring: palette.accent,
+            // 深色主题：内圈是近黑——focus 环压在浅色卡片上时才看得出（RinUI 的
+            // focusBorderInner）。卡片与各级填充的 alpha 全部取自 RinUI dark.qml。
+            focus_inner: Color::rgba(0.0, 0.0, 0.0, 0.70),
+            card: Color::rgba(1.0, 1.0, 1.0, 0.0512),
+            card_secondary: Color::rgba(1.0, 1.0, 1.0, 0.0326),
+            card_border: Color::rgba(0.0, 0.0, 0.0, 0.10),
+            control_secondary: Color::rgba(1.0, 1.0, 1.0, 0.0837),
+            control_tertiary: Color::rgba(1.0, 1.0, 1.0, 0.0419),
+            control_strong: Color::rgba(1.0, 1.0, 1.0, 0.5442),
+            control_border: Color::rgba(0.0, 0.0, 0.0, 0.09),
+            control_border_strong: Color::rgba(1.0, 1.0, 1.0, 0.6047),
+            divider: Color::rgba(1.0, 1.0, 1.0, 0.0837),
+            layer: Color::rgba(0.227, 0.227, 0.227, 0.30),
+            success: Color::rgb(0x6c as f32 / 255.0, 0xcb as f32 / 255.0, 0x5f as f32 / 255.0),
+            caution: Color::rgb(0xfc as f32 / 255.0, 0xe1 as f32 / 255.0, 0.00 as f32 / 255.0),
+            critical: Color::rgb(0xff as f32 / 255.0, 0x99 as f32 / 255.0, 0xa4 as f32 / 255.0),
+            // 严重级**背景**档（InfoBar / Toast 的卡片底，RinUI 的
+            // system*BackgroundColor）。深色主题是低饱和暗色调。
+            success_bg: Color::rgb(0x39 as f32 / 255.0, 0x3d as f32 / 255.0, 0x1b as f32 / 255.0),
+            caution_bg: Color::rgb(0x43 as f32 / 255.0, 0x35 as f32 / 255.0, 0x19 as f32 / 255.0),
+            critical_bg: Color::rgb(0x44 as f32 / 255.0, 0x27 as f32 / 255.0, 0x26 as f32 / 255.0),
             spacing: Spacing::Medium,
         }
     }
@@ -201,6 +256,27 @@ impl Theme {
             accent_fill: palette.accent,
             on_accent_fill: palette.accent_dark,
             focus_ring: palette.accent,
+            // 浅色主题的 focus 内圈反过来是近白（RinUI light 的 focusBorderInner）。
+            // 卡片在浅底上是「半透明白」，所以卡片的观感是比 surface 更亮的一点。
+            focus_inner: Color::rgb(1.0, 1.0, 1.0),
+            card: Color::rgba(1.0, 1.0, 1.0, 0.7),
+            card_secondary: Color::rgba(0.976, 0.976, 0.976, 0.5),
+            card_border: Color::rgba(0.0, 0.0, 0.0, 0.0578),
+            control_secondary: Color::rgba(0.976, 0.976, 0.976, 0.5),
+            control_tertiary: Color::rgba(0.976, 0.976, 0.976, 0.3),
+            control_strong: Color::rgba(0.0, 0.0, 0.0, 0.4458),
+            control_border: Color::rgba(0.0, 0.0, 0.0, 0.06),
+            control_border_strong: Color::rgba(0.0, 0.0, 0.0, 0.6063),
+            divider: Color::rgba(0.0, 0.0, 0.0, 0.0803),
+            layer: Color::rgba(1.0, 1.0, 1.0, 0.5),
+            success: Color::rgb(0x0f as f32 / 255.0, 0x7b as f32 / 255.0, 0x0f as f32 / 255.0),
+            caution: Color::rgb(0x9d as f32 / 255.0, 0x5d as f32 / 255.0, 0x00 as f32 / 255.0),
+            critical: Color::rgb(0xc4 as f32 / 255.0, 0x2b as f32 / 255.0, 0x1c as f32 / 255.0),
+            // 浅色主题的严重级背景是低饱和亮色调（RinUI light 的
+            // system*BackgroundColor）。
+            success_bg: Color::rgb(0xdf as f32 / 255.0, 0xf6 as f32 / 255.0, 0xdd as f32 / 255.0),
+            caution_bg: Color::rgb(0xff as f32 / 255.0, 0xf4 as f32 / 255.0, 0xce as f32 / 255.0),
+            critical_bg: Color::rgb(0xfd as f32 / 255.0, 0xe7 as f32 / 255.0, 0xe9 as f32 / 255.0),
             spacing: Spacing::Medium,
         }
     }
@@ -213,6 +289,15 @@ impl Theme {
         Some(match name {
             "surface" => self.surface,
             "surface_alt" => self.surface_alt,
+            // 半透明变体：让系统背景材质（Mica/Acrylic）从底下透出来。
+            //
+            // 材质画在窗口**背后**（`DWMWA_SYSTEMBACKDROP_TYPE`），所以它只在
+            // "应用没把那块涂满不透明色"时可见。这个令牌就是那个"没涂满"的口子。
+            //
+            // alpha 取 0.85 而不是更低：Mica 本身已带一层 tint，再压太狠会让
+            // 标题栏文字失去对比。0.85 下深色主题标题栏仍清晰，浅色主题也不会
+            // 泛白到看不清。
+            "surface_alt_translucent" => self.surface_alt.with_alpha(0.85),
             "content" => self.content,
             "content_secondary" => self.content_secondary,
             "content_disabled" => self.content_disabled,
@@ -223,6 +308,23 @@ impl Theme {
             "accent_fill" => self.accent_fill,
             "on_accent_fill" => self.on_accent_fill,
             "focus_ring" => self.focus_ring,
+            "focus_inner" => self.focus_inner,
+            "card" => self.card,
+            "card_secondary" => self.card_secondary,
+            "card_border" => self.card_border,
+            "control_secondary" => self.control_secondary,
+            "control_tertiary" => self.control_tertiary,
+            "control_strong" => self.control_strong,
+            "control_border" => self.control_border,
+            "control_border_strong" => self.control_border_strong,
+            "divider" => self.divider,
+            "layer" => self.layer,
+            "success" => self.success,
+            "caution" => self.caution,
+            "critical" => self.critical,
+            "success_bg" => self.success_bg,
+            "caution_bg" => self.caution_bg,
+            "critical_bg" => self.critical_bg,
             _ => return None,
         })
     }
@@ -235,6 +337,8 @@ impl Theme {
 pub mod roles {
     pub const SURFACE: &str = "surface";
     pub const SURFACE_ALT: &str = "surface_alt";
+    /// 半透明次级底色（让系统背景材质透出，见 `Theme::role` 同名项）。
+    pub const SURFACE_ALT_TRANSLUCENT: &str = "surface_alt_translucent";
     pub const CONTENT: &str = "content";
     pub const CONTENT_SECONDARY: &str = "content_secondary";
     pub const CONTENT_DISABLED: &str = "content_disabled";
@@ -245,6 +349,23 @@ pub mod roles {
     pub const ACCENT_FILL: &str = "accent_fill";
     pub const ON_ACCENT_FILL: &str = "on_accent_fill";
     pub const FOCUS_RING: &str = "focus_ring";
+    pub const FOCUS_INNER: &str = "focus_inner";
+    pub const CARD: &str = "card";
+    pub const CARD_SECONDARY: &str = "card_secondary";
+    pub const CARD_BORDER: &str = "card_border";
+    pub const CONTROL_SECONDARY: &str = "control_secondary";
+    pub const CONTROL_TERTIARY: &str = "control_tertiary";
+    pub const CONTROL_STRONG: &str = "control_strong";
+    pub const CONTROL_BORDER: &str = "control_border";
+    pub const CONTROL_BORDER_STRONG: &str = "control_border_strong";
+    pub const DIVIDER: &str = "divider";
+    pub const LAYER: &str = "layer";
+    pub const SUCCESS: &str = "success";
+    pub const CAUTION: &str = "caution";
+    pub const CRITICAL: &str = "critical";
+    pub const SUCCESS_BG: &str = "success_bg";
+    pub const CAUTION_BG: &str = "caution_bg";
+    pub const CRITICAL_BG: &str = "critical_bg";
 }
 
 /// 运行时主题状态：当前主题 + 切换。

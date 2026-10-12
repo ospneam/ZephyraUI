@@ -343,7 +343,17 @@ fn all_modes() -> Vec<BlendMode> {
 ///
 /// 尚未排除：`g_dst` 在该 PS 下被采样成标量、顶点色在 `ShadeSource` 里被广播、
 /// 以及 `BSoftLight` 里 `step` / `sqrt` 在某个后端被降成标量运算。
-const KNOWN_DIVERGENT: &[&str] = &["SoftLight"];
+///
+/// # 2026-10-12：SoftLight 已收敛，例外清单清空
+///
+/// 上面记的那个症状（D3D12 侧三通道恒等）不再出现 —— 两个后端现在逐像素一致。
+/// 本仓的规矩是**清单不许养着过期条目**：留着等于「SoftLight 仍然有分歧」这个
+/// 已经不成立的说法还在替测试挡路，而 `the_known_divergence_list_is_not_stale`
+/// 就是专门盯这件事的门禁（它一响，就是该删条目了）。
+///
+/// 清单保留（哪怕是空的）：它是**结构**而不是备注 —— 下一个真分歧会被显式登记
+/// 在这里、带着证据和名字，而不是靠调大容差蒙过去。
+const KNOWN_DIVERGENT: &[&str] = &[];
 
 fn known(mode: BlendMode) -> bool {
     KNOWN_DIVERGENT.contains(&format!("{mode:?}").as_str())

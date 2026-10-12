@@ -97,6 +97,39 @@ fn an_interactive_node_is_actually_reported_as_interactive() {
 }
 
 #[test]
+fn pressing_and_releasing_both_bump_the_revision() {
+    // 宿主靠 `revision` 变化决定「这一帧要不要重绘」，而按下态与 click 之后
+    // 的状态变化**都是画出来的**。漏掉 `revision++` 时症状极其安静：
+    //
+    // - Down 不 bump ⇒ 按下时没有按下样式，鼠标一动才出现；
+    // - Up 不 bump ⇒ **第一次点击「没反应」**，把鼠标移开再移回来才生效。
+    //
+    // 第二条最难查：画面没有任何异常（该亮的亮、该画的画），只是「少了一帧」。
+    // 判据刻意不让 hover 同时变化（鼠标不动）—— 那正是点按钮时的常态。
+    let node = tree(&two_buttons());
+    let mut router = InputRouter::new();
+
+    // 先悬停上去，让 hover 稳定下来。
+    route(&mut router, &node, ev(0, 10.0, 10.0, PointerPhase::Move));
+    let before_down = router.revision();
+
+    route(&mut router, &node, ev(0, 10.0, 10.0, PointerPhase::Down));
+    assert_ne!(
+        router.revision(),
+        before_down,
+        "按下必须 bump revision（否则按下态没有样式，且宿主不重绘）"
+    );
+
+    let before_up = router.revision();
+    route(&mut router, &node, ev(0, 10.0, 10.0, PointerPhase::Up));
+    assert_ne!(
+        router.revision(),
+        before_up,
+        "抬起必须 bump revision —— click 之后应用改了状态，不 bump 就整帧不重绘"
+    );
+}
+
+#[test]
 fn a_container_is_on_the_path_but_is_not_the_target() {
     // 事件冒泡需要容器的矩形，但处理目标必须是按钮本身。
     let node = tree(&two_buttons());
