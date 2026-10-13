@@ -101,6 +101,12 @@ pub use zephyra_fx::Z_INDEX;
 /// `window` **之后** —— 否则窗口先死、DComp 树后死，绑定被拆除时窗口已不可见，
 /// 现象是关窗瞬间闪一下黑。
 pub struct HostWindow<V: View> {
+    /// 上一次 `sync_input` 的时刻 —— 动画时钟的唯一来源（`InputState::dt_ms`）。
+    ///
+    /// 放在最前面与释放顺序无关（`Instant` 无 Drop 语义），只为让"帧间隔从哪来"
+    /// 一眼可寻。`None` = 还没有上一帧，于是 dt 为 0 —— 首帧没有
+    /// "距上一帧多久"可言，填 0 而不是猜一个值，否则首帧动画从中间开始。
+    last_frame_at: Option<std::time::Instant>,
     window: std::sync::Arc<Window>,
     /// D3D11 设备与上下文（唯一一份）。
     gpu: Gpu,
@@ -204,6 +210,7 @@ impl<V: View> HostWindow<V> {
         let theme: &'static Theme = Box::leak(Box::new(Theme::dark()));
 
         Self {
+            last_frame_at: None,
             window,
             gpu,
             surface,
@@ -293,6 +300,11 @@ impl<V: View> HostWindow<V> {
         self.surface.size()
     }
 
+    /// 窗口缩放比。断点判定要它把物理视口折成有效像素（见 `InputState::viewport`）。
+    pub fn scale_factor(&self) -> f32 {
+        self.window.scale_factor() as f32
+    }
+
     /// 切主题：换 `Theme` 引用并强制重绘。
     ///
     /// 树**不动** —— 属性里存的资源键保持为键，切主题只是换了一个 `&Theme`。
@@ -332,6 +344,22 @@ impl<V: View> HostWindow<V> {
                 hovered: None,
                 pressed: self.router.pressed().cloned(),
                 pointers: self.router.pointer_count(),
+                // 与 D3D12 那份同源：视口走 `on_input` 推给视图，断点判定要用。
+                // （这个后端本身不参与响应式，但接口必须一致，否则每加一个后端
+                //   就要为「忘了这个字段」付一次排查成本。）
+                viewport: (size.0 as f32, size.1 as f32),
+                scale: self.scale_factor(),
+                // D3D11 后端同样要有帧间隔：动画时钟的口径只在 InputState 一处，
+                // 这里不填就让"接动画"变成逐个后端补字段。
+                dt_ms: {
+                    let now = std::time::Instant::now();
+                    let dt = self
+                        .last_frame_at
+                        .map(|t| now.duration_since(t).as_secs_f32() * 1000.0)
+                        .unwrap_or(0.0);
+                    self.last_frame_at = Some(now);
+                    dt
+                },
             };
             self.view.on_input(&input);
 

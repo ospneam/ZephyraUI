@@ -364,6 +364,7 @@ pub fn group_nav(g: &super::Gallery) -> Vec<zephyra_core::element::Element> {
                 g.is_route(route),
                 g.hovers(route),
                 g.holds(route),
+                false,
             ))
         })
         .collect()

@@ -93,6 +93,17 @@ pub struct HostWindow<V: View> {
     backdrop_active: bool,
     /// 帧计数。只给 `trace` 用。
     frames: usize,
+    /// 上一次 `sync_input` 的时刻，用来算**真实帧间隔**（动画时钟的唯一来源）。
+    ///
+    /// `None` = 还没有上一帧，于是 dt 为 0。首帧没有"距上一帧多久"可言，
+    /// 填 0 而不是填一个猜的值：猜的值会让首帧动画从中间开始。
+    last_frame_at: Option<std::time::Instant>,
+    /// 上一帧布局用的视口（有效像素）。**只给 trace 用**。
+    ///
+    /// 存在的理由与 `FrameCache::viewport` 不同：那条是 core 的**判据**，决定要不要
+    /// 重排；这一份纯粹是「resize 之后到底发生了什么」的观测点。
+    /// 两者的值应当一致 —— 不一致本身就是缺陷（见 `docs/task-responsive.md` B2）。
+    traced_viewport: Option<(f32, f32)>,
     /// 图像纹理表：`Command::Image` 的句柄 → SRV 描述符位置。
     textures: TextureTable,
     /// 窗口。**最后析构**，见模块文档。
@@ -222,6 +233,8 @@ impl<V: View> HostWindow<V> {
             atlas_revision_uploaded: 0,
             backdrop_active: false,
             frames: 0,
+            last_frame_at: None,
+            traced_viewport: None,
             textures: TextureTable::new(),
             window,
         }
@@ -313,6 +326,32 @@ impl<V: View> HostWindow<V> {
     pub fn client_size(&self) -> (u32, u32) {
         let s = self.window.inner_size();
         (s.width.max(1), s.height.max(1))
+    }
+
+    /// 客户区**有效像素**尺寸 = 物理 / scale。
+    ///
+    /// # 为什么单独一个方法，而不是把 `client_size` 改掉
+    ///
+    /// 两者用途不同，混在一起会一次改两件事：
+    /// - `client_size()`（物理）是**布局视口**，改它会让全部视觉尺寸一起变
+    ///   （1.25 缩放下整体小 25%）—— 那是独立的一轮，见
+    ///   `docs/responsive-and-touch.md` §5 的记账；
+    /// - 本方法（有效）只服务**断点判定**。官方口径写得很清楚：
+    ///   `AdaptiveTrigger.MinWindowWidth` = "the minimum window width
+    ///   (**in effective pixels**)"。本机 scale 1.25 下，1400 物理 = 1120 有效，
+    ///   而 800 物理 = 640 有效，正好压在「小/中」的边界上 ——
+    ///   **按物理判会整体错一档**。
+    pub fn effective_size(&self) -> (f32, f32) {
+        let (w, h) = self.client_size();
+        let scale = self.window.scale_factor();
+        // scale 为 0 / 非正 / NaN 时退回 1.0：除零会得到 inf，而 inf 会让
+        // 每个断点判定都走向同一支，那种"静默退化"比"明显错了"更难发现。
+        let scale = if scale.is_finite() && scale > 0.0 {
+            scale as f32
+        } else {
+            1.0
+        };
+        (w as f32 / scale, h as f32 / scale)
     }
 
     /// 当前 hover 的节点 key。
@@ -425,6 +464,25 @@ impl<V: View> HostWindow<V> {
 
         if trace_enabled() {
             self.frames += 1;
+            // 视口一变就打一行，不按帧号节流：resize 类缺陷的判据全在这一行里。
+            //
+            // `redrawn == false` 且视口刚变过 ⇒ **core 认为不用重画**（问题在
+            // 判据，不在绘制）；`redrawn == true` 而屏幕没变 ⇒ **画了但没显示**
+            // （问题在交换链 / DComp）。这两类症状看起来一模一样（都是"窗口变大了
+            // 但内容没跟着变"），而排查方向完全相反 —— 所以必须分开打。
+            let vp = {
+                let s = self.client_size();
+                (s.0 as f32, s.1 as f32)
+            };
+            if self.traced_viewport != Some(vp) {
+                if let Some(old) = self.traced_viewport {
+                    eprintln!(
+                        "[trace] 第 {} 帧视口 {old:?} → {vp:?}：redrawn={redrawn} damage={damage:?}",
+                        self.frames,
+                    );
+                }
+                self.traced_viewport = Some(vp);
+            }
             // 首帧与之后每 60 帧：稳态下这些数恒定，一变就说明布局或图集在漂。
             if self.frames == 1 || self.frames.is_multiple_of(60) {
                 // `kind` 直方图：片元着色器**只**按 `kind` 分支，所以「矩形出来了、
@@ -630,6 +688,9 @@ impl<V: View> HostWindow<V> {
         if (w, h) == self.chain.size() {
             return false;
         }
+        let (ew, eh) = self.effective_size();
+        let scale = self.window.scale_factor();
+        let before = self.chain.size();
         if let Err(e) = self.chain.resize(&self.gpu, (w, h)) {
             eprintln!("[zephyra-d3d12] resize 到 {w}×{h} 失败: {e}");
             return false;
@@ -637,6 +698,19 @@ impl<V: View> HostWindow<V> {
         if self.chain.was_recreated() {
             eprintln!("[zephyra-d3d12] 交换链已重建，重新挂进 DComp 视觉树");
             self.rebind_visual();
+        }
+        if trace_enabled() {
+            // 这一行是 resize 类缺陷的**唯一**观测点：它同时给出物理尺寸、
+            // 有效尺寸、缩放比与交换链是否重建。「拉窗口后右侧留白」这种症状，
+            // 看到这一行才能分清是「没重排」还是「排了新缓冲没被显示」—— 两者的
+            // 排查方向完全相反。
+            eprintln!(
+                "[trace] resize：客户区 {before:?} → {}×{}；有效 {ew:.0}×{eh:.0}；\
+                 scale {scale:.2}；交换链重建 {}",
+                self.chain.size().0,
+                self.chain.size().1,
+                self.chain.was_recreated(),
+            );
         }
         true
     }
@@ -681,10 +755,26 @@ fn list_kind_histogram(&self) -> Vec<usize> {
 
 /// 把新输入状态推给视图（每帧开头一次）。
     pub fn sync_input(&mut self) {
+        // 视口、缩放比与帧间隔一起推给视图：断点判定要**有效像素**（除 scale），
+        // 列数计算要**布局宽**（本仓即物理像素），动画时钟要**真实 dt**。
+        let size = self.client_size();
+        let scale = self.window.scale_factor();
+        // dt 实测而不是按刷新率拍：官方动画时长全是毫秒（83/167/250/333），
+        // 只有真实时间下才成立。掉一帧动画会变慢 —— 但那比"每帧固定推进"好：
+        // 后者在任何非标刷新率上都不准。
+        let now = std::time::Instant::now();
+        let dt_ms = self
+            .last_frame_at
+            .map(|t| now.duration_since(t).as_secs_f32() * 1000.0)
+            .unwrap_or(0.0);
+        self.last_frame_at = Some(now);
         let state = InputState {
             hovered: self.router.hovered().cloned(),
             pressed: self.router.pressed().cloned(),
             pointers: self.router.pointer_count(),
+            viewport: (size.0 as f32, size.1 as f32),
+            scale: scale as f32,
+            dt_ms,
         };
         self.view.on_input(&state);
     }

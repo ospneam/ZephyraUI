@@ -25,6 +25,10 @@
 
 pub mod controls;
 pub mod app;
+/// 响应式与触控判据 —— 断点、触摸目标、列数。数字全部带出处，
+/// 见 `docs/responsive-and-touch.md`。
+pub mod anim;
+pub mod responsive;
 pub mod tokens;
 
 pub use controls::*;

@@ -132,8 +132,8 @@ pub fn showcase(g: &Gallery, page: &str) -> Element {
         "MenuBar" => vec![menu_bar("sc:mb", MENU_BAR_ITEMS, None)],
         // ---------------- Navigation ----------------
         "NavigationView" => vec![stack_of(vec![
-            nav_item("sc:nav1", "Home", "home", true, g.hovers("sc:nav1"), g.holds("sc:nav1")),
-            nav_item("sc:nav2", "Settings", "settings", false, g.hovers("sc:nav2"), g.holds("sc:nav2")),
+            nav_item("sc:nav1", "Home", "home", true, g.hovers("sc:nav1"), g.holds("sc:nav1"), false),
+            nav_item("sc:nav2", "Settings", "settings", false, g.hovers("sc:nav2"), g.holds("sc:nav2"), false),
         ])],
         "SelectorBar" => vec![selector_bar("sc:sb", SELECTOR_ITEMS, Some("nav"), g.hovered_name(), g.pressed_name())],
         // ---------------- Dialogs ----------------

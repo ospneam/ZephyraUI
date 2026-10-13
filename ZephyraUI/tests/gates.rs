@@ -360,8 +360,6 @@ fn shell_metrics_match_stylesheet() {
     let css = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("gallery.zstyle"))
         .unwrap();
     let want = [
-        ("Container.window", "width", zephyra_ui::app::shell::CANVAS_W),
-        ("Container.window", "height", zephyra_ui::app::shell::CANVAS_H),
         ("Container.titlebar", "height", zephyra_ui::app::shell::TITLEBAR_H),
         ("Container.nav-pane", "width", zephyra_ui::app::shell::NAV_W),
         ("Container.nav-pane", "height", zephyra_ui::app::shell::NAV_H),
@@ -396,6 +394,62 @@ fn shell_metrics_match_stylesheet() {
             "{selector} 的 {prop}：样式表 {got} ≠ shell.rs 常量 {expect}"
         );
     }
+}
+
+/// 根容器**必须不写** `width` / `height`。
+///
+/// # 为什么这是动态布局的**前提**而不是细节
+///
+/// `arrange` 无条件把根矩形设成 `bounds`（= 窗口客户区），所以铺满窗口不需要写尺寸。
+/// 而写上 `width: 1400px` 会让 `measure` 返回 1400——一切按内容算可用宽的分支
+/// （列数、banner 高度、是否折叠导航）都会拿到这个"假窗口宽"。症状：
+///
+/// - 窗口拉到 1882 时，右侧留 386 单位**空白**（内容仍按 1400 排）；
+/// - 窗口缩到 982 时，内容溢出被**裁**（同样按 1400 排）。
+///
+/// 两种表现看起来都像"渲染坏了"，而根因只是样式表里多了两行。
+///
+/// 判据是"写没写"，不是"写了多少"：数值对错还能调，**这两行存在**就让整个
+/// 响应式失效，且没有任何报错。
+#[test]
+fn 根容器不写固定尺寸() {
+    let css = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("gallery.zstyle"))
+        .unwrap();
+    let start = css
+        .split("Container.window {")
+        .nth(1)
+        .unwrap_or_else(|| panic!("样式表里找不到 Container.window"));
+    let block = &start[..start.find('}').unwrap_or(start.len())];
+    for prop in ["width", "height"] {
+        assert!(
+            !block.lines().any(|l| l.trim().starts_with(&format!("{prop}:"))),
+            "Container.window 写了 {prop} —— 根容器必须由 arrange 按 bounds 铺满，\
+             写死尺寸会让整个响应式失效（窗口变化时内容仍按旧尺寸排）"
+        );
+    }
+}
+
+/// 基准画布（1400×800）下，根矩形必须仍铺满客户区。
+///
+/// # 为什么去掉固定尺寸之后还要这一条
+///
+/// 因为"去掉显式尺寸"有另一种可能的失败：如果 `arrange` 改成按测量结果铺，
+/// 根矩形会缩到内容尺寸，于是根背景不再铺满窗口 —— 右侧和底部露出未绘制区。
+/// 那条路**也不报错**，只是"窗口边缘多一圈别的东西"。
+///
+/// 所以这条门禁把两件事一起钉住：
+/// 1. 根矩形 == 客户区（铺满）；
+/// 2. 基准画布下与去掉尺寸之前**无差别**（回归保护）。
+#[test]
+fn 基准画布下根容器仍铺满客户区() {
+    let root = laid_out("home");
+    let r = root.rect();
+    let (cw, ch) = zephyra_ui::app::BASE_VIEWPORT;
+    assert_eq!(
+        (r.width, r.height),
+        (cw as f32, ch as f32),
+        "根矩形必须铺满基准画布：{r:?}"
+    );
 }
 
 // ------------------------------------------------------- 门禁 7：外壳几何
@@ -1104,4 +1158,150 @@ fn every_catalog_entry_has_a_non_empty_showcase_page() {
         bad.join("\n  ")
     );
     let _ = ctx;
+}
+// ------------------------------------------- 门禁 21：响应式（官方断点 + 列数）
+
+/// 断点判据必须与官方文档的三个类别一致。
+///
+/// 出处：`screen-sizes-and-breakpoints-for-responsive-design` ——
+/// 「小：最大可达 640 像素；中：641 - 1007px；大：1008px及以上」。
+/// 数字本身在 `responsive.rs` 里有单测，这里额外钉住**汇编关系**：
+/// 类别必须由宽度单调决定，不能出现「宽窗口落到更窄的档」这种倒挂。
+#[test]
+fn 断点作文档的三个类别且单调() {
+    use zephyra_ui::responsive::WidthClass;
+
+    let mut prev = WidthClass::Small;
+    for w in (0..2600).step_by(40) {
+        let c = WidthClass::of_effective_width(w as f32);
+        // 宽度只增，档位只能不变或更宽。
+        let order = |c: WidthClass| match c {
+            WidthClass::Small => 0,
+            WidthClass::Medium => 1,
+            WidthClass::Large => 2,
+        };
+        assert!(
+            order(c) >= order(prev),
+            "宽度 {w} 的档位 {c:?} 窄于上一档 {prev:?} —— 断点倒挂了"
+        );
+        prev = c;
+    }
+}
+
+/// 列数必须真的随宽度变，且基准画布下仍是 5 列。
+///
+/// # 为什么这三条断言都要有
+///
+/// 1. **基准 5 列**：不能为了响应式把 1400×800 的参考外观改掉；
+/// 2. **窄窗口降列**：否则窄窗口下仍排 5 列，内容溢出被裁（本轮实测的症状）；
+/// 3. **宽窗口加列**：否则宽窗口下仍排 5 列，右侧留白（本轮实测的另一个症状）。
+///
+/// 三条一起才构成「列数是宽度的函数」。只有第 1 条时，代码完全可以
+/// 退回写死 5 —— 基准图全绿，而真实窗口下症状原样存在。
+#[test]
+fn 列数随宽度变化且基准仍是五列() {
+    use zephyra_ui::app::{Gallery, BASE_VIEWPORT};
+    use zephyra_ui::responsive::WidthClass;
+
+    let at = |w: u32, h: u32, scale: f32| {
+        let mut g = Gallery::default();
+        g.viewport = (w as f32, h as f32);
+        g.scale = scale;
+        (g.width_class(), g.card_columns())
+    };
+
+    // 基准：有效 1120 epx ⇒ 大档，5 列。这一条把「参考图」钉住。
+    let (cls, cols) = at(BASE_VIEWPORT.0, BASE_VIEWPORT.1, 1.0);
+    assert_eq!(cls, WidthClass::Large, "基准应落在官方的大档");
+    assert_eq!(cols, zephyra_ui::app::pages::BASE_COLUMNS, "基准画布下必须仍 5 列");
+
+    // 窄：有效宽度 ≤ 640 ⇒ 小档，且列数必须严格少于基准。
+    //
+    // 取 700 物理 @1.25 = 560 epx（小）。注意这里用**物理**视口喂进去，
+    // 由 Gallery 自己除 scale —— 判据必须是有效像素，官方
+    // `AdaptiveTrigger.MinWindowWidth` 的定义就是 "in effective pixels"。
+    let (cls, cols) = at(700, 600, 1.25);
+    assert_eq!(cls, WidthClass::Small);
+    assert!(
+        cols < zephyra_ui::app::pages::BASE_COLUMNS,
+        "窄窗口下仍排 {cols} 列 —— 内容会溢出被裁"
+    );
+    assert!(gallery_at(700, 600, 1.25).is_compact(), "小档必须判定为紧凑");
+
+    // 宽：有效 ≥ 1008 ⇒ 大档，且列数必须多于基准。
+    let (cls, cols) = at(2400, 1400, 1.0);
+    assert_eq!(cls, WidthClass::Large);
+    assert!(
+        cols > zephyra_ui::app::pages::BASE_COLUMNS,
+        "宽窗口下仍排 {cols} 列 —— 右侧会留白"
+    );
+
+    // 单调：宽度只增，列数只能不变或增。中途允许"不变"（步长小于一个卡宽），
+    // 但不允许下降 —— 下降意味着列数受别的因素影响，难以归因。
+    let mut prev = 0usize;
+    for w in (600..2600u32).step_by(120) {
+        let cols = gallery_at(w, 900, 1.0).card_columns();
+        assert!(cols >= prev, "宽度 {w} 的列数 {cols} 少于上一档 {prev}");
+        prev = cols;
+    }
+}
+
+fn gallery_at(w: u32, h: u32, scale: f32) -> zephyra_ui::app::Gallery {
+    let mut g = zephyra_ui::app::Gallery::default();
+    g.viewport = (w as f32, h as f32);
+    g.scale = scale;
+    g
+}
+
+/// 内容区可用宽度必须 = 视口 − 导航 − 页边距，且紧凑档下导航归零。
+///
+/// 这是列数公式的输入。若它与外壳常量脱节，列数会悄悄算错 —— 而症状
+/// （最后一列被裁/多出一列空白）看起来像"样式没调好"，不像算错。
+#[test]
+fn 内容区宽度随断点变化() {
+    let wide = gallery_at(1400, 800, 1.0);
+    assert_eq!(
+        wide.content_width(),
+        1400.0 - zephyra_ui::app::shell::NAV_W - 28.0,
+        "非紧凑档：内容区 = 视口 − 导航 − 页边距"
+    );
+    assert!(!wide.is_compact());
+
+    // 折叠真的把导航宽让给内容：紧凑档的内容区 = 视口 - 页边距（导航归零），
+    // 于是与非紧凑公式（视口 - 导航 - 页边距）之差恰为 NAV_W。
+    //
+    // 判据在**同一个**紧凑视口下取两个值：真实的一个（导航已归零），
+    // 与按非紧凑公式手算的一个。不能靠"切换到另一个 viewport"来对比 ——
+    // 那样差里混着窗口宽度的变化。（第一版正是这么写的，两次断言都假。）
+    let mut compact = Gallery::default();
+    compact.viewport = (700.0, 600.0); // 700 @1.25 = 560 epx => 官方小档
+    compact.scale = 1.25;
+    assert!(compact.is_compact());
+    let collapsed = compact.content_width();
+    let nav = zephyra_ui::app::shell::NAV_W;
+    let gutter = zephyra_ui::app::PAGE_GUTTER;
+    assert_eq!(collapsed, 700.0 - gutter, "紧凑档内容区 = 视口 - 页边距");
+    assert_eq!(
+        collapsed - (700.0 - nav - gutter),
+        nav,
+        "折叠前后的内容区差必须恰好是导航宽（折叠后更大）"
+    );
+    assert!(collapsed > 0.0 && collapsed.is_finite(), "内容区必须是有界正数");
+}
+
+/// 触控目标必须按 scale 换算，保证视觉上达到官方的 40 epx 下限。
+///
+/// 出处：`touch-interactions`「命中目标」——「可触摸定义为最小 40 x 40 epx」。
+/// 本仓布局单位是物理像素，所以 40 必须乘 scale；不乘会得到 40 物理 = 32 epx
+/// （1.25 缩放下），**低于官方下限而代码看起来完全正确**。
+#[test]
+fn 触控目标按缩放比换算到官方的_epx_下限() {
+    let g = gallery_at(1400, 800, 1.25);
+    assert_eq!(g.touch_target(zephyra_ui::responsive::TOUCH_MIN_EPX), 50.0);
+    assert_eq!(g.touch_target(zephyra_ui::responsive::TOUCH_OPTIMAL_EPX), 55.0);
+    // 100% 下恒等；退化 scale 不应 panic 或给出 0。
+    let plain = gallery_at(1400, 800, 1.0);
+    assert_eq!(plain.touch_target(zephyra_ui::responsive::TOUCH_MIN_EPX), 40.0);
+    let bad = gallery_at(1400, 800, 0.0);
+    assert!(bad.touch_target(zephyra_ui::responsive::TOUCH_MIN_EPX) > 0.0);
 }

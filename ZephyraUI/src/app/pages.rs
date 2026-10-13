@@ -25,8 +25,15 @@ use crate::controls::{
     tool_button, tool_tip,
 };
 
-/// 每个手排行的卡片数（画布 1400、导航 240、内容卡 padding 24 后约 1111 宽）。
-pub const COLUMNS: usize = 5;
+/// **基准画布**（[`app::BASE_VIEWPORT`] = 1400×800）下每个手排行的卡片数。
+///
+/// 它**不是**排布用的常量 —— 排布列数由 [`Gallery::card_columns`] 按可用宽度现算
+/// （窄窗口降列、宽窗口加列，见官方的「重新排列」）。这里的用途是「基准外观不能变」
+/// 的锚点：`tests/gates::基准画布下列数与锚点一致` 断言默认 Gallery 算出的列数仍等于它。
+///
+/// 历史上它直接驱动 `clip_grid_c`，于是窗口变化时内容仍按这个数排 ——
+/// 宽窗口右侧留白、窄窗口溢出被裁，正是那两条症状的来源。
+pub const BASE_COLUMNS: usize = 5;
 
 /// 按路由分发。
 pub fn page(g: &Gallery) -> Element {
@@ -158,7 +165,7 @@ fn recent_grid(g: &Gallery) -> Vec<Element> {
         .take(HOME_RECENT_LIMIT)
         .map(|e| catalog::clip_card(e.page, e.title, e.desc, catalog::icon_for(e), g))
         .collect();
-    clip_grid_c(cards)
+    clip_grid_c(cards, g.card_columns())
 }
 
 /// 收藏视图。
@@ -271,7 +278,7 @@ fn all_samples(g: &Gallery) -> Element {
             // 14 个分组 chip 条：点进分组索引页。这是 Rin-UI 分类导航的等价物 ——
             // 放在 All 页里而不是侧栏，因为 core 无滚动 / 无折叠，侧栏放不下 14 项。
             section("sec-groups", "Categories", vec![group_chip_row(g)]),
-            section("sec-all", "All controls", clip_grid_c(cards)),
+            section("sec-all", "All controls", clip_grid_c(cards, g.card_columns())),
         ])
 }
 
@@ -333,7 +340,7 @@ fn group_page(g: &Gallery, route: &'static str) -> Element {
         .with_children([section(
             "sec-group-cards",
             grp.title,
-            clip_grid_c(cards),
+            clip_grid_c(cards, g.card_columns()),
         )])
 }
 
@@ -346,10 +353,30 @@ fn group_page(g: &Gallery, route: &'static str) -> Element {
 /// ⚠️ 不能用 `chunks()`：core 的 `Element` **不是 `Clone`** —— 它持有 `Cow`
 /// 与 `Vec`，克隆一份就是一次多余深拷贝。所以这里用 `drain` 逐行取走，
 /// 每张卡片只被移动一次、从不复制。
-pub fn clip_grid_c(mut cards: Vec<Element>) -> Vec<Element> {
+/// 把卡片切成若干横排行，每行 `columns` 张。
+///
+/// # `columns` 是断点的直接产物（官方的「重新排列」）
+///
+/// `docs/responsive-and-touch.md` §6 引官方 `responsive-design` 页：当改用更大的
+/// 屏幕时可以添加列。core 没有 Grid 也没有 flex-wrap，所以列数只能在视图层按
+/// 可用宽度算 —— 这正是 [`Gallery::card_columns`] 的理由：
+///
+/// - 基准画布下仍是 5 列（`columns_for(1136, 200, 12) == 5`，有单测钉住）；
+/// - 窄窗口自动降到 3/2/1 列，不再溢出被裁；
+/// - 宽窗口上到 6/7 列，不再右侧留白。
+///
+/// # 为什么用 `split_off` 而不是 `chunks()`
+///
+/// core 的 `Element` 不是 `Clone`（持 `Cow` 与 `Vec`，克隆即深拷贝）。
+/// 逐行取走则每张卡片只被移动一次。
+///
+/// 下面的旧注释保留作为历史记录：这个函数原来收无参、按常量 `COLUMNS` 切分。
+pub fn clip_grid_c(mut cards: Vec<Element>, columns: usize) -> Vec<Element> {
+    // 列数至少 1：否则 `split_off(0)` 反复切成空行，行容器无限增长。
+    let columns = columns.max(1);
     let mut rows: Vec<Element> = Vec::new();
     while !cards.is_empty() {
-        let take = cards.len().min(COLUMNS);
+        let take = cards.len().min(columns);
         let rest = cards.split_off(take);
         let chunk = std::mem::replace(&mut cards, rest);
         rows.push(
@@ -984,7 +1011,7 @@ fn settings_page(g: &Gallery) -> Element {
                 vec![
                     check_box("check:alpha", "Diagnostic logging", g.checked[0], g.hovers("check:alpha"), g.holds("check:alpha")),
                     check_box("check:beta", "Hardware acceleration", g.checked[1], g.hovers("check:beta"), g.holds("check:beta")),
-                    nav_item("nav-shortcut", "Shortcuts", "menu", false, g.hovers("nav-shortcut"), g.holds("nav-shortcut")),
+                    nav_item("nav-shortcut", "Shortcuts", "menu", false, g.hovers("nav-shortcut"), g.holds("nav-shortcut"), false),
                 ],
             ),
         ])

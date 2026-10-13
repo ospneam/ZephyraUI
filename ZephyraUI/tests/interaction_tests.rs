@@ -149,6 +149,11 @@ impl Harness {
             hovered,
             pressed: pressed.clone(),
             pointers: usize::from(pressed.is_some()),
+            viewport: (W, H),
+            scale: 1.0,
+            // 测试里给一个确定值：动画时钟的断言因此可复现，
+            // 而不依赖机器速度（若填 0，则所有动画类断言都只能测"未开始"）。
+            dt_ms: 16.0,
         });
         // 顺序是**契约**：diff → apply → layout → render。
         // apply 必须在 diff **之后** —— 它读的是节点上**刚被 diff 改过**的分类名，

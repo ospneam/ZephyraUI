@@ -14,9 +14,19 @@
 
 /* ---- 窗口 ---- */
 
+/* 根容器**不给**显式尺寸。
+ *
+ * 这是动态布局的第一处改动：`arrange` 无条件把根矩形设成 `bounds`
+ * （也就是窗口客户区），所以铺满窗口本来就不需要写尺寸；而写上
+ * `width: 1400px` 会让 `measure` 返回 1400 —— 列数、可用宽度一类按内容算的
+ * 分支会拿到这个"假窗口宽"，于是窗口拉到 1882 时右侧留 386 单位空白，
+ * 缩到 982 时内容溢出被裁。
+ *
+ * 基准画布下（1400×800）外观**不变**：根的矩形仍由 `bounds` 铺满，
+ * 子项的可用宽仍是客户区。这一条由
+ * `tests/gates::基准画布下根容器仍铺满客户区` 钉住。
+ */
 Container.window {
-    width: 1400px;
-    height: 800px;
     direction: vertical;
     /* stretch：标题栏与主体铺满画布宽（core 没有 flex-grow，cross-align
      * stretch 就是它的对应物；默认的 Start 会让它们缩到内容宽）。 */
@@ -24,10 +34,16 @@ Container.window {
     background: @surface;
 }
 
+/* 主体：水平排列（导航 + 内容卡）。
+ *
+ * 宽高都**不写死**：宽度靠 cross-align stretch 铺满，高度由 shell.rs 按
+ * 视口下发（core 没有 flex-grow，第二个子项不会自动占满剩余高度）。
+ * 写死 1400x752 等于把布局钉在基准窗口上 —— 窗口拉宽则右侧留白，
+ * 拉高则底部留一条未绘制区，而那两者都不报错。
+ */
 Container.body {
     direction: horizontal;
-    width: 1400px;
-    height: 752px;
+    cross-align: stretch;
 }
 
 /* ---- 标题栏 ---- */
@@ -117,6 +133,12 @@ Container.caption-icon {
 }
 
 /* ---- 导航栏 ---- */
+
+Container.nav-pane.compact {
+    width: 56px;
+    padding: 4px;
+    cross-align: center;
+}
 
 Container.nav-pane {
     direction: vertical;

@@ -40,6 +40,16 @@ pub const ROUTES: &[(&str, &str, &str)] = &[
     ("testbed", "Test Features", "sliders"),
 ];
 
+/// 基准画布尺寸（物理像素）= 宿主建窗口时的初值。
+///
+/// 它同时是[`Gallery`] 在 dump 路下的默认视口，于是静态图与窗口路共用同一套
+/// 断点。Rin-UI 原版按桌面大窗口设计，所以基准落在官方"大"档（1120 epx）。
+pub const BASE_VIEWPORT: (u32, u32) = (1400, 800);
+
+/// 内容区两侧的页边距（布局单位）。与 `pages.rs` 里的 section 间距同源，
+/// 由 `tests::gates::内容区宽度随断点变化` 间接钉住。
+pub const PAGE_GUTTER: f32 = 28.0;
+
 /// 解析一个 key 是否为合法路由，是则返回该路由 id（`&'static`）。
 ///
 /// # 路由来源有三处，缺一不可
@@ -155,6 +165,85 @@ pub struct Gallery {
     pub mica: bool,
     /// Menus 演示：菜单栏当前展开项（None = 全收起）。
     pub menu_open: Option<usize>,
+    /// 客户区视口，**物理像素**。宿主每帧经 `on_input` 推进来。
+    ///
+    /// 初始值取基准画布尺寸（见 [`app::BASE_VIEWPORT`]）：dump 路没有宿主，
+    /// 于是静态渲染下的断点与 1400×800 窗口一致 —— 否则 `--dump-cpu` 出的图
+    /// 会按"小型窗口"排，与窗口路对不上，而那条对照正是参考图的全部价值。
+    pub viewport: (f32, f32),
+    /// 视口缩放比。它与 [`Self::viewport`] 一起才能算出有效像素（断点口径）。
+    /// 初始 1.0 = 「dump 路当作未缩放处理」，与上面同源。
+    pub scale: f32,
+}
+
+impl Gallery {
+    /// 有效像素宽度（官方断点的口径）。
+    ///
+    /// 宿主给的视口是物理像素，这里除 scale。判据见
+    /// `docs/responsive-and-touch.md` §2 与 [`crate::responsive::WidthClass`]。
+    pub fn width_epx(&self) -> f32 {
+        let scale = if self.scale.is_finite() && self.scale > 0.0 {
+            self.scale
+        } else {
+            1.0
+        };
+        self.viewport.0 / scale
+    }
+
+    /// 当前断点档位。
+    pub fn width_class(&self) -> crate::responsive::WidthClass {
+        crate::responsive::WidthClass::of_viewport(self.viewport, self.scale)
+    }
+
+    /// 是否为紧凑档（小屏，导航折叠、单列布局）。
+    ///
+    /// 这一条是**结构**判据，不是外观判据：折叠不折叠、几列、显不显示某块，
+    /// 都是树拓扑，属于视图职责；外观值仍在 zstyle（见
+    /// `docs/responsive-and-touch.md` §7）。
+    pub fn is_compact(&self) -> bool {
+        self.width_class().is_compact()
+    }
+
+    /// 内容区在**布局单位**下的可用宽度。
+    ///
+    /// 基准画布下 = 1400(视口) − [`crate::app::shell::NAV_W`](导航) − 28(页边距) = 1136，
+    /// 与现有卡片网格 5 列一致（`columns_for(1136, 200, 12) == 5`）。
+    ///
+    /// 导航折叠时导航宽度归零（内容区扩大到满宽）—— 这也是官方「重新排列」的做法：
+    /// 小屏不把 [`NAV_W`](crate::app::shell::NAV_W) 单位浪费在一个看不见的侧栏上。
+    ///
+    /// # 为什么导航宽要引用常量而不是写死
+    ///
+    /// 这里曾经写死 `236.0`，而 `shell::NAV_W` 实际是 232。列数于是按错 4 单位算 ——
+    /// 而 4 单位小到看不出，只在某些宽度上让「差一点点放不下第 5 列」。
+    /// 那条错是被 `tests::gates::内容区宽度随断点变化` 抓到的，不是被眼看出来的。
+    pub fn content_width(&self) -> f32 {
+        let nav = if self.is_compact() {
+            0.0
+        } else {
+            crate::app::shell::NAV_W
+        };
+        (self.viewport.0 - nav - PAGE_GUTTER).max(0.0)
+    }
+
+    /// 卡片网格列数：按可用宽度算，且不小于当前档位的下限。
+    ///
+    /// 卡宽取 200（本仓现有值），因此基准画布下仍是 **5 列** —— 这一条
+    /// 既是"没破坏基准外观"的证据，也是列数边界值的回归：
+    /// 见 `responsive.rs` 的 `columns_for(1136, 200, 12) == 5`。
+    pub fn card_columns(&self) -> usize {
+        use crate::responsive::columns_for;
+        let n = columns_for(self.content_width(), 200.0, 12.0);
+        n.max(self.width_class().min_columns())
+    }
+
+    /// 触控目标边长换算成**布局单位**（= 视觉上的 epx × scale）。
+    ///
+    /// 只在触控路径上用：鼠标路径的目标尺寸不变（本仓基准未动，见
+    /// `docs/responsive-and-touch.md` §5）。
+    pub fn touch_target(&self, epx: f32) -> f32 {
+        crate::responsive::touch_px(epx, self.scale)
+    }
 }
 
 impl Default for Gallery {
@@ -177,6 +266,10 @@ impl Default for Gallery {
             dd_open: false,
             mica: true,
             menu_open: None,
+            // dump 路默认走基准画布：静态图必须与 1400×800 窗口路同基准，
+            // 否则参考图和真实画面始终差一档，而没人会发现差在哪。
+            viewport: (BASE_VIEWPORT.0 as f32, BASE_VIEWPORT.1 as f32),
+            scale: 1.0,
         }
     }
 }
@@ -288,6 +381,11 @@ impl View for Gallery {
         self.last_pressed = state.pressed.clone();
         self.hovered = state.hovered.clone();
         self.pressed = state.pressed.clone();
+        // 视口与缩放比：断点判据的唯一来源。宿主每帧开头推一次，于是 resize 之后
+        // **下一帧**的树就按新断点造 —— 这正是 WinUI AdaptiveTrigger 的节奏
+        // （状态改变 → 声明改变 → diff 落到保留树），不需要任何回调。
+        self.viewport = state.viewport;
+        self.scale = state.scale;
     }
 
     fn view(&self, _ctx: &Context<'_>) -> Element {

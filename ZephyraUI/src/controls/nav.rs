@@ -13,6 +13,17 @@ use zephyra_core::props;
 use super::{state, with_classes};
 
 /// 导航项。`page` 是点击后要去的路由 id（也是事件 key）。
+///
+/// # `compact`
+///
+/// 紧凑档（官方断点的「小」）只留图标、隐藏文字 —— 这正是 WinUI NavigationView
+/// 的 `LeftCompact` 窗格模式，出处见 `docs/responsive-and-touch.md` §6 引
+/// `responsive-design` 页：「瞬态 UI（导航窗格及其精简版）适用于较小的屏幕，
+/// 但在较大屏幕上，最好选择使用选项卡」。
+///
+/// 用 [`props::COLLAPSED`] 折叠文字，而**不是不建这个节点**：两者视觉相同，
+/// 但折叠保留身份，于是展开/收起时 `label` 节点的 key 不变，diff 能复用；
+/// 不建则每次切换都要重建一次文字节点，而文字的重建要走一遍排版与图集。
 pub fn nav_item(
     key: &'static str,
     label: &'static str,
@@ -20,12 +31,16 @@ pub fn nav_item(
     selected: bool,
     hovered: bool,
     pressed: bool,
+    compact: bool,
 ) -> Element {
     // 选中/状态同样要下发到图标与文字：选中态的图标与字色都不同，
     // 而选择器没有后代组合器（见 button.rs 的同款说明）。
     let mut classes: Vec<&'static str> = Vec::new();
     if selected {
         classes.push("selected");
+    }
+    if compact {
+        classes.push("compact");
     }
     classes.extend(state(hovered, pressed));
     let mut bar = Element::new(NodeTag::Container)
@@ -34,6 +49,14 @@ pub fn nav_item(
     if selected {
         bar = bar.style("selected");
     }
+    let label_node = with_classes(
+        Element::new(NodeTag::Text)
+            .with_key("label")
+            .with(&props::TEXT, PropertyValue::static_str(label))
+            .with(&props::COLLAPSED, PropertyValue::bool(compact)),
+        &classes,
+    )
+    .style("nav-label");
     with_classes(
         Element::new(NodeTag::Control)
             .with_key(key)
@@ -48,13 +71,7 @@ pub fn nav_item(
                     &classes,
                 )
                 .style("nav-icon"),
-                with_classes(
-                    Element::new(NodeTag::Text)
-                        .with_key("label")
-                        .with(&props::TEXT, PropertyValue::static_str(label)),
-                    &classes,
-                )
-                .style("nav-label"),
+                label_node,
             ]),
         &classes,
     )

@@ -24,13 +24,23 @@ use super::{pages, Gallery, ROUTES, SETTINGS_ROUTE};
 use crate::controls::{badge, button, nav, text_label, tool_button};
 
 /// 画布宽（RinUI gallery 的窗口宽）。
+///
+/// ⚠️ 它只是**基准画布**的宽度，不是窗口的宽度。窗口宽度由宿主按 `inner_size()`
+/// 给（见 [`Gallery::viewport`]），外壳的宽度方向全部靠 `cross-align: stretch`
+/// 铺满 —— 这里保留常量只为让基准尺寸有名字可引用。
 pub const CANVAS_W: f32 = 1400.0;
-/// 画布高。
+/// 画布高。同 [`CANVAS_W`]：基准值，不是窗口高。
 pub const CANVAS_H: f32 = 800.0;
 /// 标题栏高（RinUI appearance.windowTitleBarHeight）。
 pub const TITLEBAR_H: f32 = 48.0;
 /// 导航栏宽（RinUI gallery 的 navExpandWidth 280 → 收一档取 240）。
 pub const NAV_W: f32 = 240.0;
+/// **紧凑档**的导航栏宽：只留图标列（WinUI NavigationView 的 `LeftCompact`）。
+///
+/// 出处见 `docs/responsive-and-touch.md` §6 引 `responsive-design` 页。取 56
+/// 而不是更小：图标列本身是 32 宽（**4 的倍数**，官方要求基单位为 4 epx），
+/// 加两侧 padding 后不能把图标压到 32 以下。
+pub const NAV_W_COMPACT: f32 = 56.0;
 /// 导航栏高 = 画布高 - 标题栏高。
 pub const NAV_H: f32 = CANVAS_H - TITLEBAR_H;
 /// 内容卡宽 = 画布宽 - 导航宽 - 1px 接缝（RinUI StackView 的 leftMargin）。
@@ -111,6 +121,15 @@ fn caption_buttons(g: &Gallery) -> Element {
 }
 
 /// 主体：左导航 + 右内容卡。
+///
+/// # 高度为什么不在这里下发
+///
+/// core 没有 flex-grow（垂直 StackPanel 的第二个子项不占满剩余高），所以
+/// `body` 的高度只能由**内容**决定：`max(导航内容高, 内容卡高)`。要真正跟随
+/// 窗口高，缺的是 core 的主轴 fill 语义 —— 已记账在
+/// `docs/responsive-and-touch.md` §8，不与本轮混做。
+///
+/// 这里只加 `cross-align: stretch`（合法地让宽度铺满，前者是交叉轴）。
 fn body(g: &Gallery) -> Element {
     Element::new(NodeTag::Container)
         .with_key("body")
@@ -119,7 +138,15 @@ fn body(g: &Gallery) -> Element {
 }
 
 /// 导航栏：顶部路由项 + 定高占位 + 置底的 Settings。
+///
+/// # 紧凑档
+///
+/// 官方的「自适应布局」示例正是这一处（`docs/responsive-and-touch.md` §6）：
+/// 导航窗格的**精简版**适用于较小屏幕。这里把导航收成图标列（文字用
+/// `COLLAPSED` 折叠、宽度交给样式表的 `.nav-pane.compact`），内容区随即
+/// 拿到全宽 —— 而不是把 240 单位的侧栏浪费在窄窗口里。
 fn nav_pane(g: &Gallery) -> Element {
+    let compact = g.is_compact();
     let mut items: Vec<Element> = ROUTES
         .iter()
         .map(|(id, title, icon)| {
@@ -130,6 +157,7 @@ fn nav_pane(g: &Gallery) -> Element {
                 g.is_route(id),
                 g.hovers(id),
                 g.holds(id),
+                compact,
             )
         })
         .collect();
@@ -146,14 +174,28 @@ fn nav_pane(g: &Gallery) -> Element {
         g.is_route(id),
         g.hovers(id),
         g.holds(id),
+        compact,
     ));
     Element::new(NodeTag::Container)
         .with_key("nav")
         .style("nav-pane")
+        // 紧凑是**外观**尺寸的来源（宽度收窄），所以这一份分类名必须发：
+        // 窄宽由样式表的 `.nav-pane.compact` 给，这里只负责"我知道自己在紧凑档"。
+        //
+        // ⚠️ 宽度**不能**在这里下发：`tests/gates.rs::only_fill_nodes_carry_local_width`
+        // 钉住"源码里写 WIDTH 只允许 fill:* 形态"，而它的注释明说
+        // 「黑名单会烂，形状不会」。那正是本仓「源码零外观」规矩的一部分。
+        .styles(compact.then_some("compact"))
         .with_children(items)
 }
 
 /// 内容卡：页头（标题 + 徽章 + 工具行）+ 页体。
+///
+/// 宽高都不写死：宽度由 `cross-align: stretch` 铺满导航之外的剩余。
+/// 高度仍是 zstyle 的 752 —— 那会让 page 内容超出时被裁，而这是**已知边界**：
+/// core 既无 flex-grow 也无滚动，固定高度是唯一的取舍（`MIGRATION.md` §7.4
+/// 已经为"Home 只能放 10 条"记过同一笔）。本轮记账见
+/// `docs/responsive-and-touch.md` §8。
 fn content_card(g: &Gallery) -> Element {
     Element::new(NodeTag::Container)
         .with_key("content")
