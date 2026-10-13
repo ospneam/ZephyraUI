@@ -361,6 +361,20 @@ fn dump_cpu(light: bool) {
             }
         }
     }
+// `--enter-ms <n>`：把入场动画时钟拨到指定毫秒，供**像素自验**用。
+    //
+    // 为什么需要它：动画只在"换路由之后的 333 ms 内"存在，而 dump 路只渲染
+    // 一帧 —— 不拨时钟就永远只能看到放完之后的样子，看不出档位到底动没动。
+    // 配合 `--route` 就能截到任意一档的画面。
+    if let Some(ms) = flag_value(&args, "--enter-ms") {
+        match ms.parse::<f32>() {
+            Ok(v) if v.is_finite() => view.enter_ms = v,
+            _ => {
+                eprintln!("[gallery] --enter-ms 要一个有限毫秒数，收到 {ms:?}");
+                std::process::exit(2);
+            }
+        }
+    }
     let (w, h) = (1400u32, 800u32);
     let mut host = zephyra_fx::cpu_only::CpuHost::new(view, (w, h));
     if light {

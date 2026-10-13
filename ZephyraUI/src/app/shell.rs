@@ -245,10 +245,22 @@ fn current_route(g: &Gallery) -> (&'static str, &'static str) {
 }
 
 /// 页体：按路由分发。
+///
+/// # 入场动画
+///
+/// 只发 `.enter-<n>` 分类名，**不**在源码里写 opacity / translate。
+/// 每一档长什么样全在 zstyle 的 `.enter-1` … `.enter-8` 里。
+///
+/// 为什么动画挂在**页体**而不是内容卡：页卡是圆角 + 描边的"卡片"，
+/// 让它半透明会透出底下的导航与背景，而整页一起淡入才是官方页面刷新的形态
+/// （`motion/page-transitions`：向上滑动 + 淡入的组合）。
 fn page_body(g: &Gallery) -> Element {
     let page = pages::page(g);
     Element::new(NodeTag::Container)
         .with_key("page")
         .style("page")
+        // `styles` 而不是 `style`：`.page` 是常驻分类，`.enter-<n>` 是这帧的动画档。
+        // 两者都要，所以走"追加"那个入口（`style` 是覆盖）。
+        .styles(g.enter_class())
         .with_children([page])
 }

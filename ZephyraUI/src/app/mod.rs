@@ -364,6 +364,28 @@ pub struct Gallery {
     /// 首帧由宿主经 on_input 推进来。空表 = 读不到 ⇒ 回落 [SUPPORTED] 第一项，
     /// **不**把界面钉死在某一门语言上（与「读不到系统主题就不跟随」同一纪律）。
     pub prefs: Preferences,
+    /// 入场动画已过去的**毫秒**数。
+    ///
+    /// # 为什么是应用层的字段而不是 core 的
+    ///
+    /// 动画是**状态**（与 `route` / `hovered` 同层），而 core 的每帧入口只有
+    /// `view()` 与 `on_input()`。所以时钟必须是 `Gallery` 的字段，由
+    /// `View::on_input` 用 `InputState.dt_ms` 推进 —— 那条路径**每帧必调**，
+    /// 不需要给 core 加"每帧回调"。
+    ///
+    /// # 为什么按**路由**归零
+    ///
+    /// 换路由 = 换内容 = 重放入场，这正是官方页面刷新的定义（`docs/animation.md` §1）。
+    /// 自己额外记一个"上一页 id"就要多一个字段与一次比较，而那样还会漏掉
+    /// "同一路由内内容变了"（测试页的状态更新就不该重放入场）。
+    pub enter_ms: f32,
+    /// 上一次推进时钟时的路由（`&'static`，与 `route` 同类）。
+    ///
+    /// 存在的唯一理由是**要在推进之前**发现路由变了。归零后把它记成新路由，
+    /// 下一帧才不会又归零一次（症状是"入场动画一帧都不播"）。
+    /// 不存它就得靠"进入的这一刻"传参，而 `on_input` 每帧只被调一次、拿不到
+    /// "事件"——只有状态。
+    entered_route: &'static str,
 }
 
 impl Gallery {
@@ -425,6 +447,51 @@ impl Gallery {
         use crate::responsive::columns_for;
         let n = columns_for(self.content_width(), 200.0, 12.0);
         n.max(self.width_class().min_columns())
+    }
+
+    /// 入场动画的**档位**（`Some(n)` = 发 `.enter-<n>`；`None` = 不发分类名）。
+    ///
+    /// # 外观值一个都不在这里
+    ///
+    /// 代码只决定"第几档"，第 n 档长什么样（opacity / translate-y）全在 zstyle
+    /// 的 `.enter-1` … `.enter-8` 里。这与"hover 走 `.hovered`"是同一条模式的
+    /// 延伸，也是不违反 `tests::gates::源码里没有外观` 的前提。
+    ///
+    /// # 为什么返回 `Option` 而不是 `u32`
+    ///
+    /// 两个"没有分类名"的情形都要表达：**进度为 0**（这一档与常驻外观没有差异，
+    /// 多发一个分类名会让样式表多一条永不命中的规则，而门禁会要求它存在）与
+    /// **已经放完**（`anim::step(1.0)` 会返回 `Some(8)`，不单独判就会永远停在
+    /// 0.91 不透明度上）。
+    pub fn enter_class(&self) -> Option<&'static str> {
+        // ⚠ 必须先判"放完"再算进度。
+        //
+        // `anim::step(1.0)` 返回 `Some(8)`（`ceil(1.0 × 8)` = 8），所以不加这一句，
+        // 动画结束后分类名会**永远**停在 `.enter-8` —— 而那一档是不透明度 0.91，
+        // 症状是"页面始终蒙着一层灰"，且没有任何报错。
+        //
+        // 撤掉分类名之后画面回到 1.0，于是最后一跳是 0.91 → 1.0（9%）。
+        // 这是 8 档量化的固有代价：要么最后跳 9%，要么 `.enter-8` 写 1.0
+        // 而从 `.enter-7`(0.78) 跳 22%。选前者，理由写在
+        // `ZephyraUI/tests/anim_wiring_tests.rs` 的模块文档里。
+        if self.enter_ms >= crate::anim::ENTER_MS {
+            return None;
+        }
+        let p = crate::anim::progress(
+            self.enter_ms,
+            crate::anim::ENTER_MS,
+            crate::anim::Easing::PointToPoint,
+        );
+        crate::anim::step(p).map(|n| match n {
+            1 => "enter-1",
+            2 => "enter-2",
+            3 => "enter-3",
+            4 => "enter-4",
+            5 => "enter-5",
+            6 => "enter-6",
+            7 => "enter-7",
+            _ => "enter-8",
+        })
     }
 
     /// 当前语言的 BCP 47 标签（`zh-Hans` 这类）。
@@ -526,6 +593,10 @@ impl Default for Gallery {
             scale: 1.0,
             lang: 0,
             prefs: Preferences::new(),
+            enter_ms: 0.0,
+            // 初值 = `route` 的初值（"home"），否则第一帧会被判成"路由变了"
+            // 而归零一次 —— 那恰好是想要的，所以两者必须**相同**。
+            entered_route: ROUTES[0].0,
         }
     }
 }
@@ -636,6 +707,9 @@ impl Gallery {
 
 impl View for Gallery {
     fn on_input(&mut self, state: &InputState) {
+        // 时钟输入。取一次，全函数共用 —— 同一帧里读两次 `state.dt_ms`
+        // 不会得到不同值，但两处各写一遍会让"这个数字是哪来的"变成两处真相。
+        let dt = state.dt_ms;
         // click 还原：上一帧按着、这一帧松了，且 key 相同（按住期间不放）。
         let click_key = match (&self.last_pressed, &state.pressed) {
             (Some(prev), None) => Some(prev.as_name().unwrap_or_default().to_string()),
@@ -647,6 +721,24 @@ impl View for Gallery {
         self.last_pressed = state.pressed.clone();
         self.hovered = state.hovered.clone();
         self.pressed = state.pressed.clone();
+
+        // 入场动画时钟。
+        //
+        // ⚠ 顺序很要紧：**先**归零再累加，否则换路由的那一帧会从上一条路由的
+        // 末尾接着走 —— 症状是"切页之后动画几乎不播"（尤其在两条路由之间反复切换
+        // 时，`enter_ms` 已经很大，归零前先加就等于直接跳过入场）。
+        let route_changed = self.entered_route != self.route;
+        if route_changed {
+            self.enter_ms = 0.0;
+            self.entered_route = self.route;
+        } else {
+            self.enter_ms += dt;
+        }
+        // 夹到时长以上：动画放完之后不必再累加（`f32` 无限增长终会丢精度，
+        // 而一个跑了几小时的窗口正是最可能暴露这件事的场景）。
+        if self.enter_ms > crate::anim::ENTER_MS {
+            self.enter_ms = crate::anim::ENTER_MS;
+        }
         // 视口与缩放比：断点判据的唯一来源。宿主每帧开头推一次，于是 resize 之后
         // **下一帧**的树就按新断点造 —— 这正是 WinUI AdaptiveTrigger 的节奏
         // （状态改变 → 声明改变 → diff 落到保留树），不需要任何回调。

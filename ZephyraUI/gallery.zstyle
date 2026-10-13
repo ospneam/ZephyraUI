@@ -198,7 +198,33 @@ Container.page {
      * stretch 让分区铺满内容宽。 */
     cross-align: stretch;
 }
+/* ---- 入场动画（.enter-1 … .enter-8） ----
+ *
+ * 代码只发「第几档」这个分类名（`Gallery::enter_class`），一档一个外观值。
+ * 8 档的形状是本仓的**量化**：官方动效表给的是连续曲线，而本仓把进度量化成
+ * 8 个离散档 —— 因为 zstylec 不参与求值，「时间 → 外观」这一步只能由代码算，
+ * 而代码里不许写外观。档位多少是取舍，见 `docs/animation.md` §3。
+ *
+ * 时长 333 ms 与缓动 (0.55,0.55,0,1) 都取自官方（`docs/animation.md` §1）；
+ * 起点 opacity 0 与「向上滑动」的方向取自官方页面刷新说明。
+ *
+ * ⚠️ 位移 8 DIP **不是官方数字** —— 官方只给方向没给距离。理由与记账见
+ * `docs/task-anim-wire.md`。8 档时每档位移 1 DIP，肉眼是连续的。
+ *
+ * ⚠️ 这 8 条必须与 `anim::STEPS` 同数。少一条 ⇒ 最高档永远命中不到，
+ * 页面永远停在半透明；多一条 ⇒ 门禁
+ * `every_class_name_the_source_emits_exists_in_the_stylesheet` 不查得到，
+ * 但 `enter_class()` 的 match 会少一个分支（编译期就发现）。
+ */
 
+Container.page.enter-1 { opacity: 0.00; translate-y: 8px; }
+Container.page.enter-2 { opacity: 0.13; translate-y: 7px; }
+Container.page.enter-3 { opacity: 0.26; translate-y: 6px; }
+Container.page.enter-4 { opacity: 0.39; translate-y: 5px; }
+Container.page.enter-5 { opacity: 0.52; translate-y: 4px; }
+Container.page.enter-6 { opacity: 0.65; translate-y: 3px; }
+Container.page.enter-7 { opacity: 0.78; translate-y: 2px; }
+Container.page.enter-8 { opacity: 0.91; translate-y: 1px; }
 /* 各页自己的根容器。统一竖排 + stretch —— 每页一条是因为选择器没有分组
  * 语法（`A, B { }` 本版本不支持），分开写只是多几行。 */
 Container.page-home {

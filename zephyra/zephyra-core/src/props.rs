@@ -75,6 +75,22 @@ pub static BORDER_WIDTH: PropertyKey =
 /// 整体不透明度。
 pub static OPACITY: PropertyKey = PropertyKey::inheritable("Opacity", PropertyValue::float(1.0));
 
+/// 绘制时 X 偏移（DIP）。
+///
+/// # 为什么**不是**布局属性
+///
+/// `affects_layout() == false` 是这个属性的**全部意义**：位移只改画面，
+/// 不改布局盒、不改命中测试。声明成布局属性会让入场动画每帧触发一次全树重排
+/// （实测 demo 45 节点 ≈ 一趟 StackPanel 遍历），而动画要的恰恰是"不重排"。
+///
+/// 于是动画期间控件仍然可点、命中测试仍然按动画前的位置走 —— 这与浏览器上
+/// `transform` 的行为一致（`transform` 不参与布局，`will-change` 存在的理由正是
+/// 避免每帧重排）。
+pub static TRANSLATE_X: PropertyKey = PropertyKey::new("TranslateX", PropertyValue::float(0.0));
+
+/// 绘制时 Y 偏移（DIP）。见 [`TRANSLATE_X`]。
+pub static TRANSLATE_Y: PropertyKey = PropertyKey::new("TranslateY", PropertyValue::float(0.0));
+
 /// 合成层（决定后端如何切 render pass）。
 pub static LAYER: PropertyKey = PropertyKey::new(
     "Layer",

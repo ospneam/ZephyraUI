@@ -488,15 +488,84 @@ pub fn bounds_of_vertices(vertices: &[Vertex]) -> Rect {
 pub fn render(node: &Node, ctx: Context<'_>, out: &mut DisplayList) {
     out.clear();
     let mut order = 0u32;
-    render_rec(node, ctx, &mut order, out);
+    render_rec(node, ctx, &mut order, out, PaintState::ROOT);
 }
 
-fn render_rec(node: &Node, ctx: Context<'_>, order: &mut u32, out: &mut DisplayList) {
+/// 绘制趟沿树传递的状态。
+///
+/// # 为什么不靠属性继承
+///
+/// [`crate::props::OPACITY`] 声明成 `inheritable`，而
+/// [`crate::property::resolve`] 的 `inherited` 参数在**生产代码里没有任何地方
+/// 传过非 `None` 的值**（`style.rs::value` 一律传 `None`）—— 也就是说
+/// `node.opacity(ctx)` 取的是**本节点**的值，不是祖先链的乘积。
+///
+/// 去接属性继承会牵动 `text_color` 等一整批 `inheritable` 属性，那是独立一轮。
+/// 绘制趟自己累加是**自洽且正确**的做法：半透明天然沿父子链相乘、位移天然相加，
+/// 而这里只需要这两种。
+///
+/// ⚠️ 这也意味着 `opacity()` 作为公开 API 的语义是"**本节点**的不透明度"，
+/// 与 [`crate::property::PropertyKey::inheritable`] 的名字不一致。记账见
+/// `docs/task-anim-wire.md` §0。
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct PaintState {
+    /// 祖先链的不透明度之积。
+    opacity: f32,
+    /// 祖先链的位移之和（绘制时偏移，**不影响布局与命中测试**）。
+    translate: Point,
+}
+
+impl PaintState {
+    /// 根状态：什么都不乘、什么都不移。
+    const ROOT: PaintState = PaintState {
+        opacity: 1.0,
+        translate: Point::ZERO,
+    };
+
+    /// 推进到本节点：把**本节点**的不透明度与位移并入。
+    ///
+    /// ⚠ 返回的是"走到本节点时"的累积值，所以它既用于**本节点自身**的命令，
+    /// 也直接传给子节点。若只在传子节点时用它，本节点自己的位移/透明度就丢了 ——
+    /// 症状是"容器背景不动、里面的东西动了"（反过来）。
+    ///
+    /// `opacity` 夹到 `[0, 1]`：`Opacity` 的默认值是 1.0，但样式表可以写
+    /// `opacity: 2`（CSS 不拦），不夹会让下游拿到大于 1 的因子，
+    /// 而那永远不是"更不透明"。
+    fn descend(&self, node: &Node, ctx: Context<'_>) -> Self {
+        let own = node.opacity(ctx);
+        let own = if own.is_finite() { own } else { 1.0 };
+        let opacity = self.opacity * own;
+        let (tx, ty) = (
+            self.translate.x + node.translate_x(ctx),
+            self.translate.y + node.translate_y(ctx),
+        );
+        PaintState {
+            opacity: if opacity.is_finite() {
+                opacity.clamp(0.0, 1.0)
+            } else {
+                1.0
+            },
+            translate: if tx.is_finite() && ty.is_finite() {
+                Point::new(tx, ty)
+            } else {
+                // 非有限的位移（样式表里写了 `translate-x: 1e40` 之类）会让整棵
+                // 子树的顶点变成 NaN，而 NaN 在光栅化里表现为"整块不画"——
+                // 症状离病因很远，所以这里当场丢弃而不是画出去。
+                self.translate
+            },
+        }
+    }
+}
+
+fn render_rec(node: &Node, ctx: Context<'_>, order: &mut u32, out: &mut DisplayList, state: PaintState) {
     if node.is_collapsed(ctx) {
         return;
     }
-    let rect = node.rect();
-    let opacity = node.opacity(ctx);
+    // 先进"本节点"再画：累积的不透明度与位移既属于本节点，也往下传。
+    let state = state.descend(node, ctx);
+    let offset = state.translate;
+    let rect = moved(node.rect(), offset);
+    let opacity = state.opacity;
     let layer = node.layer(ctx);
     // 效果与混合模式取自节点自身，不沿父链继承（见 props.rs 的理由）。
     let filter = node.filter(ctx);
@@ -504,8 +573,13 @@ fn render_rec(node: &Node, ctx: Context<'_>, order: &mut u32, out: &mut DisplayL
 
     // 自身外观：背景 + 描边合成到一条 Quad（描边复用同一条命令的 stroke 字段，
     // 于是圆角矩形永远是一个 draw call —— 这正是本模块选 Quad 图元的原因）。
-    let fill = node.background(ctx);
-    let stroke_color = node.border_color(ctx);
+    //
+    // ⚠ `fill` / `stroke_color` 都过 `with_alpha(opacity)`：**在加上这个之前，
+    // `opacity` 只作用于 `image_tint`**，所以"给容器设半透明"在画面上只对图像
+    // 生效，而背景、描边、文字全都不透明 —— 那与"没有这个属性"看起来一模一样，
+    // 只会让人以为它坏了。
+    let fill = node.background(ctx).with_alpha(opacity);
+    let stroke_color = node.border_color(ctx).with_alpha(opacity);
     let stroke_width = node.border_width(ctx);
     let radius = node.corner_radius(ctx);
     let has_stroke = stroke_color.a > 0.0 && stroke_width > 0.0;
@@ -574,7 +648,18 @@ fn render_rec(node: &Node, ctx: Context<'_>, order: &mut u32, out: &mut DisplayL
     if node.image_texture(ctx).is_none() {
         if let Some(name) = node.icon_name(ctx) {
             if !name.is_empty() {
-                if let Some(cmd) = icon_command(&name, rect, node, ctx, &filter, blend, opacity) {
+                // 这里传的是**未平移**的 `node.rect()`，不是上面那个 `rect` ——
+                // 理由见 [`icon_command`] 里"几何缓存查找"那一段的警告。
+                if let Some(cmd) = icon_command(
+                    &name,
+                    node.rect(),
+                    node,
+                    ctx,
+                    &filter,
+                    blend,
+                    opacity,
+                    offset,
+                ) {
                     out.push(
                         SortKey {
                             layer,
@@ -592,7 +677,7 @@ fn render_rec(node: &Node, ctx: Context<'_>, order: &mut u32, out: &mut DisplayL
     //
     // 排在背景之后、子节点之前：文本属于节点自身的"外观"，与背景同一层；而子节点
     // 是叠在它上面的内容。若把文本排到最后，压在文本节点之上的子元素会被文字盖住。
-    if let Some(mut cmd) = text_command(node, ctx) {
+    if let Some(mut cmd) = text_command(node, ctx, offset, opacity) {
         // `text_command` 造出命令后才补效果 —— 那时它已不再关心 style，只管排版。
         match &mut cmd {
             Command::Text { filter: f, blend: b, .. } => {
@@ -611,9 +696,26 @@ fn render_rec(node: &Node, ctx: Context<'_>, order: &mut u32, out: &mut DisplayL
         );
     }
 
-    // 子节点
+    // 子节点。
+    //
+    // ⚠ 传**已经推进过本节点**的 `state` —— 这是"容器不透明度影响整棵子树"
+    // 与"祖先位移带着后代一起动"的唯一实现点。
+    let child_state = state;
     for child in node.children() {
-        render_rec(child, ctx, order, out);
+        render_rec(child, ctx, order, out, child_state);
+    }
+}
+
+/// 矩形加一个绘制时偏移。
+///
+/// 没有位移时**原样返回**（不动 `x`/`y` 的浮点位）—— 那让"静止时零开销"是
+/// 结构上的事实，而不是靠调用方判 `is_zero()`。
+#[inline]
+fn moved(r: Rect, offset: Point) -> Rect {
+    if offset.x == 0.0 && offset.y == 0.0 {
+        r
+    } else {
+        Rect::new(r.x + offset.x, r.y + offset.y, r.width, r.height)
     }
 }
 
@@ -622,12 +724,25 @@ fn render_rec(node: &Node, ctx: Context<'_>, order: &mut u32, out: &mut DisplayL
 /// 抽成自由函数而不是 [`Node`] 的方法：它需要 `&Node`（只读），而其余样式 getter
 /// 都是 `&self` 的公开 API。把它留在 `impl Node` 上会让"公开词汇表"里混进一个
 /// 只有绘制趟需要的东西。
-fn text_command(node: &Node, ctx: Context<'_>) -> Option<Command> {
+///
+/// # `offset` 为什么直接进 `origin` 而不是事后平移字形
+///
+/// [`crate::text::TextRender::glyph_quads`] 是 `(shaped, origin, style)` 的纯函数、
+/// **没有缓存**（见 `text/mod.rs`），所以把平移量折进 `origin` 是零成本的。
+/// 事后平移字形反而要重新分配一个 `Vec<GlyphQuad>` —— 那是"为了省一个加法而付一次分配"。
+///
+/// # `opacity` 为什么在这里就乘进文字色
+///
+/// 文字色是 `Color`（含 alpha），而 `Command::Text` 的字形颜色**只有一个** `color`
+/// 字段 —— 没有任何"每字形不透明度"的机制。要让半透明容器里的文字也半透明，
+/// 只能在**造命令时**就把因子乘进颜色。放在 [`render_rec`] 里回填是做不到的。
+fn text_command(node: &Node, ctx: Context<'_>, offset: Point, opacity: f32) -> Option<Command> {
     let text = node.text()?;
     let engine = ctx.engine?;
     let style = node.text_style(ctx);
     let max_width = node.text_max_width(ctx);
-    let origin = Point::new(node.rect().x, node.rect().y);
+    let base = node.rect();
+    let origin = Point::new(base.x + offset.x, base.y + offset.y);
     let mut engine = engine.borrow_mut();
     let shaped = engine.shape(text, &style, max_width);
     // uv 与图集句柄由 `TextRender::glyph_quads` 给出 —— core 有字形图集
@@ -639,7 +754,8 @@ fn text_command(node: &Node, ctx: Context<'_>) -> Option<Command> {
         glyphs,
         color: node
             .color(&crate::props::TEXT_COLOR, ctx)
-            .unwrap_or(Color::rgb(1.0, 1.0, 1.0)),
+            .unwrap_or(Color::rgb(1.0, 1.0, 1.0))
+            .with_alpha(opacity),
         // 效果由 [`render_rec`] 回填 —— 它已经算好了 `filter`/`blend`，而本函数
         // 只该关心排版。给空链占位是为了让类型完整，值不参与渲染。
         filter: crate::filter::FilterChain::none(),
@@ -723,6 +839,7 @@ fn icon_command(
     filter: &crate::filter::FilterChain,
     blend: crate::filter::BlendMode,
     opacity: f32,
+    offset: Point,
 ) -> Option<Command> {
     let set = ctx.icon_set()?;
     let icon = set.get(name);
@@ -742,6 +859,11 @@ fn icon_command(
     // 必须放在**展平之前**：展平 + 三角化是整条链里唯一贵的部分（实测 50 µs/个），
     // 而它只由（图标，目标矩形）决定 —— 见 [`crate::icon::IconSet`] 的
     // `GeometryCache` 文档。
+    //
+    // ⚠ 这里用的必须是**未平移**的 `rect`。若拿平移后的矩形当键，入场动画的
+    // 每一帧位移都不同 ⇒ 缓存次次落空 ⇒ demo 的 19 个图标 × 50 µs = **每帧 1 ms**，
+    // 而动画只有 333 ms —— 也就是整个动画期间都在为"省一次顶点加法"付三角化的钱。
+    // 平移挪到产出之后做（见 `shift_vertices`），静止时它连分配都没有。
     if let Some((vertices, _triangles)) = set.cached_mesh(icon, rect) {
         if vertices.is_empty() {
             return None;
@@ -753,7 +875,7 @@ fn icon_command(
         // 519 个顶点每帧拷一遍，拷完当帧丢掉。改成 `Arc<[Vertex]>` 之后
         // 缓存命中那条路变成零分配 —— 而那正是缓存存在的意义。
         return Some(Command::Path {
-            vertices,
+            vertices: shift_vertices(&vertices, offset),
             fill: node.icon_color(ctx).with_alpha(opacity),
             filter: filter.clone(),
             blend,
@@ -799,9 +921,34 @@ fn icon_command(
     let vertices = set.cache_mesh(icon, rect, mesh);
 
     Some(Command::Path {
-        vertices,
+        vertices: shift_vertices(&vertices, offset),
         fill: node.icon_color(ctx).with_alpha(opacity),
         filter: filter.clone(),
         blend,
     })
+}
+
+/// 把整条路径的顶点平移。
+///
+/// # 静止时**不分配**
+///
+/// 零位移直接返回原引用（`Arc` 克隆只是 refcount +1）。这不是优化洁癖：
+/// 入场动画之外的所有绘制都走这条路，而 Gallery 每帧有 19 个图标 ——
+/// 每帧 19 次 `Vec` + 19 次 `Arc` 分配换 0 像素位移，是笔亏本买卖。
+///
+/// ⚠ `uv` **不动**：图集的归一化坐标与屏幕位置无关，平移屏幕位置不该动它。
+#[inline]
+fn shift_vertices(vertices: &std::sync::Arc<[Vertex]>, offset: Point) -> std::sync::Arc<[Vertex]> {
+    if offset.x == 0.0 && offset.y == 0.0 {
+        return vertices.clone();
+    }
+    std::sync::Arc::from(
+        vertices
+            .iter()
+            .map(|v| Vertex {
+                position: Point::new(v.position.x + offset.x, v.position.y + offset.y),
+                uv: v.uv,
+            })
+            .collect::<Vec<Vertex>>(),
+    )
 }

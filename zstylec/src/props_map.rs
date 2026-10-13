@@ -56,6 +56,10 @@ pub(crate) const PROPS: &[Prop] = &[
     Prop { css: "border-color", key: &props::BORDER_COLOR },
     Prop { css: "border-width", key: &props::BORDER_WIDTH },
     Prop { css: "opacity", key: &props::OPACITY },
+    // 绘制时偏移。**只重绘**：声明成 `PropertyKey::new`（不是 `::layout`），
+    // 所以每帧改它不会触发重排 —— 那正是"绘制时插值偏移"的定义。
+    Prop { css: "translate-x", key: &props::TRANSLATE_X },
+    Prop { css: "translate-y", key: &props::TRANSLATE_Y },
     Prop { css: "layer", key: &props::LAYER },
     Prop { css: "filter", key: &props::FILTER },
     Prop { css: "blend-mode", key: &props::BLEND_MODE },

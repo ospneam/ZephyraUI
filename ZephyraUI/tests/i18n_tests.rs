@@ -438,13 +438,29 @@ fn 切语言会让整帧重画() {
 
     let mut gallery = Gallery::default();
 
-    // 建树 + 稳态：第二帧必须 Unchanged（否则后面"语言变化导致重画"就没有对照）。
-    let _ = frame_once(&mut gallery, &mut cache, &ctx, None);
-    let _ = frame_once(&mut gallery, &mut cache, &ctx, None);
+    // 先跑满入场动画（`dt_ms` = 16 ms），再谈"稳态"。
+    //
+    // ⚠ 两个坑，少处理任何一个都会假红：
+    //
+    // 1. 动画期间 `enter_ms` 每帧都在变 ⇒ 每帧都 `Updated`。而"稳态"在这
+    //    里的含义是**动画放完之后**。
+    // 2. **不能**用"跑到第一个 `Unchanged` 为止"来判断放完：`anim::step` 是
+    //    量化的，同一档内分类名不变 ⇒ 档内会冒出 `Unchanged`，于是循环在
+    //    动画中段就退出了，下一帧跨档又变 `Updated`（实测踩过）。
+    //
+    // 帧数按 `anim::ENTER_MS` **算**而不是写死：时长或帧间隔任一改动时，
+    // 写死的数字会静默失配。
+    let frames = (zephyra_ui::anim::ENTER_MS / 16.0).ceil() as u32 + 2;
+    for _ in 0..frames {
+        let _ = frame_once(&mut gallery, &mut cache, &ctx, None);
+    }
+
+    // 稳态的对照：跑满之后必须 Unchanged。
     let steady = frame_once(&mut gallery, &mut cache, &ctx, None);
     assert!(
         matches!(steady, FrameOutcome::Unchanged),
-        "稳态必须 Unchanged，否则这条断言证明不了任何事"
+        "稳态必须 Unchanged（已跑 {frames} 帧 > {}ms），否则这条断言证明不了任何事",
+        zephyra_ui::anim::ENTER_MS
     );
 
     // 按下 `ja` ⇒ 这一帧语言还没变（click 要等抬起）。
