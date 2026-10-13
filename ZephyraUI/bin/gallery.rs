@@ -17,7 +17,7 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
 
 use zephyra_core::theme::ThemeVariant;
-use zephyra_ui::app::{resolve_route, Gallery};
+use zephyra_ui::app::{resolve_route, Gallery, SUPPORTED};
 
 #[cfg(feature = "d3d12")]
 use zephyra_core::styler::Styler;
@@ -305,14 +305,25 @@ fn bench_cpu(probe: bool, light: bool) {
 ///
 /// 为什么要看统计而不是只看图：图只能看"像不像"，统计能看"链路通不通" ——
 /// 四边形数、字形数、被跳过的纹理数，每一项都对应一段可能静默失败的代码。
+/// 取 `--flag value` 形式的值；没有该 flag 时 `None`。
+///
+/// # 为什么不用 `skip_while`（`--route` 现在就是这么取的）
+///
+/// `skip_while(|a| a != "--route").nth(1)` 在**没有**该 flag 时会返回
+/// 最后一个参数 —— 于是 `--lang` 不存在时拿到的是别的 flag 的值，
+/// 而那正好是一个合法的语言标签时会静默生效。这个助手用 `position` 定位，
+/// 找不到就是 `None`，没有这种歧义。
+fn flag_value<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
+    let i = args.iter().position(|a| a == flag)?;
+    args.get(i + 1).map(|s| s.as_str())
+}
+
 fn dump_cpu(light: bool) {
+    let args: Vec<String> = std::env::args().collect();
     // `--route <id>`：dump 指定页（默认 home）。逐页像素自验用 ——
     // 否则只有第一页能被看到，后面几页的样式错误要等窗口路才暴露。
-    // `--route <id>`：dump 指定页（默认 home）。逐页像素自验用 ——
-    // 否则只有第一页能被看到，后面几页的样式错误要等窗口路才暴露。
-    let route = std::env::args()
-        .skip_while(|a| a != "--route")
-        .nth(1)
+    let route = flag_value(&args, "--route")
+        .map(|s| s.to_string())
         .unwrap_or_else(|| "home".to_string());
 
     // 路由解析走 `resolve_route`（应用层唯一真源），**不做白名单 match**。
@@ -330,6 +341,26 @@ fn dump_cpu(light: bool) {
     };
     let mut view = Gallery::default();
     view.route = resolved;
+// --lang <tag>：强制语言，供**像素自验**用。
+    //
+    // 为什么需要它：dump 路不读系统语言（Gallery::default 的 prefs 是空的，
+    // 于是走回落分支），所以中日文只能这样才看得到。而中日文能不能真正出图，
+    // 正是 i18n 唯一无法用纯 CPU 断言覆盖的部分 —— 字形在宿主的字形图集里
+    // （见 docs/i18n.md §7）。给一个开关，比让下一个人以为"中日文没接"要好。
+    if let Some(tag) = flag_value(&args, "--lang") {
+        match SUPPORTED.iter().position(|s| *s == tag) {
+            Some(idx) => view.lang = idx,
+            None => {
+                // 未知语言**报错退出**，不静默回落：`--lang zh_Hant`（下划线）
+                // 这类拼错会给出英文界面，而那看起来像"功能没接上"。
+                eprintln!(
+                    "[gallery] 未知语言 {tag:?}；可用：{}",
+                    SUPPORTED.join(" ")
+                );
+                std::process::exit(2);
+            }
+        }
+    }
     let (w, h) = (1400u32, 800u32);
     let mut host = zephyra_fx::cpu_only::CpuHost::new(view, (w, h));
     if light {

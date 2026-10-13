@@ -360,6 +360,13 @@ impl<V: View> HostWindow<V> {
                     self.last_frame_at = Some(now);
                     dt
                 },
+                // 这个后端不接 `zephyra-platform`（它只管 D3D11 画面），所以语言
+                // 偏好给**空表**而不是猜一个。空表在 `Gallery` 里的含义是
+                // "读不到" ⇒ 回落 `SUPPORTED` 第一项，不会把界面钉死。
+                //
+                // ⚠️ 不能省掉这个字段：漏填是编译错误，而"填成英语"是行为变更 ——
+                // 后者要等到有人在这台机器上用中文系统跑起来才会被发现。
+                languages: Vec::new(),
             };
             self.view.on_input(&input);
 

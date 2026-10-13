@@ -47,6 +47,11 @@ impl Platform for Stub {
         None
     }
 
+    fn system_languages(&self) -> Vec<String> {
+        // 空表 = 读不到。上层据此回落默认语言，而不是把界面钉在某一门语言上。
+        Vec::new()
+    }
+
     fn apply_window_chrome(&self, window: WindowHandle, chrome: WindowChrome) -> ApplyOutcome {
         // 不支持就是不支持；**不读 window、不写 window**，连句柄都不碰。
         // （万一将来有人把 stub 接到 Windows 上，至少不会碰 0 号地址。）

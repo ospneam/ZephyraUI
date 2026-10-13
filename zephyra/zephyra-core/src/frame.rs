@@ -245,12 +245,37 @@ impl FrameCache {
 
         // ---- 2. 要不要重排 ----
         //
-        // 三个来源：首帧、视口变了、`diff` 说要重排。
+        // 四个来源：首帧、视口变了、**样式刚写了布局键**、`diff` 说要重排。
         //
-        // ⚠ 视口必须在这里比：它是窗口属性，不挂在任何节点上，`diff` 永远看不见
-        // 「窗口被 resize 了」。漏掉这一条的症状是「窗口拉大后右侧留白且不重排」。
+        // ⚠ 第三项是本节新增的，也正是「为什么只有 resize 才重排」的答案：
+        //
+        // `apply` 排在 **diff 之后**（硬契约，见 `zephyra-style/src/apply.rs`
+        // 模块文档），所以 `stats.needs_layout()` 算的是 apply **之前**的树 ——
+        // 它对「hover/press 改了 padding / width / collapsed」一无所知。
+        //
+        // 于是这类几何变化走的是：`apply` 写出新值 ⇒ `set_styled_prop` 标
+        // `Dirty::Layout` ⇒ 第 3 步的 `scan` 看到有脏 ⇒ **重绘**，但**没重排**。
+        // 症状是「hover 改了尺寸，而布局盒还是旧的」—— 字形按新 padding 画、
+        // 命中测试按旧矩形判，两者都对不上。鼠标移动只翻分类名，所以这条路径
+        // 以前只能靠 resize 或整树改动来触发。
+        //
+        // 判据改成直接读树上的脏标记：谁标了 `Dirty::Layout` 就要重排，
+        // 不问它是 diff 标的还是 apply 标的。
         let resized = !first && self.viewport != viewport;
-        let need_layout = first || resized || stats.needs_layout();
+        let mut dirty_rects: Vec<Rect> = Vec::new();
+        let (need_layout, some_dirty) = match self.node.as_ref() {
+            // 首帧 / 视口变了 ⇒ 一定重排，也就不必再遍历。
+            Some(_) if first || resized => (true, true),
+            Some(node) => {
+                let layout_dirty = tree_needs_layout(node);
+                (
+                    layout_dirty || stats.needs_layout(),
+                    scan(node, ctx, &mut dirty_rects) || layout_dirty,
+                )
+            }
+            // 树建不起来（`element` 与 `Node::from_element` 抛不出东西，纯防御）。
+            None => (true, true),
+        };
         if need_layout {
             if let Some(node) = self.node.as_mut() {
                 crate::layout::layout(
@@ -270,15 +295,6 @@ impl FrameCache {
         // 所以真实判据是「树里有没有节点的 dirty 不是 None」。`Dirty` 派生自
         // `Ord` 且 `None` 是最小值，所以 `!= None` 等价于 `>= Dirty::Paint`。
         let forced = std::mem::take(&mut self.forced);
-        let mut dirty_rects: Vec<Rect> = Vec::new();
-        let some_dirty = match self.node.as_ref() {
-            // 重排过就必然要重绘（`layout` 给每个节点标了 `Dirty::Layout`），
-            // 所以不必再走一遍树 —— 直接进渲染。
-            Some(_node) if need_layout => true,
-            Some(node) => scan(node, ctx, &mut dirty_rects),
-            // 树建不起来（`element` 与 `Node::from_element` 抛不出东西，纯防御）。
-            None => true,
-        };
 
         if !forced && !some_dirty {
             // 稳态：树没变、列表还是上次那份。宿主可整帧跳过，连 present 都省。
@@ -345,6 +361,27 @@ impl FrameCache {
 ///
 /// 实测：把这里的 `return dirty` 改成 `return false`，15 条测试仍然全绿。
 /// 与其放一条恒真的测试，不如把这件事写清楚 —— 后来者会以为这里被验过了。
+/// 树上**任一**节点是否标了 `Dirty::Layout` 及以上。
+///
+/// # 为什么需要它 —— 「为什么只有 resize 才更新布局」的答案
+///
+/// `FrameCache::frame` 的重排判据原先只有三项：首帧、视口变了、`diff` 说要重排。
+/// 而 `apply` 排在 diff **之后**，它写出的布局键（`padding` / `width` /
+/// `collapsed`…）会经 [`Node::set_styled_prop`] 标上 `Dirty::Layout`，
+/// 但那个判据**不读树上的脏标记**，于是只重绘、不重排。
+///
+/// 鼠标移动只翻分类名 ⇒ hover 改了 padding 而布局盒还是旧的 ⇒ 字形按新 padding
+/// 画、命中测试按旧矩形判，两套几何。改成直接读树之后，任何来源标了
+/// `Dirty::Layout` 都会重排 —— 包括 hover / press 驱动的几何变化。
+///
+/// 不提前返回：与 [`scan`] 同理，早退会漏掉兄弟子树里的布局脏节点。
+fn tree_needs_layout(node: &Node) -> bool {
+    if node.dirty().needs_layout() {
+        return true;
+    }
+    node.children().iter().any(tree_needs_layout)
+}
+
 fn scan(node: &Node, ctx: Context<'_>, out: &mut Vec<Rect>) -> bool {
     let dirty = node.dirty() != Dirty::None;
     if node.is_collapsed(ctx) {

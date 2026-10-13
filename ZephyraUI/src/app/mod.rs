@@ -17,6 +17,7 @@
 use zephyra_core::id::ElementKey;
 use zephyra_core::{context::Context, element::Element};
 use zephyra_fx::{InputState, View};
+use crate::i18n::{Messages, Preferences, Tag};
 
 pub mod pages;
 pub mod catalog;
@@ -49,6 +50,185 @@ pub const BASE_VIEWPORT: (u32, u32) = (1400, 800);
 /// 内容区两侧的页边距（布局单位）。与 `pages.rs` 里的 section 间距同源，
 /// 由 `tests::gates::内容区宽度随断点变化` 间接钉住。
 pub const PAGE_GUTTER: f32 = 28.0;
+
+/// 本 demo 支持的语言（有序，**第一项是默认/回退语言**）。
+///
+/// 顺序有语义：协商匹配不到任何用户偏好时回落第一项 —— 这与浏览器把默认
+/// 语言放在 "supported locales" 同一形状（`Intl` 的 preference-based fallback
+/// 即按这个顺序取第一个匹配）。
+///
+/// 顺带这也是 `Messages::select` 的 `fallback` 参数。
+pub const SUPPORTED: &[&str] = &["en", "zh-Hans", "ja"];
+
+/// 各语言的自称，下标与 [`SUPPORTED`] 对齐。
+///
+/// # 为什么**不**进文案表
+///
+/// 自称不是翻译：任何语言的用户看到的都是同一组"English / 中文 / 日本語"。
+/// 放进表里就得给 3 种语言各填 3 条共 9 条，而那 9 条内容两两相同 ——
+/// 表格里的重复迟早会被误改成"翻译"，而那正是错的。
+///
+/// 对齐关系由门禁 `i18n_tests::语言自称与支持列表等长` 钉住：
+/// 下标错位会让用户选了"English"却得到日文，而那在画面上完全看不出原因。
+pub const LANG_SELFS: &[&str] = &["English", "中文", "日本語"];
+
+/// 文案表：`(locale, key, value)` 三元组，一行一条。
+///
+/// # 为什么是一张平表而不是 `HashMap<locale, HashMap<key, value>>`
+///
+/// 两种都能取到值，但平表让「门禁枚举漏翻」变成一行 `CATALOG.iter()`
+/// —— 而漏翻是 i18n 唯一真正危险的东西（其余问题最多是显示难看）。
+/// 分语言分文件是**将来**运行期加载时才需要的形态，见 `docs/i18n.md` §4。
+///
+/// # 覆盖范围与未覆盖范围（不要误读这张表）
+///
+/// 已接进视图：导航标题（11 条路由）、页头标题、应用名、页头工具按钮、
+/// 设置页七条。**未接**：控件展台 44 张卡与各页正文 —— 那些仍是源码里的
+/// 中文硬编码。这是**记账的债**，不是"已支持"：门禁
+/// `i18n_tests::每种语言都不缺键` 覆盖的是本表列出的键，
+/// `i18n_tests::未接入的硬编码文案已记账` 钉住剩下的数量，见 `docs/i18n.md` §5。
+const CATALOG: &[(&str, &str, &str)] = &[
+    // ---- en（默认语言）----
+    ("en", "app.title", "ZephyraUI Gallery"),
+    ("en", "route.home", "Home"),
+    ("en", "route.all", "All samples"),
+    ("en", "route.basic-input", "Basic Input"),
+    ("en", "route.collections", "Collections"),
+    ("en", "route.menus", "Menus & Toolbars"),
+    ("en", "route.status", "Status & Info"),
+    ("en", "route.text", "Text"),
+    ("en", "route.navigation", "Navigation"),
+    ("en", "route.dialogs", "Dialogs & Pickers"),
+    ("en", "route.error", "Error Test"),
+    ("en", "route.testbed", "Test Features"),
+    ("en", "route.settings", "Settings"),
+    ("en", "action.feedback", "Feedback"),
+    ("en", "action.language", "Language"),
+    ("en", "set.theme.title", "Dark mode"),
+    ("en", "set.theme.desc", "Switching theme only swaps token values"),
+    ("en", "set.volume.title", "Volume"),
+    ("en", "set.volume.desc", "Fill width = value x track width"),
+    ("en", "set.notify.title", "Notifications"),
+    ("en", "set.notify.desc", "Selected state travels as a class name"),
+    ("en", "set.adv.title", "Advanced"),
+    ("en", "set.adv.logging", "Diagnostic logging"),
+    ("en", "set.adv.hwaccel", "Hardware acceleration"),
+    ("en", "set.adv.shortcuts", "Shortcuts"),
+    // ---- zh-Hans ----
+    ("zh-Hans", "app.title", "ZephyraUI 示例库"),
+    ("zh-Hans", "route.home", "主页"),
+    ("zh-Hans", "route.all", "全部示例"),
+    ("zh-Hans", "route.basic-input", "基础输入"),
+    ("zh-Hans", "route.collections", "集合"),
+    ("zh-Hans", "route.menus", "菜单与工具栏"),
+    ("zh-Hans", "route.status", "状态与信息"),
+    ("zh-Hans", "route.text", "文本"),
+    ("zh-Hans", "route.navigation", "导航"),
+    ("zh-Hans", "route.dialogs", "对话框与选择器"),
+    ("zh-Hans", "route.error", "错误测试"),
+    ("zh-Hans", "route.testbed", "测试功能"),
+    ("zh-Hans", "route.settings", "设置"),
+    ("zh-Hans", "action.feedback", "反馈"),
+    ("zh-Hans", "action.language", "语言"),
+    ("zh-Hans", "set.theme.title", "深色模式"),
+    ("zh-Hans", "set.theme.desc", "换主题只换令牌值"),
+    ("zh-Hans", "set.volume.title", "音量"),
+    ("zh-Hans", "set.volume.desc", "填充宽度 = 值 × 轨道宽"),
+    ("zh-Hans", "set.notify.title", "通知"),
+    ("zh-Hans", "set.notify.desc", "选中态走分类名"),
+    ("zh-Hans", "set.adv.title", "高级"),
+    ("zh-Hans", "set.adv.logging", "诊断日志"),
+    ("zh-Hans", "set.adv.hwaccel", "硬件加速"),
+    ("zh-Hans", "set.adv.shortcuts", "快捷键"),
+    // ---- ja ----
+    ("ja", "app.title", "ZephyraUI ギャラリー"),
+    ("ja", "route.home", "ホーム"),
+    ("ja", "route.all", "すべてのサンプル"),
+    ("ja", "route.basic-input", "基本入力"),
+    ("ja", "route.collections", "コレクション"),
+    ("ja", "route.menus", "メニューとツールバー"),
+    ("ja", "route.status", "ステータスと情報"),
+    ("ja", "route.text", "テキスト"),
+    ("ja", "route.navigation", "ナビゲーション"),
+    ("ja", "route.dialogs", "ダイアログとピッカー"),
+    ("ja", "route.error", "エラーテスト"),
+    ("ja", "route.testbed", "テスト機能"),
+    ("ja", "route.settings", "設定"),
+    ("ja", "action.feedback", "フィードバック"),
+    ("ja", "action.language", "言語"),
+    ("ja", "set.theme.title", "ダークモード"),
+    ("ja", "set.theme.desc", "テーマを切り替えてもトークンの値だけが変わる"),
+    ("ja", "set.volume.title", "音量"),
+    ("ja", "set.volume.desc", "塗りの幅 = 値 x トラックの幅"),
+    ("ja", "set.notify.title", "通知"),
+    ("ja", "set.notify.desc", "選択状態はクラス名で表す"),
+    ("ja", "set.adv.title", "詳細"),
+    ("ja", "set.adv.logging", "診断ログ"),
+    ("ja", "set.adv.hwaccel", "ハードウェアアクセラレーション"),
+    ("ja", "set.adv.shortcuts", "ショートカット"),
+];
+
+/// 本表里出现过的**全部**键（按首次出现去重）。
+///
+/// 门禁拿它当"应该存在的键集合"：一张平表天然可以枚举，这是选平表而不是
+/// 分语言分桶的**唯一**理由（见 [`CATALOG`] 的说明）。
+pub fn catalog_keys() -> Vec<&'static str> {
+    let mut out: Vec<&'static str> = Vec::new();
+    for (_, k, _) in CATALOG {
+        if !out.contains(k) {
+            out.push(k);
+        }
+    }
+    out
+}
+
+/// 应用内的消息表。
+///
+/// # 为什么文案在这里而不在控件里
+///
+/// 源码里**没有面向用户的字符串** —— 与"源码零外观"是同一条纪律：
+/// 控件发分类名、不发颜色；页面发 key、不发文案。漏翻由门禁枚举
+/// （`i18n_tests::每种语言都不缺键`），不靠肉眼。
+pub fn messages() -> Messages {
+    let mut m = Messages::new();
+    for (locale, key, value) in CATALOG {
+        m.insert(locale, key, value);
+    }
+    m
+}
+/// 路由 id → 文案键（`home` ⇒ `route.home`）。
+///
+/// # 为什么是**查表**而不是 `concat!("route.{id}")`
+///
+/// `view()` 每帧重建整棵树，任何运行期拼出来的字符串都会变成泄漏
+/// （`Box::leak` 每帧一次，见 `element.rs` 的记录）。而键必须 `&'static`
+/// 才能喂给 [`Gallery::tr`]。查表天然返回 `&'static str`。
+///
+/// 找不到时**返回 id 本身**而不是 `panic!` 或空串：调用方随后会拿它当键去
+/// `tr()`，而 `tr()` 的最后一档正是"返回键名"，于是画面上出现路由 id ——
+/// 看得见的降级。真正拦住这件事的是门禁
+/// `i18n_tests::每条路由都有文案键`（新增路由忘了加译文会红）。
+pub fn route_key(id: &str) -> &'static str {
+    // 只在默认语言那一组里找键 —— 键集合与语言无关，看第一组就够且更快。
+    for (locale, key, _) in CATALOG {
+        if *locale != SUPPORTED[0] {
+            continue;
+        }
+        if let Some(rest) = key.strip_prefix("route.") {
+            if rest == id {
+                return key;
+            }
+        }
+    }
+    // 静态回退：id 是 `&'static`（来自 `ROUTES` / `SETTINGS_ROUTE`），
+    // 所以这里不需要额外分配。若调用方传了非静态串，门禁会先拦住。
+    ROUTES
+        .iter()
+        .chain(std::iter::once(&SETTINGS_ROUTE))
+        .find(|(rid, _, _)| *rid == id)
+        .map(|(rid, _, _)| *rid)
+        .unwrap_or("route.unknown")
+}
 
 /// 解析一个 key 是否为合法路由，是则返回该路由 id（`&'static`）。
 ///
@@ -174,6 +354,16 @@ pub struct Gallery {
     /// 视口缩放比。它与 [`Self::viewport`] 一起才能算出有效像素（断点口径）。
     /// 初始 1.0 = 「dump 路当作未缩放处理」，与上面同源。
     pub scale: f32,
+    /// 当前语言在 [SUPPORTED] 里的**下标**。
+    ///
+    /// 存下标而不是 Tag：Tag 每帧都要重新构造，而下标是 Copy 且能直接当
+    /// selected 传给控件 —— 与 combo / spin 同一手法。
+    pub lang: usize,
+    /// 用户的系统语言偏好（有序，最偏好的在前）。
+    ///
+    /// 首帧由宿主经 on_input 推进来。空表 = 读不到 ⇒ 回落 [SUPPORTED] 第一项，
+    /// **不**把界面钉死在某一门语言上（与「读不到系统主题就不跟随」同一纪律）。
+    pub prefs: Preferences,
 }
 
 impl Gallery {
@@ -237,6 +427,70 @@ impl Gallery {
         n.max(self.width_class().min_columns())
     }
 
+    /// 当前语言的 BCP 47 标签（`zh-Hans` 这类）。
+    pub fn locale(&self) -> &'static str {
+        SUPPORTED[self.lang.min(SUPPORTED.len() - 1)]
+    }
+
+    /// 协商出初始语言：按 [`crate::i18n::negotiate`] 的用户优先序匹配可用表。
+    ///
+    /// # 为什么在 `on_input` 里做而不是构造时做
+    ///
+    /// 宿主才知道系统语言偏好（视图拿不到窗口），而 `on_input` 每帧必调 ——
+    /// 于是首帧就能定下来，不必另加一条启动钩子。
+    ///
+    /// 协商不出来时回落**第一项**：空表会让整个界面全空白，而那比
+    /// "界面是英文"严重得多。
+    fn pick_initial_language(prefs: &Preferences) -> usize {
+        let available: Vec<Tag> = SUPPORTED.iter().filter_map(|s| Tag::parse(s)).collect();
+        match crate::i18n::negotiate(prefs, &available) {
+            Some(tag) => SUPPORTED
+                .iter()
+                .position(|s| *s == tag.as_str())
+                .unwrap_or(0),
+            None => 0,
+        }
+    }
+
+    /// 当前语言对应的偏好表。
+    ///
+    /// # 为什么不直接复用系统偏好
+    ///
+    /// 用户手动切过语言之后，系统那个表就**不再是**他要的了。手动选择优先。
+    ///
+    /// 只含**一项**：当前语言。回退由 [`crate::i18n::Messages::select`] 内部的
+    /// 默认语言那一档负责，不需要在偏好表里堆回退项 ——
+    /// 把回退项塞进偏好表会让 `negotiate` 也去匹配它们，
+    /// 而协商与取文案是两件事，各有一条链更清楚。
+    pub fn prefs_for_current(&self) -> Preferences {
+        let mut p = Preferences::new();
+        if let Some(t) = Tag::parse(self.locale()) {
+            p.push(t);
+        }
+        p
+    }
+
+    /// 取一条文案。**所有**面向用户的字符串都走这里 —— 源码里不出文案。
+    ///
+    /// # 返回 `&'static str` 而不是 `String`
+    ///
+    /// `view()` 每帧重建整棵树，返回 `String` 就等于每帧一次分配 + 一次
+    /// 泄漏（`Box::leak`），而文案在编译期就定好了、根本不是运行期数据。
+    /// 于是链路终点是 `PropertyValue::static_str` —— 属性系统为此专门留了一个
+    /// 变体（见 `property.rs`），整条路零分配。
+    ///
+    /// # 找不到时返回键名本身
+    ///
+    /// 三级回退（见 [`Messages::select`]）：当前语言 → 语言段 → 默认语言。
+    /// 连默认语言也没有才轮到这里，返回**键名**而不是空串：空串会让"漏翻"
+    /// 看起来像"这里本来就是空的"，而键名在画面上立刻可辨。
+    /// 真正发现漏翻的是门禁，不是肉眼（`i18n_tests::每种语言都不缺键`）。
+    pub fn tr(&self, key: &'static str) -> &'static str {
+        messages()
+            .select(&self.prefs_for_current(), SUPPORTED[0], key)
+            .unwrap_or(key)
+    }
+
     /// 触控目标边长换算成**布局单位**（= 视觉上的 epx × scale）。
     ///
     /// 只在触控路径上用：鼠标路径的目标尺寸不变（本仓基准未动，见
@@ -270,6 +524,8 @@ impl Default for Gallery {
             // 否则参考图和真实画面始终差一档，而没人会发现差在哪。
             viewport: (BASE_VIEWPORT.0 as f32, BASE_VIEWPORT.1 as f32),
             scale: 1.0,
+            lang: 0,
+            prefs: Preferences::new(),
         }
     }
 }
@@ -322,6 +578,16 @@ impl Gallery {
         // + 14 个分组索引路由 + 44 个控件卡），列举必漏且有两处真相。
         if let Some(route) = resolve_route(key) {
             self.route = route;
+            return;
+        }
+        // 语言切换（分段控件的段 id 是语言标签，见 `pages::language_picker`）。
+        //
+        // ⚠️ 必须在 `resolve_route` **之后**、`match` **之前**：段 id 是
+        // `zh-Hans` 这种形状，不带 `lang:` 前缀，所以这里按 `SUPPORTED`
+        // 查表而不是切前缀 —— 切前缀要 `strip_prefix` 再 `concat!`，后者
+        // 在每帧重建的视图里就是一次泄漏。
+        if let Some(i) = SUPPORTED.iter().position(|s| *s == key) {
+            self.lang = i;
             return;
         }
         match key {
@@ -386,6 +652,15 @@ impl View for Gallery {
         // （状态改变 → 声明改变 → diff 落到保留树），不需要任何回调。
         self.viewport = state.viewport;
         self.scale = state.scale;
+        // 系统语言偏好：只记**第一次**收到的，之后用户手动切了就以其为准。
+        //
+        // 判据用 `is_empty()` 而不是 `Option`：空表就是"读不到"，而读到时表
+        // 至少有一项。手动切语言不修改 `prefs`、只改 `lang` —— 否则再收到一次
+        // 输入就把手动选择冲掉了。
+        if self.prefs.is_empty() && !state.languages.is_empty() {
+            self.prefs = crate::i18n::Preferences::from_owned(&state.languages);
+            self.lang = Self::pick_initial_language(&self.prefs);
+        }
     }
 
     fn view(&self, _ctx: &Context<'_>) -> Element {

@@ -24,6 +24,7 @@ use zephyra_platform::{
     ApplyOutcome, BackdropKind, Capabilities, Platform, ThemePreference, WindowChrome, WindowHandle,
 };
 
+mod locale;
 mod version;
 pub use version::build_number;
 
@@ -64,6 +65,9 @@ impl Platform for Windows {
             border_color: w11,
             backdrop: mica,
             system_theme_query: true,
+            // `GetUserPreferredUILanguages` 自 Windows 2000 起可用，
+            // 与 build 无关 —— 所以这里恒 true，不跟着 `w11` 走。
+            system_language_query: true,
         }
     }
 
@@ -71,6 +75,9 @@ impl Platform for Windows {
         sys_theme()
     }
 
+    fn system_languages(&self) -> Vec<String> {
+        locale::preferred_ui_languages()
+    }
     fn apply_window_chrome(&self, window: WindowHandle, chrome: WindowChrome) -> ApplyOutcome {
         #[cfg(windows)]
         {

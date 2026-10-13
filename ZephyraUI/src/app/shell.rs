@@ -20,7 +20,7 @@ use zephyra_core::id::NodeTag;
 use zephyra_core::property::PropertyValue;
 use zephyra_core::props;
 
-use super::{pages, Gallery, ROUTES, SETTINGS_ROUTE};
+use super::{pages, route_key, Gallery, ROUTES, SETTINGS_ROUTE};
 use crate::controls::{badge, button, nav, text_label, tool_button};
 
 /// 画布宽（RinUI gallery 的窗口宽）。
@@ -149,10 +149,10 @@ fn nav_pane(g: &Gallery) -> Element {
     let compact = g.is_compact();
     let mut items: Vec<Element> = ROUTES
         .iter()
-        .map(|(id, title, icon)| {
+        .map(|(id, _en, icon)| {
             nav::nav_item(
                 id,
-                title,
+                g.tr(route_key(id)),
                 icon,
                 g.is_route(id),
                 g.hovers(id),
@@ -166,10 +166,10 @@ fn nav_pane(g: &Gallery) -> Element {
             .with_key("nav-spacer")
             .style("nav-spacer"),
     );
-    let (id, title, icon) = SETTINGS_ROUTE;
+    let (id, _en, icon) = SETTINGS_ROUTE;
     items.push(nav::nav_item(
         id,
-        title,
+        g.tr(route_key(id)),
         icon,
         g.is_route(id),
         g.hovers(id),
@@ -205,7 +205,7 @@ fn content_card(g: &Gallery) -> Element {
 
 /// 页头：左标题 + 徽章，右工具行（主题切换 / 反馈 / 收藏）。
 fn page_header(g: &Gallery) -> Element {
-    let (title, _icon) = current_route(g);
+    let (title_key, _icon) = current_route(g);
     Element::new(NodeTag::Container)
         .with_key("header")
         .style("page-header")
@@ -214,7 +214,7 @@ fn page_header(g: &Gallery) -> Element {
                 .with_key("header-title")
                 .style("header-title")
                 .with_children([
-                    text_label("page-title", title, "text-title"),
+                    text_label("page-title", g.tr(title_key), "text-title"),
                     badge::info_badge("page-badge", "12", "info", true),
                 ]),
             Element::new(NodeTag::Container)
@@ -222,7 +222,14 @@ fn page_header(g: &Gallery) -> Element {
                 .style("header-tools")
                 .with_children([
                     tool_button("theme-toggle", "light", g.hovers("theme-toggle"), g.holds("theme-toggle")),
-                    button("feedback", "Feedback", Some("bell"), "subtle", g.hovers("feedback"), g.holds("feedback")),
+                    button(
+                        "feedback",
+                        g.tr("action.feedback"),
+                        Some("bell"),
+                        "subtle",
+                        g.hovers("feedback"),
+                        g.holds("feedback"),
+                    ),
                 ]),
         ])
 }
@@ -233,8 +240,8 @@ fn current_route(g: &Gallery) -> (&'static str, &'static str) {
         .iter()
         .chain(std::iter::once(&SETTINGS_ROUTE))
         .find(|(id, _, _)| *id == g.route)
-        .map(|(_, t, i)| (*t, *i))
-        .unwrap_or(("Home", "home"))
+        .map(|(id, _, i)| (route_key(id), *i))
+        .unwrap_or((route_key("home"), "home"))
 }
 
 /// 页体：按路由分发。

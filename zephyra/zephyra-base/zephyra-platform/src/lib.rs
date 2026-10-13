@@ -254,6 +254,8 @@ pub struct Capabilities {
     pub backdrop: bool,
     /// 能否**查询**系统深浅色（不能查询 ≠ 不能设置）。
     pub system_theme_query: bool,
+    /// 能否**查询**系统语言偏好（不能查询 => 回落默认语言，不钉死界面）。
+    pub system_language_query: bool,
 }
 
 impl Capabilities {
@@ -266,6 +268,7 @@ impl Capabilities {
             border_color: false,
             backdrop: false,
             system_theme_query: false,
+            system_language_query: false,
         }
     }
 }
@@ -292,6 +295,19 @@ pub trait Platform {
     /// 返回 `None` = "查不到"（不是"浅色"）。上层据此**不跟随**系统主题，
     /// 而不是跟随成浅色 —— 后者会让不支持的平台上主题莫名被钉死。
     fn system_theme(&self) -> Option<ThemePreference>;
+
+    /// 查系统语言偏好（按优先级降序）。
+    ///
+    /// 对应浏览器的 `navigator.languages`：BCP 47 标签的有序表，最偏好的在前。
+    /// 返回空表 = "读不到" ⇒ 上层回落默认语言，**不**把界面钉死。
+    ///
+    /// # Windows 上的权威来源（写本方法前必查，勿凭印象）
+    ///
+    /// `GetUserPreferredUILanguages(MUI_LANGUAGE_NAME, …)`（`winnls.h`）——
+    /// 返回线程的首选 UI 语言名列表，正是「有序、语言名标签」这一形状。
+    /// 它与 `GetSystemDefaultUILanguage` 的区别：后者只有一项且是系统安装语言，
+    /// 不是**用户偏好**。文档：`docs/i18n.md` §3。
+    fn system_languages(&self) -> Vec<String>;
 
     /// 对窗口施加外观。
     ///

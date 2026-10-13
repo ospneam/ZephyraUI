@@ -13,7 +13,7 @@
 use zephyra_core::element::Element;
 use zephyra_core::id::NodeTag;
 
-use super::{catalog, Gallery, COMBO_OPTIONS};
+use super::{catalog, Gallery, COMBO_OPTIONS, LANG_SELFS, SUPPORTED};
 use crate::controls::{
     acrylic_card, auto_suggest_box, avatar, badge, busy_indicator, button, caption, card,
     check_box, color_picker, combo_box, date_picker, dialog, drop_down_button,
@@ -987,32 +987,79 @@ fn settings_page(g: &Gallery) -> Element {
         .with_key("settings")
         .style("page-settings")
         .with_children([
+            // 语言选择放在最上面一条：i18n 是"应用级"设置，与主题同级，
+            // 而设置页其它条目都是内容/系统偏好。位置即语义。
+            setting_card(
+                "set-lang",
+                g.tr("action.language"),
+                // 这条描述刻意**不**翻译：它描述的是本 demo 的实现状态
+                // （哪些接了 i18n、哪些还没），属于开发注记而不是产品文案。
+                "Switching re-renders every string in the shell and settings",
+                language_picker(g),
+            ),
             setting_card(
                 "set-theme",
-                "Dark mode",
-                "换主题只换令牌值，控件一行不动",
+                g.tr("set.theme.title"),
+                g.tr("set.theme.desc"),
                 toggle_switch("switch:master", g.switch_on, g.hovers("switch:master"), g.holds("switch:master")),
             ),
             setting_card(
                 "set-volume",
-                "Volume",
-                "填充宽度 = 值 × 轨道宽（内容，不是版式）",
+                g.tr("set.volume.title"),
+                g.tr("set.volume.desc"),
                 slider("slider:volume", g.volume, Some("62"), g.hovers("slider:volume"), g.holds("slider:volume")),
             ),
             setting_card(
                 "set-notify",
-                "Notifications",
-                "选中态走分类名，源码不发颜色",
+                g.tr("set.notify.title"),
+                g.tr("set.notify.desc"),
                 toggle_switch("switch:notify", !g.switch_on, g.hovers("switch:notify"), g.holds("switch:notify")),
             ),
             section(
                 "sec-adv",
-                "Advanced",
+                g.tr("set.adv.title"),
                 vec![
-                    check_box("check:alpha", "Diagnostic logging", g.checked[0], g.hovers("check:alpha"), g.holds("check:alpha")),
-                    check_box("check:beta", "Hardware acceleration", g.checked[1], g.hovers("check:beta"), g.holds("check:beta")),
-                    nav_item("nav-shortcut", "Shortcuts", "menu", false, g.hovers("nav-shortcut"), g.holds("nav-shortcut"), false),
+                    check_box("check:alpha", g.tr("set.adv.logging"), g.checked[0], g.hovers("check:alpha"), g.holds("check:alpha")),
+                    check_box("check:beta", g.tr("set.adv.hwaccel"), g.checked[1], g.hovers("check:beta"), g.holds("check:beta")),
+                    nav_item("nav-shortcut", g.tr("set.adv.shortcuts"), "menu", false, g.hovers("nav-shortcut"), g.holds("nav-shortcut"), false),
                 ],
             ),
         ])
+}
+
+/// 语言选择器：一个**分段控件**。
+///
+/// # 为什么是 `segmented` 而不是 `combo_box`
+///
+/// `combo_box` 只显示一个当前值、不表达"还有哪些可选"，而语言切换必须让人
+/// 看见其它选项 —— 否则这个动作无从发现。`segmented` 正好是"多选一 + 全部可见"，
+/// 而且**已经存在**：复用它等于不新增任何外观原语，也不用为它写新的 zstyle 规则。
+/// 选中态由 `segmented` 自己发分类名，源码仍然不发颜色。
+///
+/// # 选项文案用**自称**而不是标签或英文名
+///
+/// "English / 中文 / 日本語"，不是 "en / zh-Hans / ja"，也不是"英语/中文/日语"。
+/// 一个法国人看不懂 `zh-Hans`，也不一定认得"日语"的英文写法，但看得懂"日本語"。
+/// 这是 i18n 的通行做法，不是本仓的风格选择。
+///
+/// # 段 id 用**语言标签**而不是下标
+///
+/// 下标（`0`/`1`/`2`）会在 `SUPPORTED` 增删时整体错位，而标签不会 ——
+/// 错位的症状是"选了中文得到日文"，画面上完全看不出原因。
+/// 点击路由因此是 `lang:zh-Hans` 这种形状（见 `Gallery` 的 `lang:` 分派）。
+fn language_picker(g: &Gallery) -> Element {
+    let items: Vec<(&'static str, &'static str)> = SUPPORTED
+        .iter()
+        .zip(LANG_SELFS)
+        .map(|(tag, self_name)| (*tag, *self_name))
+        .collect();
+    segmented(
+        "seg:lang",
+        &items,
+        Some(g.locale()),
+        // `segmented` 收的是「当前 hover 的 key 名」而不是谓词：段的 key 就是
+        // 语言标签，所以整条判定在控件内部做（`hovered_id == Some(*id)`）。
+        g.hovered.as_ref().and_then(|k| k.as_name()),
+        g.pressed.as_ref().and_then(|k| k.as_name()),
+    )
 }

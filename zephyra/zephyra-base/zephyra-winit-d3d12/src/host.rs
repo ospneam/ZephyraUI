@@ -92,6 +92,11 @@ pub struct HostWindow<V: View> {
     /// 前者为假，而两者对 clear 色（透明 vs 不透明）与根背景的处理**不同**。
     backdrop_active: bool,
     /// 帧计数。只给 `trace` 用。
+    /// 系统语言偏好（首帧读一次后缓存）。
+    ///
+    /// 每帧问一次是一次 Win32 调用，而它是**启动时的外部事实**，之后不变
+    /// （用户切换系统语言要重启进程才该重新读）。与版本号、系统主题同一手法。
+    system_languages: Vec<String>,
     frames: usize,
     /// 上一次 `sync_input` 的时刻，用来算**真实帧间隔**（动画时钟的唯一来源）。
     ///
@@ -233,6 +238,7 @@ impl<V: View> HostWindow<V> {
             atlas_revision_uploaded: 0,
             backdrop_active: false,
             frames: 0,
+            system_languages: zephyra_platform_win::current().system_languages(),
             last_frame_at: None,
             traced_viewport: None,
             textures: TextureTable::new(),
@@ -775,6 +781,10 @@ fn list_kind_histogram(&self) -> Vec<usize> {
             viewport: (size.0 as f32, size.1 as f32),
             scale: scale as f32,
             dt_ms,
+            // 系统语言偏好：每帧问一次很贵（一次 Win32 调用），而它是**启动时的
+            // 外部事实**，之后不会变（用户切换系统语言要重启进程才该重新读）。
+            // 所以只问一次并缓存 —— 与版本号、系统主题同一手法。
+            languages: self.system_languages.clone(),
         };
         self.view.on_input(&state);
     }

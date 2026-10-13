@@ -50,12 +50,35 @@ examples/
 
 ## 现状
 
-**骨架阶段，但已有可运行窗口。** 模块边界与契约已定；控件库与模板系统未实现。
-`examples/demo.rs` 能真开窗口出像素：圆角矩形 + 描边合批成一次 draw，矢量图标走
-`Command::Path` 的 CPU 三角化（另有 MSAA 4×），文字走字形图集采样。
+**可运行的控件库 + Gallery 展台。** `ZephyraUI/` 是照抄 RinUI Gallery 的演示应用：
+44 个控件卡、70 条路由、`ui.zstyle` + `gallery.zstyle` 两份外观表。
 
 设计参考：WinUI 3 / Fluent 的分层与令牌体系，GPUI / rgui 的保留式架构。
 UI 编程模型采用**保留式声明**（代码描述元素树，不用 XAML，不用即时模式）。
+
+### 本轮新增的三件事
+
+| 能力 | 入口 | 文档 |
+|---|---|---|
+| **布局跟随输入更新**（此前只有 resize 才重排） | `zephyra-core/src/frame.rs` 的 `tree_needs_layout` | 见下 |
+| **响应式 / 触控判据** | `ZephyraUI/src/responsive.rs` | [`docs/responsive-and-touch.md`](docs/responsive-and-touch.md) |
+| **动画地基**（缓动 / 时钟 / 档位） | `ZephyraUI/src/anim.rs` | [`docs/animation.md`](docs/animation.md) |
+| **i18n**（BCP 47 协商 + 回退链 + 三语文案表） | `ZephyraUI/src/i18n.rs` | [`docs/i18n.md`](docs/i18n.md) |
+
+### 「为什么只有 resize 以后布局才更新」
+
+`FrameCache::frame` 的重排判据原先只有三项：首帧、视口变了、`diff` 说要重排。
+而样式应用（`apply`）排在 `diff` **之后**（这是硬契约，见
+`zephyra-style/src/apply.rs` 的模块文档），所以样式写出的布局键 ——
+hover / press 改 `padding` 就是最典型的一种 —— 会经 `Node::set_styled_prop`
+标上 `Dirty::Layout`，却**没人读它**：只重绘、不重排。
+
+症状不是崩溃，是两套几何：字形按新 padding 画，命中测试按旧矩形判。
+鼠标移动只翻分类名，于是这条路径**只能**靠 resize 或整树改动触发。
+
+修法是把判据换成直接读树上的脏标记（谁标了 `Dirty::Layout` 就要重排，
+不问它是 diff 标的还是 apply 标的）。门禁 `ZephyraUI/tests/hover_layout_tests.rs`
+的三条断言在修好之前是红的。
 
 ## 快速开始
 
@@ -89,13 +112,13 @@ cargo test -p zephyra-dcomp --test smoke                 # 需要真实窗口 + 
 ## 三层结构
 
 ```text
-控件层（未实现）        Button / Slider / ToggleSwitch …
+控件层 ZephyraUI/src/controls + ZephyraUI/src/app   Button / Slider / ToggleSwitch …
    ↓ 构造 Element、设属性
 通用层 zephyra/zephyra-core property / theme / element / node / diff / layout / paint / filter / geom / hit / input / icon / frame
    ↓ DisplayList（纯数据契约，可序列化可断言）
 效果器层 zephyra/zephyra-fx 顶点展开 / 字形图集 / CPU 光栅 / 离屏规划
    ↓ 顶点流 + 中立的资源需求
-base zephyra/zephyra-base       D3D11 / D3D12 / DComp / 摄像头
+base zephyra/zephyra-base       D3D11 / D3D12 / DComp / 摄像头 / 平台抽象
    ↓
 操作系统                Win32 / DirectComposition / Wayland / X11 / v4l2 …
 ```
