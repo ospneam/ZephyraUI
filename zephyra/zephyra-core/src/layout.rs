@@ -253,14 +253,15 @@ impl Stack {
         }
     }
 
-    /// 各子项在主轴上的起点（相对本容器起点）。
-    pub fn main_offsets(&self, sizes: &[Size], available_main: f32) -> Vec<f32> {
-        let n = sizes.len();
-        if n == 0 {
-            return Vec::new();
-        }
-        let content = self.main_size(sizes);
-        let (start, gap) = match self.main_align {
+/// 主轴起点与间距（`main_offsets` 的规则本体）。
+    ///
+    /// # 为什么要抽出来
+    ///
+    /// `main_offsets`（切片版）与 `each_rect`（流式版）需要**同一套**规则。
+    /// 写两遍的话，`SpaceBetween` 的单项特例这类边角必然会漂移 —— 而漂移的表现
+    /// 是"两个版本在某个对齐方式下排出来不一样"，极难归因。
+    fn main_offset_rules(&self, n: usize, content: f32, available_main: f32) -> (f32, f32) {
+        match self.main_align {
             MainAxisAlign::Start => (0.0, self.spacing),
             MainAxisAlign::Center => ((available_main - content) * 0.5, self.spacing),
             MainAxisAlign::End => (available_main - content, self.spacing),
@@ -270,15 +271,76 @@ impl Stack {
                 let slack = (available_main - content).max(0.0);
                 (0.0, self.spacing + slack / (n as f32 - 1.0))
             }
-        };
+        }
+    }
+
+    /// 该 `Size` 在堆叠轴上的长度。
+    fn main_of(&self, size: Size) -> f32 {
+        match self.direction {
+            Direction::Horizontal => size.width,
+            Direction::Vertical => size.height,
+        }
+    }
+
+    /// 内容总尺寸，**不收集中间 `Vec`**（流式版）。
+    ///
+    /// # 为什么不直接用 [`Self::content_size`]
+    ///
+    /// `content_size` 要一个 `&[Size]`，而调用方得先把所有子项的尺寸收集进一个
+    /// `Vec` —— 那是**每节点每趟一次堆分配**。resize 实测每帧 1709 次分配
+    /// （`--bench-resize --alloc-probe`，约合每节点 2.8 次），而这一趟不需要
+    /// "看第二眼"：主轴求和、交叉轴取最大都能在一次遍历里折出来。
+    ///
+    /// `content_size` 保留（`&[Size]` 更适合已经拿着切片的调用方，也被测试用着），
+    /// 布局趟走这个流式版。
+    pub fn content_size_of<I: Iterator<Item = Size>>(&self, sizes: I) -> Size {
+        let mut main = 0.0f32;
+        let mut cross = 0.0f32;
+        let mut n = 0usize;
+        for s in sizes {
+            main += self.main_of(s);
+            cross = cross.max(match self.direction {
+                Direction::Horizontal => s.height,
+                Direction::Vertical => s.width,
+            });
+            n += 1;
+        }
+        // 与 `main_size` 同一条规则：空容器返回 0 而不是 spacing。
+        if n == 0 {
+            return Size::new(0.0, 0.0);
+        }
+        main += self.spacing * (n as f32 - 1.0);
+        match self.direction {
+            Direction::Horizontal => Size::new(main, cross),
+            Direction::Vertical => Size::new(cross, main),
+        }
+    }
+
+    /// 逐个把子项矩形交出去，**不收集中间 `Vec`**（流式版）。
+    ///
+    /// # 为什么需要 `I: Clone`
+    ///
+    /// 主轴起点（`Center` / `End` / `SpaceBetween`）依赖**总长**，而总长要第一趟
+    /// 才拿得到 —— 所以要遍历两次尺寸。`Clone` 的迭代器几乎总是
+    /// `slice::Iter` 或 `Cloned<…>`，克隆零成本。
+    ///
+    /// 换来的好处：排列趟每节点零分配。改之前是每节点一个 `Vec<Size>` 加一个
+
+    /// 各子项在主轴上的起点（相对本容器起点）。
+    ///
+    /// 规则本体在 [Self::main_offset_rules] —— 切片版与流式版共用同一套，
+    /// 免得 SpaceBetween 的单项特例在两处漂移。
+    pub fn main_offsets(&self, sizes: &[Size], available_main: f32) -> Vec<f32> {
+        let n = sizes.len();
+        if n == 0 {
+            return Vec::new();
+        }
+        let (start, gap) = self.main_offset_rules(n, self.main_size(sizes), available_main);
         let mut offsets = Vec::with_capacity(n);
         let mut cursor = start;
         for s in sizes {
             offsets.push(cursor);
-            cursor += match self.direction {
-                Direction::Horizontal => s.width,
-                Direction::Vertical => s.height,
-            } + gap;
+            cursor += self.main_of(*s) + gap;
         }
         offsets
     }
@@ -441,19 +503,33 @@ pub fn measure(node: &mut Node, constraints: Constraints, ctx: Context<'_>) -> S
     let child_constraints = stack.child_constraints(constraints.deflate(padding));
 
     // 折叠的子节点不参与测量，也不占间距。
-    let visible = visible_children(node, ctx);
 
-    let mut sizes = Vec::with_capacity(visible.len());
-    for &i in &visible {
-        sizes.push(measure(&mut node.children_mut()[i], child_constraints, ctx));
+    // 一边测一边折叠，**不收集中间 Vec**（改之前每节点一次堆分配）。
+    let mut main_sum = 0.0f32;
+    let mut cross_max = 0.0f32;
+    let mut n = 0usize;
+    for i in 0..node.children().len() {
+        if node.children()[i].is_collapsed(ctx) {
+            continue;
+        }
+        let s = measure(&mut node.children_mut()[i], child_constraints, ctx);
+        main_sum += stack.main_of(s);
+        cross_max = cross_max.max(match stack.direction {
+            Direction::Horizontal => s.height,
+            Direction::Vertical => s.width,
+        });
+        n += 1;
     }
+    let mut content = if n == 0 {
+        Size::new(0.0, 0.0)
+    } else {
+        let main = main_sum + stack.spacing * (n as f32 - 1.0);
+        match stack.direction {
+            Direction::Horizontal => Size::new(main, cross_max),
+            Direction::Vertical => Size::new(cross_max, main),
+        }
+    };
 
-    let mut content = stack.content_size(&sizes);
-    // 文本节点自己贡献内容尺寸。
-    //
-    // 必须在 `content_size` **之后**做这件事，而不是把文本当成一个子项：文本是
-    // 叶节点，没有自己的 `Node`，所以子项列表里根本没有它。若不单独补，内容尺寸
-    // 恒为 0，文本行会被压成零高 —— 而"看不见"是这类 bug 最常见的表现形式。
 // 文本节点自己贡献内容尺寸。
     //
     // 必须在 `content_size` **之后**做这件事，而不是把文本当成一个子项：文本是
@@ -484,27 +560,101 @@ pub fn measure(node: &mut Node, constraints: Constraints, ctx: Context<'_>) -> S
 /// 按最终矩形摆放整棵子树。
 ///
 /// 顺序无关紧要：绘制顺序由 [`crate::paint::render`] 的 `order` 决定，这里只算几何。
+///
+/// # 零分配（改之前每节点三次）
+///
+/// 原写法是「收集可见子项 `Vec<usize>` → 收集尺寸 `Vec<Size>` → 收集矩形
+/// `Vec<Rect>`」三步。而这三条**没有一条需要真的收集**：
+///
+/// - 主轴起点（`Center` / `End` / `SpaceBetween`）只依赖**总长**，一趟折叠就有；
+/// - 矩形算出来立刻递归下去用，中间不留存。
+///
+/// resize 实测每帧 1709 次分配、约合每节点 2.8 次（`--bench-resize --alloc-probe`）。
+///
+/// # 为什么不用 [`Stack::each_rect`] 那样的流式回调
+///
+/// 递归要的是 `&mut Node`，而尺寸要从同一个节点的**子节点**里读 ——
+/// 闭包迭代器会同时借走 `&Node`，与随后的 `&mut` 冲突。所以两趟都写成显式循环：
+/// 第一趟只读（折叠总长），第二趟可变（算矩形 + 递归）。
+///
+/// # 缺尺寸时占零而不是消失
+///
+/// 尺寸取自测量缓存。缓存缺失时填 `0` **占位**而不是 `filter_map` 掉 ——
+/// 掉一个会让后面所有下标整体前移，那是 `paint` 侧一个真实踩过的坑
+/// （见 `docs/task-resize.md` §完成情况）。
 pub fn arrange(node: &mut Node, bounds: Rect, ctx: Context<'_>) {
     node.set_rect(bounds);
     let padding = node.padding(ctx);
     let inner = bounds.inset(padding);
     let stack = node.stack(ctx);
     let cross_align = node.cross_align(ctx);
-
-    let visible = visible_children(node, ctx);
-
-    // 用**测量缓存**里的尺寸，而不是重算——measure 刚跑过，缓存必然命中。
-    let sizes: Vec<Size> = visible
-        .iter()
-        .filter_map(|&i| node.children()[i].cached_size())
-        .collect();
-
+    let available = Size::new(inner.width, inner.height);
     let origin = Point::new(inner.x, inner.y);
-    let rects = stack.arrange(origin, Size::new(inner.width, inner.height), &sizes, cross_align);
 
-    for (slot, &i) in visible.iter().enumerate() {
-        arrange(&mut node.children_mut()[i], rects[slot], ctx);
+    // ---- 第一趟：折叠主轴总长与项数（只读）----
+    let mut main_sum = 0.0f32;
+    let mut count = 0usize;
+    for c in node.children().iter() {
+        if c.is_collapsed(ctx) {
+            continue;
+        }
+        main_sum += stack.main_of(cached_size_or_zero(c));
+        count += 1;
     }
+    if count == 0 {
+        return;
+    }
+    let content_main = main_sum + stack.spacing * (count as f32 - 1.0);
+    let (start, gap) = stack.main_offset_rules(count, content_main, stack.main_of(available));
+    let available_cross = match stack.direction {
+        Direction::Horizontal => available.height,
+        Direction::Vertical => available.width,
+    };
+
+    // ---- 第二趟：算矩形并递归（可变）----
+    let mut cursor = start;
+    for child in node.children_mut().iter_mut() {
+        if child.is_collapsed(ctx) {
+            continue;
+        }
+        let size = cached_size_or_zero(child);
+        let (cross_pos, cross_extent) = match (stack.direction, cross_align) {
+            (Direction::Horizontal, AlignItems::Stretch) => (origin.y, available_cross),
+            (Direction::Horizontal, AlignItems::Start) => (origin.y, size.height),
+            (Direction::Horizontal, AlignItems::Center) => {
+                (origin.y + (available_cross - size.height) * 0.5, size.height)
+            }
+            (Direction::Horizontal, AlignItems::End) => {
+                (origin.y + available_cross - size.height, size.height)
+            }
+            (Direction::Vertical, AlignItems::Stretch) => (origin.x, available_cross),
+            (Direction::Vertical, AlignItems::Start) => (origin.x, size.width),
+            (Direction::Vertical, AlignItems::Center) => {
+                (origin.x + (available_cross - size.width) * 0.5, size.width)
+            }
+            (Direction::Vertical, AlignItems::End) => {
+                (origin.x + available_cross - size.width, size.width)
+            }
+        };
+        let rect = match stack.direction {
+            Direction::Horizontal => {
+                Rect::new(origin.x + cursor, cross_pos, size.width, cross_extent)
+            }
+            Direction::Vertical => {
+                Rect::new(cross_pos, origin.y + cursor, cross_extent, size.height)
+            }
+        };
+        arrange(child, rect, ctx);
+        cursor += stack.main_of(size) + gap;
+    }
+}
+
+/// 测量缓存里的尺寸；缺失时返回**零尺寸占位**。
+///
+/// 见 [`arrange`] 的说明：占位而不是跳过 —— 跳过会让下标错位。
+#[inline]
+fn cached_size_or_zero(node: &Node) -> Size {
+    node.cached_size().unwrap_or(Size::new(0.0, 0.0))
 }
 
 /// 缓存命中且约束相同则返回尺寸。
@@ -517,16 +667,6 @@ fn cached_for(node: &Node, constraints: Constraints) -> Option<Size> {
         Some((cached, result)) if cached == &constraints => Some(result.size),
         _ => None,
     }
-}
-
-/// 未被折叠的子节点下标。
-///
-/// 折叠节点既不占位也不绘制（见 [`crate::paint::render`]），所以它必须在测量与
-/// 排列两趟里都缺席 —— 只在一趟里过滤会让子项尺寸与矩形对不上。
-fn visible_children(node: &Node, ctx: Context<'_>) -> Vec<usize> {
-    (0..node.children().len())
-        .filter(|i| !node.children()[*i].is_collapsed(ctx))
-        .collect()
 }
 
 /// 显式尺寸（`None` = 由内容决定）。

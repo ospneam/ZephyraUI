@@ -39,21 +39,34 @@
 - [x] B1 diff 插入/替换子节点时让父失效（原先会 `rects[slot]` 越界 panic）
 - [x] B2 `StageTimes` 的 diff/layout/paint 恒为 0 —— 换成诚实的 `cache_us`
 
-## 批 C：未做（记账）
+## 批 C：C1 已做，其余记账
 
-- [ ] C1 resize 期间每帧 1709 次分配：`arrange` 的 `visible_children` /
-      `sizes` / `rects` 与 `measure` 的 `sizes` 都是每节点一个 `Vec`。
-      `zephyra-core` 零依赖不能引 SmallVec；方案是给布局趟传一组可复用的
-      scratch 栈（进入 push、退出 pop）。**这是下一步最该动的**。
+- [x] C1 resize 期间的分配：两趟都改成**不收集中间 `Vec`**。
+      `measure` 一边测一边折叠主轴总和与交叉轴最大；`arrange` 第一趟只读折叠
+      总长、第二趟可变算矩形并立即递归。`visible_children` 整个函数删掉 ——
+      折叠判断内联进循环，顺带消掉"每节点一个 `Vec<usize>`"。
+      规则本体抽成 `Stack::main_offset_rules` / `main_of`，切片版与流式版共用，
+      免得 `SpaceBetween` 的单项特例在两处漂移。
+- [ ] C1b **`glyph_quads` 的 `Vec<GlyphQuad>`**：实测仍是最大的一笔，
+      **239 次 × 1024 B = 136 KB/帧**（每帧字节数的 40%），一个文本节点一次。
+      修法与官方一致：把字形矩形按**元素原点**缓存，绘制偏移时再平移 ——
+      这也正是 `translate` 属性该有的形状。记账在 §下一步。
 - [ ] C2 measure / arrange 拆成两套脏标记（官方的 `LF_MEASURE_*` 与
       `LF_ARRANGE_*` 分开）。本仓一个 `Dirty` 序数，所以"只影响排列"的属性
       也会触发全树重测。要改 `PropertyKey` 增加一个标志位，影响面较大。
 - [ ] C3 arrange 在 final rect 未变时短路（官方 `uielement.cpp:4542`）。
-      C1 做完之后这一条才有意义 —— 现在每节点本来就要重新遍历。
 - [ ] C4 `IsSameSize` 的无穷比较。官方对 `inf == inf` 特判
       （`uielement.cpp:15236-15241`），本仓 `Constraints` 的 `PartialEq`
       是派生的浮点比较，`f32::INFINITY == f32::INFINITY` 恰好为真，所以
       结论相同但没写下来。补一条注释即可，不改行为。
+
+---
+
+## 下一步
+
+1. **C1b 字形矩形缓存**（最大的一笔字节开销，239 × 1024 B/帧）。
+2. **C2 measure/arrange 脏标记分离**（结构性，影响面最大）。
+3. C3 / C4 收尾。
 
 ---
 
@@ -72,9 +85,26 @@
 
 render 是 layout 的 5 倍 → 3.6 倍，降 40%。
 
-只改高度中位 513 → 481 µs；只改宽度 649 → 431 µs。
+只改高度中位 513 → **440** µs；只改宽度 649 → **438** µs；宽高都改 → **423** µs。
+整帧中位 679 / 612 / 623 → **625 / 625 / 605** µs。
 
-分配探针：resize 期间每帧 **1709 次 / 343 KB**，约合每节点 2.8 次。
+分配探针（第二轮，布局两趟不再收集中间 Vec）：每帧 **1709 → 1451 次**、
+343 → 336 KB。剩下的最大一笔是 **239 次 × 1024 B = 136 KB/帧** ——
+每个文本节点一次，来自 `glyph_quads` 的 `Vec<GlyphQuad>`（记账见 §批 C）。
+
+### 两轮改动的合计
+
+| | 改前 | 改后 |
+|---|---|---|
+| 只改高度（layout+diff+paint 中位） | 513 µs | 440 µs |
+| 只改宽度 | 649 µs | 438 µs |
+| render（324 帧合计） | 92937 µs | 55636 µs |
+| 每帧分配 | 1709 | 1451 |
+
+布局两趟改成"一边算一边用"之后，`visible_children` 这个函数整个删掉了 ——
+折叠判断内联进循环，顺带消掉每节点一个 `Vec<usize>`。规则本体抽成
+`Stack::main_offset_rules` / `main_of`，切片版（`main_offsets`，测试在用）
+与布局趟共用，免得 `SpaceBetween` 的单项特例在两处漂移。
 
 ### 过程中被自己的门禁抓到的一个缺陷
 
