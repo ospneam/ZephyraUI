@@ -94,10 +94,39 @@ impl Constraints {
 }
 
 /// 测量结果。
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// 测量结果。
+///
+/// `shaped` 是**排版结果本身**，不是尺寸。带着它是为了让绘制趟不必重排一次文字。
+#[derive(Debug, Clone, PartialEq)]
 pub struct MeasureResult {
     /// 内容想要的尺寸。
     pub size: Size,
+    /// 这次测量产出的排版结果（`None` = 本节点没有文本）。
+    ///
+    /// # 为什么把 `ShapedText` 挂在测量结果上
+    ///
+    /// 官方把排版结果放在元素的布局存储里（`CLayoutStorage` 里
+    /// `m_desiredSize` 旁边就是它），绘制趟直接取。原因是**排版是整帧最贵的一步**：
+    /// `shape()` 要按样式算出每一行的基线、每个字形的位置与步进。
+    ///
+    /// 本仓曾经把排版结果**扔掉**（`text_size()` 只取 `shaped.size` 就返回），
+    /// 于是绘制趟 `paint::text_command` 每帧对每个文本节点重新 `shape()` 一次。
+    /// 实测（`--bench-resize` 的临时探针，324 帧）：`render` 92.9 ms、
+    /// `layout` 18.4 ms —— **render 是 layout 的 5 倍**，而它里面绝大部分
+    /// 就是重复排版。
+    ///
+    /// # 为什么绘制趟仍要重算字形矩形
+    ///
+    /// `shape()` 与位置无关，所以复用 `ShapedText` 本身是安全的；但字形的
+    /// 屏幕矩形**必须**按当前 origin 重算 —— 节点可能被绘制偏移
+    /// （`props::TRANSLATE_X/Y`）移动过，而排版结果里没有屏幕坐标。
+    ///
+    /// # 失效时机
+    ///
+    /// 它挂在 `measure_cache` 里，而缓存的失效时机是"某个布局相关属性被改"
+    /// （见 [`crate::node::clear_dirty`] 的文档）。`text-size` / `text-line-height` /
+    /// `text-max-width` / `TEXT` 都是布局键 ⇒ 改它们会让缓存作废 ⇒ 重新排版。
+    pub shaped: Option<crate::text::ShapedText>,
 }
 
 /// 可测量、可排列的节点。
@@ -254,6 +283,38 @@ impl Stack {
         offsets
     }
 
+/// 给**子项**的约束：堆叠轴无穷，交叉轴保持原值。
+    ///
+    /// # 为什么只放开一根轴
+    ///
+    /// 交叉轴必须保持有限，否则 `cross-align: stretch` 无从谈起 ——
+    /// 子项会退回"内容宽度"，横向排版全散。官方也是只放开一根
+    /// （`StackPanel.cpp:24-30`）。
+    ///
+    /// `min` 与 `max` **都要**改：只把 `max` 设成无穷而留着 `min`，
+    /// 子项会拿到"至少要 N 这么宽、上不封顶"这种自相矛盾的约束，
+    /// 而 [`pick_axis`] 的下限夹逼会把结果顶到那个 `min` 上。
+    ///
+    /// # 为什么这一行就是 resize 便宜的**全部**原因
+    ///
+    /// 测量缓存按**约束精确匹配**（见 [`cached_for`]）。子项在堆叠轴上拿的是
+    /// 无穷，于是**只改窗口高度时，子项的约束一个字都没变** ⇒ 缓存命中 ⇒ 整段子树
+    /// 跳过测量，也就不再重新整形那几百行文字。
+    /// 门禁 `layout_cache_tests::只改高度不重测子树` 钉的就是这一条。
+    pub fn child_constraints(&self, deflated: Constraints) -> Constraints {
+        match self.direction {
+            Direction::Horizontal => Constraints {
+                min: Size::new(0.0, deflated.min.height),
+                max: Size::new(f32::INFINITY, deflated.max.height),
+            },
+            Direction::Vertical => Constraints {
+                min: Size::new(deflated.min.width, 0.0),
+                max: Size::new(deflated.max.width, f32::INFINITY),
+            },
+        }
+    }
+
+    /// 把主轴偏移落成每个子项的矩形。
     /// 把主轴偏移落成每个子项的矩形。
     ///
     /// `cross_align` 决定子项在交叉轴上的位置与伸展；[`AlignItems::Stretch`] 时
@@ -365,7 +426,19 @@ pub fn measure(node: &mut Node, constraints: Constraints, ctx: Context<'_>) -> S
         return size;
     }
     let padding = node.padding(ctx);
-    let child_constraints = constraints.deflate(padding);
+// 堆叠轴给子项**无穷**约束；交叉轴保持有限（stretch 依赖它）。
+    //
+    // 官方依据（microsoft-ui-xaml 的 dxaml/xcp/core/core/elements/StackPanel.cpp:24-30）：
+    //
+    //     XSIZEF childConstraint = (m_orientation == DirectUI::Orientation::Vertical)
+    //         ? XSIZEF{ availableSize.width - combinedThickness.width, XFLOAT_INF }
+    //         : XSIZEF{ XFLOAT_INF, availableSize.height - combinedThickness.height };
+    //
+    // 而这个子项约束的缓存是**跨帧**存活的（见 cached_for 与
+    // crate::node::clear_dirty 的文档）—— 两条合起来才是 resize 便宜的
+    // 全部原因：只改高度时约束一个字没变，于是整段子树跳过测量。
+    let stack = node.stack(ctx);
+    let child_constraints = stack.child_constraints(constraints.deflate(padding));
 
     // 折叠的子节点不参与测量，也不占间距。
     let visible = visible_children(node, ctx);
@@ -375,15 +448,24 @@ pub fn measure(node: &mut Node, constraints: Constraints, ctx: Context<'_>) -> S
         sizes.push(measure(&mut node.children_mut()[i], child_constraints, ctx));
     }
 
-    let stack = node.stack(ctx);
     let mut content = stack.content_size(&sizes);
     // 文本节点自己贡献内容尺寸。
     //
     // 必须在 `content_size` **之后**做这件事，而不是把文本当成一个子项：文本是
     // 叶节点，没有自己的 `Node`，所以子项列表里根本没有它。若不单独补，内容尺寸
     // 恒为 0，文本行会被压成零高 —— 而"看不见"是这类 bug 最常见的表现形式。
-    if let Some(text) = node.text_size(ctx) {
-        content = text;
+// 文本节点自己贡献内容尺寸。
+    //
+    // 必须在 `content_size` **之后**做这件事，而不是把文本当成一个子项：文本是
+    // 叶节点，没有自己的 `Node`，所以子项列表里根本没有它。若不单独补，内容尺寸
+    // 恒为 0，文本行会被压成零高 —— 而"看不见"是这类 bug 最常见的表现形式。
+    //
+    // ⚠ 排版结果**要留下**（`shaped` 稍后进 `MeasureResult`）：绘制趟从测量缓存里
+    // 取它，于是每帧只排版一次。丢掉它就是每帧重排全部文字 —— 实测那让
+    // `render` 比 `layout` 还贵 5 倍。
+    let shaped = node.shape(ctx);
+    if let Some(shaped) = &shaped {
+        content = shaped.size;
     }
     let (own_w, own_h) = explicit_size(node, ctx);
     let result = MeasureResult {
@@ -391,10 +473,12 @@ pub fn measure(node: &mut Node, constraints: Constraints, ctx: Context<'_>) -> S
             pick_axis(own_w, content.width, Axis::Horizontal, constraints, padding),
             pick_axis(own_h, content.height, Axis::Vertical, constraints, padding),
         ),
+        shaped,
     };
+    let size = result.size;
     node.cache_measure(constraints, result);
     node.merge_dirty(Dirty::Layout);
-    result.size
+    size
 }
 
 /// 按最终矩形摆放整棵子树。
@@ -429,8 +513,8 @@ pub fn arrange(node: &mut Node, bounds: Rect, ctx: Context<'_>) {
 /// 父容器尺寸一变就会拿旧结果继续用 —— 那正是 `Constraints` 必须参与相等比较的
 /// 原因。
 fn cached_for(node: &Node, constraints: Constraints) -> Option<Size> {
-    match node.measure_cache {
-        Some((cached, result)) if cached == constraints => Some(result.size),
+    match node.measure_cache.as_ref() {
+        Some((cached, result)) if cached == &constraints => Some(result.size),
         _ => None,
     }
 }

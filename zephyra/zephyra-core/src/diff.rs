@@ -144,6 +144,10 @@ pub fn diff(node: &mut Node, element: &Element) -> DiffStats {
     let mut pool: Vec<Option<Node>> = node.children_mut().drain(..).map(Some).collect();
     let mut out: Vec<Node> = Vec::with_capacity(element.children().len());
     let mut moved = 0usize;
+    // 本层新插入 / 替换掉的子节点数（供下面"子树变了 ⇒ 本节点也要重排"用）。
+    let mut inserted_here = 0usize;
+    // 递归收集到的"后代需要重排"计数。自底向上归并，用来把失效沿父链传上去。
+    let mut child_needs_layout = 0usize;
     for (i, el) in element.children().iter().enumerate() {
         // 先找同 key 的旧节点；同位置优先（身份与位置一致是绝大多数情况），
         // 否则全表扫 —— 后者让「列表里插一项」只动被插处，而不必整段替换。
@@ -175,6 +179,7 @@ pub fn diff(node: &mut Node, element: &Element) -> DiffStats {
                 stats.moved += child_stats.moved;
                 stats.dirtied += child_stats.dirtied;
                 stats.needs_layout += child_stats.needs_layout;
+                child_needs_layout += child_stats.needs_layout;
                 if child.dirty() != child_before {
                     stats.dirtied += 1;
                     if child.dirty().needs_layout() {
@@ -189,17 +194,20 @@ pub fn diff(node: &mut Node, element: &Element) -> DiffStats {
                 stats.inserted += 1;
                 stats.removed += 1;
                 stats.needs_layout += 1;
+                inserted_here += 1;
             }
             None => {
                 out.push(Node::from_element(el));
                 stats.inserted += 1;
                 stats.needs_layout += 1;
+                inserted_here += 1;
             }
         }
     }
     let dropped = pool.iter().filter(|c| c.is_some()).count();
     if dropped > 0 {
         stats.removed += dropped;
+        inserted_here += dropped;
     }
     node.children_mut().append(&mut out);
     if dropped > 0 || moved > 0 {
@@ -207,6 +215,23 @@ pub fn diff(node: &mut Node, element: &Element) -> DiffStats {
         // `merge_dirty` 而不是 `mark_dirty`：子节点已各自递归对账过了，这里只
         // 标自己。用 `mark_dirty` 会把 Structure 传播到所有剩余子节点。
         node.merge_dirty(Dirty::Structure);
+    }
+    // 子树变了 ⇒ **本节点也必须重排**（并且丢掉自己的测量缓存）。
+    //
+    // ⚠ 早先这里不标，于是「插入一个新子节点」之后父节点的 `measure_cache`
+    // 仍然有效 ⇒ 下一趟 `measure(父)` 命中缓存、**根本不下探**，新子节点
+    // 因此从来没有被测量过 ⇒ `arrange` 里 `cached_size()` 返回 `None`
+    // ⇒ `rects[slot]` 越界 panic。
+    //
+    // 它一直是被另一个缺陷**盖住**的：`clear_dirty` 每帧清空测量缓存，
+    // 父节点必然重新下探。清掉那行之后这条就暴露了。
+    //
+    // 官方由集合自己负责（`UIElementCollection.cpp:451` 的
+    // `pOwner->InvalidateMeasure()`，Insert / RemoveAt / 重排 同理），
+    // 并用 `LF_ON_MEASURE_DIRTY_PATH` 把"后代脏"沿父链传播。
+    // 这里是自底向上的一次归并，效果等价且不需要额外的位域。
+    if inserted_here > 0 || child_needs_layout > 0 {
+        node.mark_dirty(Dirty::Layout);
     }
     // 本节点自身的属性/结构变化也要计入。
     if node.dirty() != before {

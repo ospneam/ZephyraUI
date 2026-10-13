@@ -62,6 +62,13 @@ fn main() {
         return;
     }
 
+    if args.iter().any(|a| a == "--bench-resize") {
+        // resize 路径单独一个模式：现有 --bench 测的是稳态（layout 根本不跑），
+        // 那一组数字对「拖窗口边慢不慢」一个字都说不出。
+        bench_resize(args.iter().any(|a| a == "--alloc-probe"), want_light);
+        return;
+    }
+
     if args.iter().any(|a| a == "--dump-cpu") {
         dump_cpu(want_light);
         return;
@@ -316,6 +323,112 @@ fn bench_cpu(probe: bool, light: bool) {
 fn flag_value<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
     let i = args.iter().position(|a| a == flag)?;
     args.get(i + 1).map(|s| s.as_str())
+}
+
+/// 逐帧改视口的计时 —— resize 路径的实测。
+///
+/// # 为什么单独一个模式而不是给 `--bench` 加个参数
+///
+/// 现有 `--bench` 测的是**稳态**：输入不变，`diff` 报 no-op、`layout` 根本不跑。
+/// 那条路径在优化之前就已经是 0 µs，所以它对"resize 慢不慢"**一个字都说不出**。
+///
+/// resize 是另一回事：视口每帧都变 ⇒ 视口比��失败 ⇒ `layout` 每帧都跑。
+/// 而且它有两个**方向**，代价差得很远：
+///
+/// - **改宽度**（交叉轴）⇒ 子项的交叉轴约束变了 ⇒ 必须重测（文本会重排）；
+/// - **改高度**（堆叠轴）⇒ 官方 StackPanel 在堆叠轴给无穷约束
+///   （`StackPanel.cpp:24-30`），于是子项约束**一个字都没变** ⇒ 整棵子树跳过测量。
+///
+/// 把两者分开报，才看得出"哪一半已经便宜了、哪一半还贵"。
+///
+/// # 数字怎么读
+///
+/// 中位数。resize 的耗时分布是**双峰**的（一半高度变化几乎免费、一半宽度变化
+/// 全量重排），平均值会把两件事抹平。
+fn bench_resize(probe: bool, light: bool) {
+    /// 参与统计的帧数。
+    const FRAMES: usize = 120;
+    /// 丢弃开头几帧（字体解析、图集首次打包、树首次构建）。
+    const WARMUP: usize = 12;
+
+    let (w, h) = (1400u32, 800u32);
+    let mut host = zephyra_fx::cpu_only::CpuHost::new(Gallery::default(), (w, h));
+    host.set_styler(install(build_sheet()));
+    if light {
+        host.set_theme(ThemeVariant::Light);
+    }
+
+// 三个方向**分别**测。把宽高一起摆会互相抵消：宽度变化必然让整棵子树重测，
+    // 于是"高度变化几乎免费"那部分被完全淹掉 —— 实测混在一起时
+    // 507~586 µs，看不出任何双峰，而拆开之后差距是两个数量级。
+    //
+    // 宽度摆 ±42 DIP（周期 13，相邻帧必变）；高度摆 ±40 DIP（周期 17）。
+    let run = |label: &str, move_w: bool, move_h: bool| {
+        let mut host = zephyra_fx::cpu_only::CpuHost::new(Gallery::default(), (w, h));
+        host.set_styler(install(build_sheet()));
+        if light {
+            host.set_theme(ThemeVariant::Light);
+        }
+        let mut cache: Vec<u32> = Vec::with_capacity(FRAMES);
+        let mut total: Vec<u32> = Vec::with_capacity(FRAMES);
+        let mut before = alloc_probe::Counts::now();
+        let mut probing = false;
+        for i in 0..FRAMES {
+            let t = i as i32;
+            let nw = if move_w {
+                (w as i32 + (t % 13) * 7 - 42).clamp(640, 2400) as u32
+            } else {
+                w
+            };
+            let nh = if move_h {
+                (h as i32 + (t % 17) * 5 - 40).clamp(480, 1600) as u32
+            } else {
+                h
+            };
+            host.resize((nw, nh));
+            if probe && i == WARMUP {
+                alloc_probe::reset_histogram();
+                before = alloc_probe::Counts::now();
+                probing = true;
+            }
+            let (_frame, times) = host.frame_timed();
+            if i >= WARMUP {
+                cache.push(times.cache_us);
+                total.push(times.total_us);
+            }
+        }
+        if probing {
+            let d = alloc_probe::Counts::now().since(&before);
+            let per = (FRAMES - WARMUP) as f64;
+            println!(
+                "[resize:{label}] 每帧分配：中位 {:.1} 次 / {:.0} 字节",
+                d.allocs as f64 / per,
+                d.bytes as f64 / per
+            );
+            let mut hh = alloc_probe::histogram();
+            hh.sort_by_key(|&(_, _, bytes)| std::cmp::Reverse(bytes));
+            for (hi, n, bytes) in hh.iter().take(5) {
+                println!(
+                    "[resize:{label}]   {:>9} B × {:>5.1} = {:>8.0} B/帧",
+                    hi,
+                    *n as f64 / per,
+                    *bytes as f64 / per
+                );
+            }
+        }
+        cache.sort_unstable();
+        total.sort_unstable();
+        let n = cache.len();
+        println!(
+            "[resize:{label}] layout+diff+paint 中位 {:>4} µs（最小 {:>4} / 最大 {:>4}），整帧中位 {:>4} µs",
+            cache[n / 2], cache[0], cache[n - 1], total[n / 2]
+        );
+    };
+
+    run("只改高度", false, true);
+    run("只改宽度", true, false);
+    run("宽高都改", true, true);
+    println!("[resize] 全部为 {FRAMES} 帧（丢弃开头 {WARMUP} 帧）的**中位数**；resize 的耗时分布是双峰的，平均值会把两件事抹平。");
 }
 
 fn dump_cpu(light: bool) {

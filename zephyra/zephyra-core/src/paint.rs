@@ -744,11 +744,35 @@ fn text_command(node: &Node, ctx: Context<'_>, offset: Point, opacity: f32) -> O
     let base = node.rect();
     let origin = Point::new(base.x + offset.x, base.y + offset.y);
     let mut engine = engine.borrow_mut();
-    let shaped = engine.shape(text, &style, max_width);
+    // ⚠ 优先用**测量趟存下来的排版结果**。
+    //
+    // 这一句是本轮 resize 优化里最大的一笔：排版（`shape()`）要按样式算出每一行
+    // 的基线与每个字形的位置，是整帧最贵的一步；早先它每帧对每个文本节点重跑
+    // 一次。临时探针实测（324 帧 resize）：`render` 92.9 ms、`layout` 18.4 ms ——
+    // render 是 layout 的 5 倍，而那差额基本就是重复排版。
+    //
+    // 官方对应物：`CLayoutStorage` 里存着排版结果，绘制趟直接取
+    // （`uielement.cpp` 的 `Measure` / `Arrange` 都不重排文字）。
+    //
+    // ⚠ 缓存未命中时**必须**排一次，而不是返回 `None`：直接返回会让"渲染趟先于
+    // 测量趟跑"的调用方（以及任何直接调 `render` 的测试）突然看不见文字。
+    let owned;
+    let shaped = match node.cached_shaped() {
+        Some(s) => s,
+        // 缓存未命中时排一次并**就地借用**：`owned` 必须活到 `glyph_quads` 之后。
+        //
+        // ⚠ 不能在这里返回 `None`：那会让"渲染趟先于测量趟跑"的调用方
+        // （以及任何直接调 `render` 的测试）突然看不见文字 —— 而那是个
+        // 只在特定顺序下出现的、极难归因的缺陷。
+        None => {
+            owned = engine.shape(text, &style, max_width);
+            &owned
+        }
+    };
     // uv 与图集句柄由 `TextRender::glyph_quads` 给出 —— core 有字形图集
     // （`GlyphAtlas`，纯 CPU 数据），所以能算出 uv；但 core 不碰 GPU 纹理句柄，
     // 于是只用那个不透明的 `TextureRef`。
-    let (atlas, glyphs) = engine.glyph_quads(&shaped, origin, &style)?;
+    let (atlas, glyphs) = engine.glyph_quads(shaped, origin, &style)?;
     Some(Command::Text {
         atlas,
         glyphs,

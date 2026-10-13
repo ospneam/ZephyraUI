@@ -77,14 +77,37 @@ pub struct StageTimes {
     pub paint_us: u32,
     /// `quad::expand()`：`DisplayList` → 顶点流。
     pub expand_us: u32,
-    /// 上面五段之和。
+    /// `FrameCache::frame()` **整体**：diff + apply + layout + render。
+    ///
+    /// # 为什么单列这一项，而不是继续报那三段的 0
+    ///
+    /// diff / layout / paint 早先在本模块里各占一段，`FrameCache` 引入之后
+    /// 它们搬进了 `zephyra-core`，本模块拿不到内部分段耗时 —— 于是那三个字段
+    /// 恒为 0。
+    ///
+    /// 恒 0 的字段比没有字段更糟：它会让人以为"这三段不花钱"。而 resize 路径上
+    /// **最贵的恰恰是 layout 与 paint**（重排 + 重排文字），也就是说这三个 0
+    /// 把唯一值得看的成本藏了起来 —— 加这一项之前，`--bench-resize` 报出来的
+    /// layout 中位数是 0 µs，而那是**假的**。
+    ///
+    /// 所以这里测**合并值**：诚实、可测、且覆盖了真正要优化的那段。代价是分不出
+    /// "是 layout 还是 paint" —— 那要 `FrameCache` 暴露观测钩子，而它的全部价值
+    /// 就在于能在无 GPU 环境里断言（见 `frame_timed` 的注释）。要更细就直接改
+    /// `frame.rs` 加临时探针。
+    pub cache_us: u32,
+    /// 各段之和（`cache_us` 已含 diff/layout/paint，不要重复相加）。
     pub total_us: u32,
 }
 
 impl StageTimes {
-    /// 五段累加。
+    /// 各段累加。
+    ///
+    /// `cache_us` 与 `diff_us` / `layout_us` / `paint_us` 是**互斥**的：后三者恒为 0
+    /// （见字段文档），所以这里把 `cache_us` 与 `view_us`、`expand_us` 相加。
+    /// 写成"全加起来"的话，那三项一旦有人重新填上真值，合计就会把 cache 那部分
+    /// **算两遍**。
     pub fn sum(&self) -> u32 {
-        self.view_us + self.diff_us + self.layout_us + self.paint_us + self.expand_us
+        self.view_us + self.cache_us + self.expand_us
     }
 }
 
@@ -219,7 +242,9 @@ impl<V: View> CpuHost<V> {
             // 要恢复分段计时就得让 `FrameCache` 暴露回调，那会把它从"纯计算"变成
             // "带观测钩子" —— 而它的全部价值就在于能在无 GPU 环境里断言。
             // 真要分段，直接改 `frame.rs` 加临时探针（注意探针本身的开销）。
+            let tc = std::time::Instant::now();
             let outcome = self.cache.frame(&element, ctx, (size.0 as f32, size.1 as f32));
+            t.cache_us = tc.elapsed().as_micros() as u32;
 
             match outcome {
                 FrameOutcome::Unchanged => (DiffStats::default(), Damage::Full, false),

@@ -284,8 +284,20 @@ impl Node {
     /// 测量缓存里的尺寸（`None` = 没测过或已失效）。
     ///
     /// 排列趟用它复用刚测出的结果，而不是重跑一遍测量。
+/// 测量趟存下来的**排版结果**（`None` = 没测过 / 本节点无文本 / 缓存已失效）。
+    ///
+    /// 绘制趟用它避免每帧重排一次文字 —— 见
+    /// [`crate::paint::text_command`] 里那段实测数字。
+    ///
+    /// 借出引用而不是克隆：绘制趟只读，而 `ShapedText` 里是 `Vec<Line>`，
+    /// 克隆一次是一整棵树的分配。
+    pub(crate) fn cached_shaped(&self) -> Option<&crate::text::ShapedText> {
+        self.measure_cache.as_ref().and_then(|(_, r)| r.shaped.as_ref())
+    }
+
+    /// 测量缓存里的尺寸（`None` = 没测过或已失效）。
     pub(crate) fn cached_size(&self) -> Option<crate::core::Size> {
-        self.measure_cache.map(|(_, r)| r.size)
+        self.measure_cache.as_ref().map(|(_, r)| r.size)
     }
 
     /// 写入测量缓存。
@@ -303,9 +315,27 @@ impl Node {
 ///
 /// **必须有这一步**，否则脏标记只增不减，`needs_layout` 会永久停在 true，
 /// 「本帧要不要重排」这个判断就失去意义。真实宿主在 layout+render 走完后调用它。
+///
+/// # ⚠ 这里**故意不清** `measure_cache`
+///
+/// 本函数早先会递归清掉测量缓存，那是**错的**，而且错得很贵：
+///
+/// - 官方把缓存放在 `CLayoutStorage::m_previousAvailableSize`
+///   （`uielement.cpp:4223-4226`），它是**跨帧存活**的 —— 静止时每一帧
+///   `Measure()` 都会拿它做一次精确比较然后整个子树跳过测量；
+/// - 我们每帧调一次 `clear_dirty`，于是缓存每帧被清 ⇒ **每一帧都重测整棵树**、
+///   重新整形所有文字。那是布局里最贵的一步，而它本来一次都不该发生。
+///
+/// 缓存的失效时机只有一处：**某个布局相关属性被改**。那已经由
+/// [`Node::mark_dirty`] / [`Node::set_prop`] / [`Node::set_styled_prop`] /
+/// `retain_*` 各自负责（它们都在 `needs_layout()` 时清缓存）。
+/// 换句话说，"脏标记清空"与"测量结果过期"是两件事 ——
+/// 前者每帧都发生，后者只在属性变化时发生。
+///
+/// 门禁：`zephyra-core/tests/layout_cache_tests.rs::稳态完全不重测`
+/// （改之前它是红的，每帧 6 次整形）。
 pub fn clear_dirty(node: &mut Node) {
     node.dirty = Dirty::None;
-    node.measure_cache = None;
     for child in node.children_mut() {
         clear_dirty(child);
     }

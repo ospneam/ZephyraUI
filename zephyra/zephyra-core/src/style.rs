@@ -76,13 +76,27 @@ impl Node {
     ///
     /// 测量走 [`crate::text::TextEngine`] —— 核心不认识字体，所以这一步必然要
     /// 问宿主。没有引擎时返回 `None`，于是文本节点按零尺寸参与布局。
-    pub fn text_size(&self, ctx: Context<'_>) -> Option<crate::core::Size> {
+pub fn text_size(&self, ctx: Context<'_>) -> Option<crate::core::Size> {
+        self.shape(ctx).map(|s| s.size)
+    }
+
+    /// 排版一次并返回**完整**结果（尺寸 + 字形位置）。
+    ///
+    /// # 为什么多一个入口而不是让 `text_size` 返回整个 `ShapedText`
+    ///
+    /// `text_size` 出现在**很多**地方，而其中绝大多数只关心 `size`。让它返回
+    /// 整个 `ShapedText` 会逼每个调用方写 `.map(|s| s.size)`，那是噪音。
+    /// 而绘制趟要的是完整的那个，于是单独给一个名字。
+    ///
+    /// 排版结果会经 [`crate::layout::MeasureResult::shaped`] 存进测量缓存，
+    /// 绘制趟 [`crate::paint::text_command`] 从那里取 —— 于是每帧只有**第一次**
+    /// 排版，之后的绘制趟复用。
+    pub fn shape(&self, ctx: Context<'_>) -> Option<crate::text::ShapedText> {
         let text = self.text()?;
         let engine = ctx.engine?;
         let style = self.text_style(ctx);
         let max_width = self.text_max_width(ctx);
-        let shaped = engine.borrow_mut().shape(text, &style, max_width);
-        Some(shaped.size)
+        Some(engine.borrow_mut().shape(text, &style, max_width))
     }
 
     /// 图像纹理（`None` = 无图像内容）。
