@@ -661,6 +661,81 @@ impl<V: View> HostWindow<V> {
         report
     }
 
+    /// 让拖动窗口边时**逐帧跟随**（而不是拖完才更新一次）。
+    ///
+    /// # 问题出在哪（不是本 crate 的 bug）
+    ///
+    /// 拖边时 Windows 在 `DefWindowProc(WM_NCLBUTTONDOWN)` 里跑一个**模态循环**。
+    /// 该循环**会**把一串 `WM_SIZE` 派发到窗口过程，但 winit 的主循环此刻被
+    /// 阻塞在 `DefWindowProc` 里面 —— winit 自己的 `WndProc` 收到 `WM_SIZE` 后只做
+    /// `userdata.send_event(Resized(..))`，**入队**，而主循环取不出来
+    /// （winit-0.30.13 `platform_impl/windows/event_loop.rs:1397-1418`）。
+    /// 于是 [`Self::about_to_wait`] 那种「脏了就画」直到拖动结束才跑第一次。
+    ///
+    /// # 修法（照 XAML 的形状，不照直觉的形状）
+    ///
+    /// 直觉方案是「`WM_ENTERSIZEMOVE` 起个 16 ms 定时器，`WM_TIMER` 里重绘」。
+    /// **不这么做**，两条理由都来自 `E:\microsoft-ui-xaml`：
+    ///
+    /// - XAML 侧**零** resize 定时器，所以那条路没有官方先例；
+    /// - XAML 对「渲染期间意外泵消息」是 fail-fast 的
+    ///   （`dxaml/xcp/core/dll/xcpcore.cpp:6338-6345`，注释原文就是防止渲染循环里
+    ///   不小心泵消息导致又一次 paint 进来）。定时器方案恰恰是在拖动期间反复进
+    ///   渲染，等于主动制造它最怕的重入。
+    ///
+    /// XAML 真正**同步**处理尺寸的地方是窗口过程里的链条：`WM_SIZE` →
+    /// `CWindowChrome::UpdateContainerSize` → `UpdateBridgeWindowSizePosition` →
+    /// `::SetWindowPos`（`CWindowChrome.cpp:338-343, 388`）。
+    /// **本方法就是那个形状**：子类化窗口过程，在 `WM_SIZE` 里同步把这一帧做完。
+    ///
+    /// # 为什么不需要另起线程
+    ///
+    /// D3D12 命令列表与交换链都是**创建线程所有**的，所以渲染必须在 UI 线程。
+    /// 而模态循环期间 UI 线程**正是空闲的**（它只是卡在 `DefWindowProc` 里），
+    /// 换句话说这恰好是唯一能安全画的时候。
+    ///
+    /// # SAFETY（这里有一处 `unsafe`，不藏）
+    ///
+    /// 回调必须是 `'static`，拿不到 `&mut Self`。用裸指针的前提有三条：
+    ///
+    /// 1. **地址稳定**。宿主必须在 `Box`/栈上原地存活，且装钩子之后**不许**再挪。
+    ///    调用方（`Bootstrap::resumed` 里的 `Option<HostWindow>` 内联存储）满足。
+    /// 2. **不并发**。回调只在模态循环派发 `WM_SIZE` 时触发，而那时 winit 的主循环
+    ///    被阻塞着，不存在活的 `&mut HostWindow`。平台层的 `IN_HOOK` 再挡一层重入。
+    /// 3. **不重入**。回调里不泵消息、不调 `SetWindowPos`、不调 `DefWindowProc`。
+    ///
+    /// 这三条写在 `zephyra-platform-win/src/live_resize.rs` 的模块文档里也有，
+    /// 两处必须一致 —— 改一处就要改另一处。
+    pub fn enable_live_resize(&mut self) -> Result<(), zephyra_platform_win::LiveResizeError>
+    where
+        V: 'static,
+    {
+        let Some(hwnd) = hwnd_of(self.window.as_ref()) else {
+            // 非 Win32 平台没有 HWND 可子类化。不算错：这个后端本来就是 Windows 专属。
+            return Ok(());
+        };
+        let me = HostPtr(self as *mut Self);
+        zephyra_platform_win::set_render_hook(Arc::new(move || {
+            // ⚠ 这一行不是废代码。Rust 2021 的 `move` 闭包**按字段**捕获：
+            // 下面要用 `me.0`，编译器就会只把那个裸指针字段搬进闭包 ——
+            // 于是 `HostPtr` 上那两条 `unsafe impl Send/Sync` **根本没被用上**，
+            // 整个包装白写，编译直接报 E0277。
+            // 把整个 `me` 重新绑一次，捕获的就变成 `me` 本身。
+            let me = &me;
+            // SAFETY：见上面「SAFETY」三条。这三段是同一个不变量的三个侧面。
+            let host = unsafe { &mut *me.0 };
+            host.dirty = false;
+            let f = host.frame();
+            if f.redrawn {
+                host.present();
+            }
+            // 返回 `true` = 这一帧确实画了。没画也无所谓 —— 调用方只看
+            // 「有没有跳过」，那由 `IN_HOOK` 决定，不是这里。
+            true
+        }));
+        zephyra_platform_win::install_live_resize(hwnd)
+    }
+
     /// 呈现一次。
     ///
     /// **不含 resize** —— 见 `sync_swapchain`：resize 必须发生在**绘制之前**，
@@ -917,6 +992,31 @@ fn attach_visual(
     Ok((comp, visual))
 }
 
+/// 装进 `'static` 回调里的宿主指针。
+///
+/// # 为什么需要这个包装
+///
+/// 裸指针既不是 `Send` 也不是 `Sync`，而 [`HostWindow::enable_live_resize`] 的
+/// 回调类型是 `Arc<dyn Fn() -> bool + Send + Sync>`（窗口过程可能被任意线程的
+/// 消息派发调用，哪怕本进程只有 UI 线程）。所以必须显式声明一次。
+///
+/// # SAFETY
+///
+/// 真正的不变量在 [`HostWindow::enable_live_resize`] 的文档里写了三条
+/// （地址稳定 / 不并发 / 不重入）。这里只是把那三条**转成类型系统要求的断言**。
+///
+/// 这里**不能**用 `Arc<Mutex<..>>` 之类替代：那要求把宿主的可变状态整体搬进
+/// `Mutex`，而 `frame()` 要连着 `&mut self` 跑排版 + 录制 + 提交，锁的范围会被
+/// 撑到整个帧 —— 而帧里会 `eprintln!`、会访问 `RefCell`、会回调 `View::view`，
+/// 加一把可能被别人拿到的锁只会换来死锁而不是安全。
+struct HostPtr<V: View>(*mut HostWindow<V>);
+
+// SAFETY：见上。三条不变量由 `enable_live_resize` 的文档与平台层模块文档共同保证；
+// 那两处任何一条被改，这条都要重新论证。
+unsafe impl<V: View> Send for HostPtr<V> {}
+// SAFETY：同上（回调可被并发调用的面由平台层的 `IN_HOOK` 原子位挡住）。
+unsafe impl<V: View> Sync for HostPtr<V> {}
+
 /// 从 winit 窗口取裸 HWND。失败返回 `None`（非 Win32 平台）。
 fn hwnd_of<W: raw_window_handle::HasWindowHandle>(window: &W) -> Option<isize> {
     use raw_window_handle::RawWindowHandle;
@@ -927,12 +1027,18 @@ fn hwnd_of<W: raw_window_handle::HasWindowHandle>(window: &W) -> Option<isize> {
     }
 }
 
-impl<V: View> winit::application::ApplicationHandler for HostWindow<V> {
+impl<V: View + 'static> winit::application::ApplicationHandler for HostWindow<V> {
     fn resumed(&mut self, _event_loop: &ActiveEventLoop) {
         // 窗口在 `new_lenient` 里就建好了；这里补第一帧。
         self.sync_input();
         self.frame();
         self.present();
+        // 拖边时逐帧跟随。**必须放在第一帧之后**：钩子里会 `frame()`，
+        // 而那时 `cache` 还是空的 —— 空树上跑一趟布局既是白费，也更容易
+        // 把「首帧就该建好的缓存」留到一个不对劲的时刻再建。
+        if let Err(e) = self.enable_live_resize() {
+            eprintln!("[zephyra-d3d12] 装不上实时 resize 子类，拖边时会退回「拖完才刷新」: {e}");
+        }
     }
 
     fn window_event(

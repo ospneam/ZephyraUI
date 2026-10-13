@@ -24,6 +24,11 @@ use zephyra_platform::{
     ApplyOutcome, BackdropKind, Capabilities, Platform, ThemePreference, WindowChrome, WindowHandle,
 };
 
+mod live_resize;
+pub use live_resize::{
+    install as install_live_resize, restore as restore_live_resize, set_render_hook,
+    wm_size_count, wm_size_skipped, LiveResizeError, RenderHook,
+};
 mod locale;
 mod version;
 pub use version::build_number;

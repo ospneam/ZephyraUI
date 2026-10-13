@@ -18,6 +18,11 @@ windows = { version = "0.62", features = [
   "Win32_System_Diagnostics_Debug",
   # 注册表读 AppsUseLightTheme / SystemUsesLightTheme
   "Win32_System_Registry",
+  # live_resize: subclass (SetWindowLongPtrW / CallWindowProcW) and timers
+  "Win32_UI_WindowsAndMessaging",
+  # live_resize 的测试要建真窗口：GetModuleHandleW / WNDCLASSW
+  "Win32_System_LibraryLoader",
+  "Win32_Graphics_Gdi",
 ] }
 
 # 与 `zephyra-winit-d3d12` 同：整个 crate 是 **Windows 专属**，

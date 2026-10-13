@@ -651,6 +651,19 @@ impl winit::application::ApplicationHandler for Bootstrap {
         app.present();
 
         self.inner = Some(app);
+
+        // 拖边时逐帧跟随。
+        //
+        // ⚠️ 必须放在 `self.inner = Some(app)` **之后**，理由是地址：
+        // 钩子靠裸指针回到宿主（`HostWindow::enable_live_resize` 的文档写了
+        // 「地址稳定」这条不变量）。上面那几行里 `app` 一直是个**栈上局部变量**；
+        // `Some(app)` 才把它搬进 `self.inner` 的内联存储。装在搬之前的话，
+        // 指针指向的是那个即将失效的栈槽 —— 症状是「拖边时偶尔整窗崩掉」，
+        // 而且必现不了、更难归因。
+        let inner = self.inner.as_mut().expect("刚放进去的宿主");
+        if let Err(e) = inner.enable_live_resize() {
+            eprintln!("[gallery] 装不上实时 resize 子类，拖边时会退回「拖完才刷新」: {e}");
+        }
     }
 
     fn about_to_wait(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
