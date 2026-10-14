@@ -34,6 +34,28 @@ use zephyra_dcomp::{create_composition_swapchain, present_one, SwapchainDesc};
 
 use crate::surface::{DescriptorHeap, Gpu, SurfaceError};
 
+/// 问设备到底坏没坏。返回 `Some(reason)` = 坏，`None` = 还活着。
+///
+/// # 为什么不直接用调用点的 HRESULT
+///
+/// `Present` / `ResizeBuffers` 回的 `DXGI_ERROR_DEVICE_REMOVED`（0x887A0005）是
+/// **通用**码。同一个码既可能是「GPU 真的 TDR 了」（必须重建整个设备），也可能
+/// 只是「窗口刚最小化、队列暂时打满」（下一帧就好）。官方指定要再调
+/// `GetDeviceRemovedReason()` 才能分辨 —— 用错那一侧的代价都很大：
+///
+/// - 把可恢复的抖动判成死 ⇒ 窗口**永久黑屏**；
+/// - 把真的 TDR 判成抖动 ⇒ 每帧重试一个已经不能用的设备 = 用户看到的
+///   「一直闪 + 错误刷屏」。
+///
+/// 这里**只**把明确的设备类错误判成死，其余一律返回 `None`（活着）。
+fn device_removed_reason(device: &ID3D12Device) -> Option<u32> {
+    // `Ok(())` = 设备没被移除。`Err(code)` = 移除原因。
+    match unsafe { device.GetDeviceRemovedReason() } {
+        Ok(()) => None,
+        Err(e) => Some(e.code().0 as u32),
+    }
+}
+
 /// 后缓冲个数。flip model 下至少 2。
 pub const BUFFER_COUNT: u32 = 2;
 
@@ -166,6 +188,13 @@ pub struct Swapchain {
     views: Vec<ID3D12Resource>,
     size: (u32, u32),
     buffer_count: u32,
+    /// 设备本体的一份句柄。只为在 `present` / `resize` 失败时能问
+    /// [`device_removed_reason`] —— 它与构造时那个 `gpu.device` 是同一个对象，
+    /// 但 `present()` 只拿到 `&mut self`，拿不到 `&Gpu`。
+    ///
+    /// 不把整个 [`Gpu`] 存进来：那会让 `Swapchain` 持有它自己的创建者，drop
+    /// 顺序立刻变成一道要论证的题。
+    gpu_device: ID3D12Device,
     /// 连续两次 `Present` 之后仍未收到新尺寸的次数。
     ///
     /// `Present` 失败时最常见的两个码是 `DXGI_ERROR_DEVICE_REMOVED`（设备没了）与
@@ -174,6 +203,23 @@ pub struct Swapchain {
     consecutive_present_errors: u32,
     /// 上一次 [`Self::resize`] 是否走了「重建整条链」这条路。见该方法文档。
     was_recreated: bool,
+    /// 设备是否已不可用。`Some(code)` 时**整条链都不要再碰**。
+    ///
+    /// # 为什么必须有这个标志
+    ///
+    /// `resize` 失败时留下的是一个**半死**状态：`views` 已经 `clear()` 过了
+    /// （`ResizeBuffers` 要求先放手），而 `size` 还是旧值。这个组合单独一帧就
+    /// 足以产出三连错：
+    ///
+    /// 1. `sync_swapchain` 发现 `client_size != chain.size()` ⇒ **每帧重试** resize；
+    /// 2. `rtv()` / `buffer()` 拿到空 `views` ⇒ 「下标越界：要第 0 个，交换链只有 0 个」；
+    /// 3. `present()` 在一个已失效的链上 ⇒ 「GPU 设备实例已经暂停」。
+    ///
+    /// 而这三条**每帧各打一次**，同时在 DComp 视角下是「一个 Present 不出来的
+    /// visual」⇒ 窗口一直闪。
+    ///
+    /// 加了标志之后：宿主见到它就直接跳过绘制与呈现，错误只打一次。
+    device_dead: Option<u32>,
 }
 
 impl Swapchain {
@@ -202,16 +248,17 @@ impl Swapchain {
         let buffer_count = desc.buffer_count.max(BUFFER_COUNT);
         let mut me = Self {
             chain3,
-            chain1,
-            // ⚠ 容量 +1：后缓冲用 `0..buffer_count`，MSAA 用第 `buffer_count` 号。
+            chain1,            // ⚠ 容量 +1：后缓冲用 `0..buffer_count`，MSAA 用第 `buffer_count` 号。
             heap: DescriptorHeap::new_rtv(&gpu.device, buffer_count + 1)?,
             msaa: None,
             samples,
             views: Vec::new(),
             size,
             buffer_count,
+            gpu_device: gpu.device.clone(),
             consecutive_present_errors: 0,
             was_recreated: false,
+            device_dead: None,
         };
         me.rebuild_views(&gpu.device)?;
         me.rebuild_msaa(&gpu.device)?;
@@ -378,6 +425,21 @@ impl Swapchain {
     /// `sync_interval = 1` 对应垂直同步。`DXGI_ERROR_DEVICE_RESET` 是**可恢复**的
     ///（设备正在重建，窗口最小化/恢复就走这条路），不当致命错误 —— 见
     /// [`Self::consecutive_present_errors`]。
+    ///
+    /// # 失败后必须再问 `GetDeviceRemovedReason`
+    ///
+    /// `Present` 回的 `DXGI_ERROR_DEVICE_REMOVED`（0x887A0005）是**通用**码，
+    /// 不告诉你原因 —— 用户看到的那句「GPU 设备实例已经暂停」就是它。官方指定
+    /// 要再调 `GetDeviceRemovedReason()` 才知道该怎么办：
+    ///
+    /// - `S_OK` ⇒ 设备其实**没坏**，这次 present 是别的原因失败的（队列满、
+    ///   窗口刚最小化等）。**不能**据此判死 —— 那会把一次可恢复的抖动变成永久黑屏。
+    /// - `DXGI_ERROR_DEVICE_RESET`（0x887A0006）⇒ 设备重建中，可恢复，**重试**。
+    /// - `DXGI_ERROR_DEVICE_HUNG`（0x887A0007）⇒ 真的 TDR 了，得重建整个设备。
+    ///
+    /// 本仓 `renderer.rs` 记过一次 `DEVICE_HUNG`：采样一块仍是 `RENDER_TARGET`
+    /// 状态的纹理，**错报在帧尾**而不在那一步 —— 也就是这里的 `Present` 是唯一
+    /// 能看到它的地方。
     pub fn present(&mut self, sync_interval: u32) -> Result<(), SurfaceError> {
         // 走 `zephyra_dcomp::present_one` 而不是自己调 `Present1`：
         // `pPresentParameters` 必须**非空**，传 `nullptr` 直接 AV（硬约束 #3）。
@@ -394,6 +456,10 @@ impl Swapchain {
                     return Ok(());
                 }
                 self.consecutive_present_errors = self.consecutive_present_errors.saturating_add(1);
+                // 只有设备**真的**被判定不可用时才置死标志，见方法文档。
+                if let Some(code) = device_removed_reason(&self.gpu_device) {
+                    self.device_dead = Some(code);
+                }
                 Err(SurfaceError::new("Present", e))
             }
         }
@@ -405,6 +471,16 @@ impl Swapchain {
     /// `DEVICE_RESET`）完全正常，把它当致命错误会让窗口在最小化恢复后直接退出。
     pub fn consecutive_present_errors(&self) -> u32 {
         self.consecutive_present_errors
+    }
+
+    /// 设备是否已不可用（`GetDeviceRemovedReason` 的结论）。
+    pub fn device_dead(&self) -> bool {
+        self.device_dead.is_some()
+    }
+
+    /// 设备不可用的原因码（`DXGI_ERROR_DEVICE_HUNG` 等）。`None` = 设备还活着。
+    pub fn device_dead_reason(&self) -> Option<u32> {
+        self.device_dead
     }
 
     /// 改尺寸。
@@ -475,6 +551,17 @@ impl Swapchain {
         }
         self.was_recreated = false;
 
+        // 设备已死 ⇒ 一个 API 都不调。每帧重试正是「闪 + 刷屏」的直接成因。
+        if let Some(code) = self.device_dead {
+            return Err(SurfaceError::new(
+                format!("设备已不可用（0x{code:08X}），拒绝再 resize"),
+                windows::core::Error::new(
+                    windows::Win32::Foundation::E_ABORT,
+                    "GetDeviceRemovedReason 已判定设备不可恢复",
+                ),
+            ));
+        }
+
         // ★ 先放手。`ResizeBuffers` 要求「直接引用」与「间接引用」全清，而本结构
         // 必然攥着后缓冲（要靠它建 RTV）。
         self.views.clear();
@@ -499,6 +586,22 @@ impl Swapchain {
                 Ok(())
             }
             Err(e) => {
+                // 先问设备坏没坏 —— 那才是「为什么不能 resize」的答案，而
+                // `ResizeBuffers` 自己回的那个码只是症状。
+                if let Some(code) = device_removed_reason(&gpu.device) {
+                    // 设备已死 ⇒ **不再重试**。每帧重试 resize 是「窗口一直闪 + 错误
+                    // 刷屏」的直接成因，见 `device_dead` 字段的文档。
+                    self.device_dead = Some(code);
+                    return Err(SurfaceError::new(
+                        format!("设备已不可用（GetDeviceRemovedReason 0x{code:08X}），不再重试 resize"),
+                        e,
+                    ));
+                }
+                // 设备还活着：这条链只是暂时不能 resize（典型原因是「GPU 还攥着
+                // 后缓冲」）。此时**不能**把 `views` 留在已清空的状态 —— 那正是
+                // 「要第 0 个，交换链只有 0 个」的来源。把视图按旧尺寸补回来，
+                // 让链处于一个**自洽**的状态：能画（旧尺寸），下一帧还能再试。
+                self.rebuild_views(&gpu.device)?;
                 // 常见原因是「还有引用」，而分配器重置这条路在本机不通 —— 只能整条重建。
                 // 旧的 `chain` / `heap` / `views` 在赋值时被 drop，那正是「放手」要做的事。
                 let count = self.buffer_count;

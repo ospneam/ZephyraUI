@@ -81,6 +81,12 @@ pub struct HostWindow<V: View> {
     ///
     /// ⚠ 这**不是**「内容变了」。内容变没变由 core 判定（`FrameOutcome`）。
     dirty: bool,
+    /// resize 的状态（本帧）。`frame()` 据它决定要不要画。
+    swap_state: SwapState,
+    /// 连续 resize 失败的次数。只给 trace 用：它是「为什么拖动时不动了」的判据。
+    resize_failures: u32,
+    /// 「设备已不可用」是否已经报过一次。见 [`Self::report_device_dead_once`]。
+    reported_device_dead: bool,
     /// 文本引擎。用 `RefCell` 是为了让 core 的 `Context` 保持 `Copy` —— 布局递归要求
     /// 这一点。
     engine: std::cell::RefCell<TextEngine>,
@@ -121,6 +127,56 @@ pub struct HostWindow<V: View> {
 /// 的应用（`width: 1400px` 那类）会裁掉一大块。要固定画布就用
 /// [`HostWindow::new_lenient_sized`]。
 pub const DEFAULT_WINDOW_SIZE: (u32, u32) = (1100, 700);
+
+/// [`HostWindow::sync_swapchain`] 的结果：这一帧交换链与客户区的关系。
+///
+/// # 为什么要三个值而不是原来的 `bool`
+///
+/// 原来的 `bool` 只有一个含义「尺寸变了没」，而宿主实际需要分辨的是**三件事**，
+/// 其中两件的处置完全相反：
+///
+/// | 值 | 含义 | 宿主该做什么 |
+/// |---|---|---|
+/// | [`Self::Same`] | 尺寸本来就没变 | **照常画**（鼠标在窗口里动也走这条） |
+/// | [`Self::Synced`] | 刚 resize 完，链与客户区一致 | 照常画 |
+/// | [`Self::Failed`] | resize 想做没做成，链还停在旧尺寸 | **本帧空过** |
+///
+/// `Failed` 被原来的 `bool` 和 `Same` 混为同一个 `false`，于是宿主照旧画 + present ——
+/// DComp 把**旧尺寸**的内容拉进**新**窗口，那就是「窗口一直闪 / 内容被拉伸」。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SwapState {    /// 尺寸没变，什么都没做。
+    Same,
+    /// resize 成功，链已与客户区一致。
+    Synced,
+    /// resize 失败但设备还活着（GPU 还攥着后缓冲那类）。
+    ///
+    /// 此时**不能**画：链还停在旧尺寸，画了就是把旧内容拉进新窗口。
+    Failed,
+}
+
+/// 这一帧到底该不该画。**纯函数** —— 于是能在没有 GPU 的机器上门禁。
+///
+/// # 为什么必须是纯函数
+///
+/// 这个判断是「设备消失 / resize 失败」两条规则的唯一汇合点：
+///
+/// 1. 设备已死 ⇒ 不画（否则每帧三连错 + present 一个无效 visual = 闪）；
+/// 2. resize 想做没做成 ⇒ 不画（否则把旧尺寸内容拉进新窗口 = 闪 / 拉伸）。
+///
+/// 两条都只在**真机拖动**时复现，而本机 D3D12 起不来（`tests/d3d12_draw.rs`
+/// 头部记着证据，`tests/swapchain_draw.rs` 的真机用例因此全是 `#[ignore]`）。
+/// 抽成 `(SwapState, bool) -> bool` 就能在没有设备的环境里断言它 ——
+/// 否则这条修复等于没有门禁。
+///
+/// `Same` 与 `Synced` 都返回 `true`：前者是「尺寸没变」的**常态**（鼠标在窗口里
+/// 动也走这条），误把它当成「别画」会让 UI 完全不响应，而那比原来的 bug
+/// 更难发现。
+pub fn should_draw_frame(state: SwapState, device_dead: bool) -> bool {
+    if device_dead {
+        return false;
+    }
+    !matches!(state, SwapState::Failed)
+}
 
 impl<V: View> HostWindow<V> {
     /// 建窗口与 GPU 资源，**找不到系统字体时不 panic**。
@@ -234,6 +290,9 @@ impl<V: View> HostWindow<V> {
             pointer: None,
             pointer_pos: (0.0, 0.0),
             dirty: true,
+            reported_device_dead: false,
+            swap_state: SwapState::Same,
+            resize_failures: 0,
             engine: std::cell::RefCell::new(engine),
             atlas_revision_uploaded: 0,
             backdrop_active: false,
@@ -406,6 +465,23 @@ impl<V: View> HostWindow<V> {
         self.gpu.drain_debug();
     }
 
+    /// 一帧什么都没做时返回的东西。
+    ///
+    /// `redrawn: false` 是关键：`about_to_wait` 见到它就**不 present** —— 而设备
+    /// 坏着或链还没 resize 成功时，present 正是最该省掉的那一步。
+    fn empty_frame(&self) -> Frame {
+        Frame {
+            diff: zephyra_core::diff::DiffStats::default(),
+            render: zephyra_fx::quad::RenderReport::default(),
+            hovered: None,
+            damage: zephyra_core::frame::Damage::Full,
+            redrawn: false,
+        }
+    }
+
+    /// 这一帧到底该不该画。**纯函数** —— 于是能在没有 GPU 的机器上门禁。
+    ///
+    /// # 为什么必须是纯函数
     /// 跑一帧：布局 → `DisplayList` → 顶点展开 → 记录 → 提交。
     ///
     /// **不**包含 `present` —— 那由 [`Self::present`] 单独做，因为 resize 必须在
@@ -413,7 +489,23 @@ impl<V: View> HostWindow<V> {
     pub fn frame(&mut self) -> Frame {
         // ⚠ resize 必须在**布局与绘制之前**，见 [`Self::sync_swapchain`] 的说明。
         // 顺序反了会留下一个「从未被写过的新后缓冲」，而且它可能永远等不到下一帧。
-        self.sync_swapchain();
+        //
+        // ⚠ 设备已死时**整个函数直接返回**：不进布局、不画、不 present。
+        //
+        // 早先是照样往下走，于是每帧产出三连错（resize 重试 / 后缓冲下标越界 /
+        // present 失败），而 DComp 视角下是「一个 Present 不出来的 visual」——
+        // 症状就是「窗口一直闪 + 错误刷屏」。
+        self.swap_state = self.sync_swapchain();
+        let dead = self.chain.device_dead();
+        if !should_draw_frame(self.swap_state, dead) {
+            // ⚠ 只有**设备真的死了**才报「设备不可用」。resize 暂时失败时设备还活着，
+            // 那条路径唯一该响的是 `sync_swapchain` 里的 trace 行（它每秒可能来几十
+            // 次，不该按错误报）。
+            if dead {
+                self.report_device_dead_once();
+            }
+            return self.empty_frame();
+        }
         self.drain_debug();
 
         let theme = self.theme;
@@ -741,10 +833,63 @@ impl<V: View> HostWindow<V> {
     /// **不含 resize** —— 见 `sync_swapchain`：resize 必须发生在**绘制之前**，
     /// 否则新建的后缓冲要到下一次 `frame()` 才有内容，而那一次可能永远不会来。
     pub fn present(&mut self) {
+        // 设备已死时**一个 API 都不调**。每次拖动/恢复都重试 present，
+        // 在 DComp 看来就是反复推一个无效 visual ⇒ 闪。
+        if self.chain.device_dead() {
+            self.report_device_dead_once();
+            return;
+        }
         if let Err(e) = self.chain.present(1) {
             eprintln!("[zephyra-d3d12] present 失败: {e}");
             self.drain_debug();
         }
+    }
+
+    /// 把「设备已不可用」只打一次，并给出官方要求的后续动作。
+    ///
+    /// # 为什么必须只打一次
+    ///
+    /// 早先是每帧三条错误（resize / 后缓冲越界 / present），拖动期间一秒几十条，
+    /// 把真正有用的信息全埋掉 —— 用户看到的就是一片刷屏。而原因码要
+    /// `GetDeviceRemovedReason()` 才拿得到，那才是「该采取什么措施」的答案。
+    fn report_device_dead_once(&mut self) {
+        if self.reported_device_dead {
+            return;
+        }
+        self.reported_device_dead = true;
+        let code = self.chain.device_dead_reason();
+        let (name, advice) = match code {
+            // 官方四个常量，按「该怎么办」分组而不是按名字排。
+            Some(0x887A_0007) => (
+                "DXGI_ERROR_DEVICE_HUNG",
+                "GPU 挂了（TDR）。必须重建 D3D12 设备与全部依赖它的资源；\
+                 本宿主现在停下绘制，等下一次设备重建的入口",
+            ),
+            Some(0x887A_0006) => (
+                "DXGI_ERROR_DEVICE_RESET",
+                "设备正在重建，可恢复 —— 但本宿主目前不自动重试，\
+                 恢复后需要重建设备再继续",
+            ),
+            Some(0x887A_0005) => (
+                "DXGI_ERROR_DEVICE_REMOVED",
+                "设备被移除（通常是驱动更新/显卡复位）。GetDeviceRemovedReason \
+                 给出了通用码，真实原因见上面两者之一",
+            ),
+            // 未知原因码：不能沉默 —— 静默的黑屏比响一声的黑屏难查得多。
+            _other => ("未知", "GetDeviceRemovedReason 的返回值不在预期集合里"),
+        };
+        if let Some(c) = code {
+            eprintln!(
+                "[zephyra-d3d12] 设备不可用：{name} (0x{c:08X})\n\
+                 [zephyra-d3d12] 后续动作：{advice}\n\
+                 [zephyra-d3d12] 本帧起停止绘制与呈现（不再重试，也不再打印）"
+            );
+        } else {
+            // 走到这里说明 `device_dead` 是真的但原因码丢了 —— 不该发生，
+            // 但也不能沉默：静默的黑屏比响一声的黑屏难查得多。
+            eprintln!("[zephyra-d3d12] 设备被标记为不可用，但拿不到原因码");
+        }
+        self.drain_debug();
     }
 
     /// 把交换链对齐到窗口尺寸。**返回尺寸是否变了**（变了就要重排）。
@@ -764,17 +909,39 @@ impl<V: View> HostWindow<V> {
     ///
     /// visual 上挂的是**旧的** swapchain 对象。新的那个没人引用，合成器不会去取它 ——
     /// 于是「提交了、也没报错，就是不显示」。这与「没提交」在屏幕上完全一样。
-    fn sync_swapchain(&mut self) -> bool {
+    /// 把交换链对齐到窗口尺寸。
+    ///
+    /// # 返回值的三个含义（宿主据此决定这一帧还画不画）
+    ///
+    /// - [`SwapState::Synced`]：链已与客户区一致，正常画。
+    /// - [`SwapState::Same`]：尺寸本来就没变（鼠标在窗口里动也走这条）。
+    /// - [`SwapState::Failed`]：**resize 想做没做成，而设备还活着**。
+    ///
+    /// # 为什么 `Failed` 必须让宿主跳过本帧
+    ///
+    /// resize 失败时链还停在**旧尺寸**。此时若照旧"画 + present"，DComp 会把这块
+    /// 旧内容拉进**新**窗口 —— 那就是「窗口一直闪 / 内容被拉伸」的直接来源。
+    ///
+    /// 跳过本帧而不是硬 present，另一头是「不 present 就不闪」：flip model 下
+    /// DComp 会继续显示上一次成功 present 的内容，等下一次成功 resize 再更新。
+    fn sync_swapchain(&mut self) -> SwapState {
         let (w, h) = self.client_size();
         if (w, h) == self.chain.size() {
-            return false;
+            return SwapState::Same;
         }
         let (ew, eh) = self.effective_size();
         let scale = self.window.scale_factor();
         let before = self.chain.size();
         if let Err(e) = self.chain.resize(&self.gpu, (w, h)) {
-            eprintln!("[zephyra-d3d12] resize 到 {w}×{h} 失败: {e}");
-            return false;
+            // 设备已死在 `frame()` 里已经先拦过一道；这里只可能是「暂时不能 resize」
+            // （典型原因：GPU 还攥着上一帧的后缓冲）。让本帧空过，下一帧再试。
+            // ⚠ 这里**不**再打 error：拖动期间它每秒会来几十次，而唯一有用的信息
+            // 是设备死没死 —— 那由 `report_device_dead_once` 负责，只打一次。
+            self.resize_failures = self.resize_failures.saturating_add(1);
+            if trace_enabled() {
+                eprintln!("[trace] resize 到 {w}×{h} 失败（第 {} 次连续失败）：{e}", self.resize_failures);
+            }
+            return SwapState::Failed;
         }
         if self.chain.was_recreated() {
             eprintln!("[zephyra-d3d12] 交换链已重建，重新挂进 DComp 视觉树");
@@ -793,7 +960,7 @@ impl<V: View> HostWindow<V> {
                 self.chain.was_recreated(),
             );
         }
-        true
+        SwapState::Synced
     }
 
     /// 把（可能已被重建的）交换链重新挂到 visual 上并提交。
