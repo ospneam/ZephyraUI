@@ -843,14 +843,14 @@ fn text_command(node: &Node, ctx: Context<'_>, offset: Point, opacity: f32) -> O
             // 借用守卫在**写回之前**就必须放掉：`glyph_quads` 已经是 `RefCell`，
             // 在还持着读守卫时 `borrow_mut()` 会 panic。上面的读借用写在
             // `let cached = { ... }` 的**独立作用域**里，正是为此。
-            *node.glyph_quads.borrow_mut() = Some(crate::node::GlyphQuadCache {
+            *node.glyph_quads.borrow_mut() = Some(Box::new(crate::node::GlyphQuadCache {
                 text: text.into(),
                 style: style.clone(),
                 max_width,
                 revision,
                 atlas: atlas.clone(),
                 glyphs: std::sync::Arc::clone(&g),
-            });
+            }));
             (atlas, g)
         }
     };

@@ -91,7 +91,7 @@ pub struct Node {
     ///
     /// 两条都在使用点就地判定，所以**不需要任何人在改样式时记得手动清它** ——
     /// 那正是「靠人记得」最容易漏的一类缓存。
-    pub(crate) glyph_quads: std::cell::RefCell<Option<GlyphQuadCache>>,
+    pub(crate) glyph_quads: std::cell::RefCell<Option<Box<GlyphQuadCache>>>,
     /// 本节点已摆放的矩形（相对父节点）。`pub(crate)`：只由排列趟写入。
     pub(crate) arranged_rect: Rect,
     /// 当前脏标记。`pub(crate)`：只由 [`crate::diff`] 直接合并（见
@@ -101,8 +101,22 @@ pub struct Node {
 
 /// 挂在节点上的字形四边形缓存条目。
 ///
-/// 见 [`Node::glyph_quads`] 的失效规则（两条都在这里就地判定）。
+/// # 为什么字段类型是 `Box<GlyphQuadCache>`
+///
+/// 内联的话这个结构有一百多字节（`Box<str>` + `TextStyle` + `Option<f32>` +
+/// `u64` + `Arc<[GlyphQuad]>` + `TextureRef`），而它会把 `Node` **直接**撑大
+/// 同等大小。实测（`demo --bench-resize-cpu --alloc-probe`，与 `1f76d8e`
+/// 同一次运行的对照）：
+///
+/// - 分配**次数** 612 → 576（−36/帧，字形 `Vec` 确实没了）；
+/// - 但分配**字节** **+8%**：`Node` 变大 ⇒ 建树时每一次 `Vec<Node>` 重分配都变大。
+///
+/// 装箱只让 `Node` 多一个指针（8 字节），代价是每次 miss 多一次堆分配 ——
+/// 而 miss 极少（实测 100 帧 resize 共 19 次）。
+///
+/// 见 [`Node::glyph_quads`] 的失效规则（两条都在使用点就地判定）。
 pub(crate) struct GlyphQuadCache {
+    /// 排版输入指纹：文本。存一份自有副本，命中时与本帧的 `&str` 比。
     /// 排版输入指纹：文本。存一份自有副本，命中时与本帧的 `&str` 比。
     ///
     /// 为什么要存副本而不是存指针：`Node::text()` 借自 `PropertyStore`，而属性
