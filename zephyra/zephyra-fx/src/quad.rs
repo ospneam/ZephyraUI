@@ -43,6 +43,7 @@
 //! 尺寸相同、内容清晰 —— 因为栅格化发生在物理像素上。
 
 use zephyra_core::core::{Color, Point, Rect, UvRect};
+use std::rc::Rc;
 use zephyra_core::paint::{Command, DisplayList};
 
 /// 每顶点 52 字节：位置(2) + 局部(2) + uv(2) + 颜色(4) + 圆角描边(2) + 类型(1) 个 f32。
@@ -678,7 +679,7 @@ pub struct DrawRun {
     /// 字形在 `solid` 段里但**也要采样**（字形图集）—— 它记 `None`，因为图集是
     /// 渲染器全局绑的那一张，不参与逐批绑定；只有 [`Command::Image`](zephyra_core::paint::Command::Image)
     /// 的纹理是逐段绑的。
-    pub texture: Option<String>,
+    pub texture: Option<Rc<str>>,
     /// 该段的混合模式。
     pub blend: zephyra_core::filter::BlendMode,
 }
@@ -706,7 +707,7 @@ fn push_run(
     runs: &mut Vec<DrawRun>,
     first: u32,
     count: u32,
-    texture: Option<String>,
+    texture: Option<Rc<str>>,
     blend: zephyra_core::filter::BlendMode,
 ) {
     if count == 0 {
@@ -738,7 +739,7 @@ pub struct QuadBatch {
     /// 已三角化的多边形顶点（每 3 个一个三角形），拼接在最后。
     pub paths: Vec<Vertex>,
     /// 图像分批：`(纹理名, 该批顶点数)`。
-    pub batches: Vec<(String, u32)>,
+    pub batches: Vec<(Rc<str>, u32)>,
     /// 逐段元数据：哪段用哪张纹理、哪种混合模式。位置是**合并流**里的下标。
     ///
     /// 与 [`QuadBatch::batches`] 的区别：后者只按纹理切图元段，前者多切了混合模式
@@ -869,7 +870,7 @@ pub struct Scratch {
     pub images: Vec<Vertex>,
     pub paths: Vec<Vertex>,
     /// 图像分批：`(纹理名, 该批顶点数)`。
-    pub batches: Vec<(String, u32)>,
+    pub batches: Vec<(Rc<str>, u32)>,
     /// 合并后的顶点流（交给 GPU 的那一份）。
     pub vertices: Vec<Vertex>,
     /// 索引流。
@@ -879,7 +880,7 @@ pub struct Scratch {
     /// ⚠ 它存 `(String, …)`，所以复用 Vec **不等于**复用那些 `String` 的堆内存。
     /// 那部分（每帧两三个几十字节的小分配）留在原地，不为了它把句柄改成
     /// `Rc<str>` —— 那是契约改动，收益与风险不成比例。
-    image_quads: Vec<(String, Rect, UvRect, Color, f32, zephyra_core::filter::BlendMode)>,
+    image_quads: Vec<(Rc<str>, Rect, UvRect, Color, f32, zephyra_core::filter::BlendMode)>,
     /// 分段记录，三份分开是因为它们在**遍历过程中交错**产生（`solid` 与 `paths`
     /// 来自同一次命令遍历，`images` 来自其后的分批循环），而合并流要求
     /// `solid` → `images` → `paths` 的顺序。分开记，末尾统一加基址即可。
@@ -895,6 +896,23 @@ pub struct Scratch {
     /// 本帧两段的起点（`images` / `paths` 在 `vertices` 里的偏移）。
     pub image_first: u32,
     pub path_first: u32,
+    /// 纹理名的**驻留器**。
+    ///
+    /// # 为什么需要它
+    ///
+    /// 图像批次这条路上，每帧要为**每个图像四边形**克隆一次纹理名（外加每批两次）。
+    /// `String` 的克隆就是一次堆分配，于是 demo（141 个四边形 / 约 60 个图像）实测
+    /// 每帧多出 **185 次 ≤128 字节的分配** —— 正是 alloc-probe 直方图里
+    /// 56 + 63 + 66 那三桶。
+    ///
+    /// 换成 `Rc<str>` 后，克隆只是引用计数加一，**不分配**。驻留器让「查已有名字」
+    /// 退化成对几个字符串的线性比较（demo 只有一种纹理名，几乎立刻命中），代价
+    /// 远小于一次 `malloc`。
+    ///
+    /// 用 `Rc` 而不是 `&str`：后者的生命周期挂在 `DisplayList` 上，而 `Scratch`
+    /// 跨帧存活、存在渲染器里，那个借用根本存不进去 —— 这正是当初写成 `String`
+    /// 的原因（见本字段旧注释），但它挡掉的是**一次分配**而不是别的。
+    names: Vec<Rc<str>>,
     /// 路径段在 `indices` 里的起点 —— 渲染器填 `DrawIndexed` 的
     /// `StartIndexLocation` 靠它。路径没画出来时它是 0（合法：路径段本来就在最后）。
     pub path_index_start: u32,
@@ -909,7 +927,21 @@ impl Scratch {
     pub fn runs(&self) -> &[DrawRun] {
         &self.runs
     }
-    pub fn new() -> Self {
+
+    /// 把纹理名驻留成 [`Rc<str>`]：命中已有名字就只加引用计数，不分配。
+    ///
+    /// 线性扫描而不是哈希表：不同纹理名的个数是个位数（demo 只有 1 种），哈希表
+    /// 本身要一次分配 + 一次哈希，而比较几个短字符串在 CPU 上几乎免费。
+    fn intern(&mut self, name: &str) -> Rc<str> {
+        for n in &self.names {
+            if &**n == name {
+                return n.clone();
+            }
+        }
+        let rc: Rc<str> = Rc::from(name);
+        self.names.push(rc.clone());
+        rc
+    }    pub fn new() -> Self {
         Self::default()
     }
 
@@ -1264,7 +1296,7 @@ pub fn expand_range_translated_into(
                 // 图块的内容），那时已经离病因很远。
                 let uv = src.map(|r| r.clamped()).unwrap_or(UvRect::FULL);
                 image_quads.push((
-                    texture.as_str().to_string(),
+                    scratch.intern(texture.as_str()),
                     rect,
                     uv,
                     *tint,
@@ -1443,7 +1475,7 @@ pub fn expand_range_translated_into(
     //
     // 每批记下它要绑的**纹理名**（而不是绑定对象）—— 绑定要活到提交之后，
     // 而纹理表是只读借用，提前取出会造成不必要的借用交叉。
-    let mut open: Option<String> = None;
+    let mut open: Option<Rc<str>> = None;
     // 当前图像批的混合模式：纹理相同**且**混合模式相同才算同一批。
     //
     // ⚠ 只按纹理合批是不够的：相邻两段图像若混合模式不同而纹理相同，合进一批后
@@ -1468,7 +1500,7 @@ pub fn expand_range_translated_into(
             out.report.missing_textures += 1;
             continue;
         }
-        if open.as_deref() != Some(name.as_str()) || open_blend != *blend {
+        if open.as_deref() != Some(&**name) || open_blend != *blend {
             if let Some(prev) = open.take() {
                 out.batches
                     .push((prev, (pending.len() as u32) - batch_start));
@@ -2163,7 +2195,7 @@ mod tests {
         let img = |name: &'static str| image(name, Rect::new(0.0, 0.0, 4.0, 4.0));
         let l = list_of(vec![img("a"), img("b"), img("a")]);
         let b = expand(&l, (100, 100), |_| true);
-        let names: Vec<&str> = b.batches.iter().map(|(n, _)| n.as_str()).collect();
+        let names: Vec<&str> = b.batches.iter().map(|(n, _)| &**n).collect();
         assert_eq!(names, ["a", "b", "a"], "同纹理但不连续就必须分成两批");
         assert_eq!(b.report.image_batches, 3);
     }
