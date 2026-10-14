@@ -48,6 +48,37 @@
    `IDCompositionVisual2::SetTransform2` 缩放（`Compositor::set_scale`）。
 3. **熔断**（`RECREATE_STRIKE_LIMIT = 3`）保留，作为「重建也救不回来」的最后兜底。
 
+### ⚠ 熔断的清零点必须换掉（用户实测发现）
+
+`resize_strikes` 原来**只在 `ResizeBuffers` 成功时**清零 —— 而上面已证明那个分支
+**永远不会到达**。于是熔断一旦触发就是**永久**的：用户实测日志里
+
+```text
+[zephyra-d3d12] ResizeBuffers 失败 0x887A0001（目标 (1568, 800)，链原尺寸 (808, 800)，…）
+```
+
+之后窗口就再也不更新了（尺寸一直停在 808×800）。
+
+清零点已改成 **成功 `present`**：那才是新链真的能画能呈现的证据。熔断要挡的是
+「重建了却一次都没 present 出去」的 GPU churn，而每次重建之后至少 present 过一次
+⇒ 计数自然回落。门禁：`swapchain_draw.rs::present_成功后熔断计数清零`。
+
+## 已知问题（未修）
+
+**「重建之后紧接着 `begin_frame` → 提交」会让命令列表 `Close` 回 `E_INVALIDARG`。**
+
+- 复现（GPU，`--ignored`）：画一帧 + present → `resize`（走重建）→ `begin_frame` →
+  录制 → `submit()` 在 `slot.list.Close()` 处回 `0x80070057`。
+- 排除项：不是 GPU 未排空（`wait_gpu` 已过）、不是命令列表/分配器没 Reset（都 Reset
+  了）、不是整体销毁重建（试过 `recreate_command_slots`）、不是多插一帧能绕过、
+  不是 `superseded` 旧链没释放。**而且完全不做 resize 连做 5 帧是正常的** ⇒ 触发条件
+  确实与「重建整条交换链」有关。
+- 影响：**生产路径目前不复现** —— 带窗口 + DComp 的 `gallery.exe` 实测连做 4 次重建后
+  继续正常出图。所以先按「测试脚手架 vs 被测行为正交」处理：那条门禁只验被测的清零
+  点，不走「重建后再开帧」那一步。
+- 下一步该怎么查：这是 D3D12 命令列表状态机层面的问题，值得单独一轮隔离实验
+  （重点是 `CreateSwapChainForComposition` 重建时队列/DXGI 侧的状态）。
+
 ---
 
 ## 0. 为什么需要这份手册

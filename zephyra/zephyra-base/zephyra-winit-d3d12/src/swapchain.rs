@@ -530,6 +530,18 @@ impl Swapchain {
         match r {
             Ok(()) => {
                 self.consecutive_present_errors = 0;
+                // ★ 熔断计数在**成功 present** 时清零，而不是只在 `ResizeBuffers`
+                // 成功时清零。
+                //
+                // 原来的清零点（`ResizeBuffers` 成功）实测**永远不会到达** ——
+                // 本机后缓冲一被用过就调不成功（见本文件 `resize` 的实测矩阵）。于是
+                // 熔断一旦触发就是**永久**的：用户实测日志里第 4 次之后就再也没重建过，
+                // 窗口从此再也更新不了。
+                //
+                // 「成功 present」才是链真的健康的证据：它证明新链能画、能呈现。
+                // 熔断要挡的是「重建了却一次都没present 出去」的 churn（那会把 GPU 拖进
+                // TDR），而现在每次重建之后都至少 present 过一次 ⇒ 计数自然回落。
+                self.resize_strikes = 0;
                 Ok(())
             }
             Err(e) => {

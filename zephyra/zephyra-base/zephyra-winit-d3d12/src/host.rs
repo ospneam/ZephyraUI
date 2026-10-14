@@ -1042,6 +1042,8 @@ impl<V: View> HostWindow<V> {
             if trace_enabled() {
                 eprintln!("[trace] resize 到 {w}×{h} 失败（第 {} 次连续失败）：{e}", self.resize_failures);
             }
+            // 链停在旧尺寸 ⇒ 必须缩放铺满，否则多出来的区域就是黑边。
+            self.stretch_visual_to_client(w, h);
             return SwapState::Failed;
         }
         if self.chain.was_recreated() {
@@ -1083,6 +1085,22 @@ impl<V: View> HostWindow<V> {
                 self.chain.size().1,
                 self.chain.was_recreated(),
             );
+        }
+
+        // ★ 兜底：**链最终仍与客户区对不上**（熔断跳过重建、或重建出的尺寸又对不上）时，
+        // 缩放铺满并让本帧空过。
+        //
+        // 这一条治的是用户报的「重建第三次以后会有黑边」：熔断让 `resize` 静默跳过，
+        // 链停在旧尺寸，而窗口已经是新尺寸。之前这条路径**既没缩放、也照样返回
+        // `Synced`** —— 于是按新窗口尺寸排的版被画进旧尺寸后缓冲再 present，黑边
+        // 与错位一起出现。
+        //
+        // 为什么不能继续 `Synced`：那会按客户区尺寸排版、却画进尺寸不同的后缓冲，
+        // 视口与后缓冲对不上 ⇒ 画面本身就是错的。空过更安全：flip model 下 DComp 会
+        // 继续显示上一次成功 present 的内容，缩放后正好铺满。
+        if self.chain.size() != (w, h) {
+            self.stretch_visual_to_client(w, h);
+            return SwapState::Failed;
         }
         SwapState::Synced
     }

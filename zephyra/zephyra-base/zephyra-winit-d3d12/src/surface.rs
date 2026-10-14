@@ -453,6 +453,7 @@ impl Gpu {
         // 失败时立刻拉调试层消息 —— `drain_debug` 只在 `begin_frame` 开头调过，
         // 而本帧记录命令期间产生的任何错误都要等到下一帧才看得见，那时可能已经崩了。
         let slot = &self.slots[self.current];
+
         if let Err(e) = unsafe { slot.list.Close() } {
             self.drain_debug();
             return Err(SurfaceError::new("Close 命令列表", e));
@@ -539,6 +540,7 @@ impl Gpu {
                 .map_err(|e| SurfaceError::new(format!("放开引用：Close 命令列表（槽 {i}）"), e))?;
             unsafe { slot.allocator.Reset() }
                 .map_err(|e| SurfaceError::new(format!("放开引用：Reset 命令分配器（槽 {i}）"), e))?;
+
         }
         Ok(())
     }
@@ -575,6 +577,17 @@ impl Gpu {
         }
         self.current = 0;
         Ok(())
+    }
+    /// **仅供诊断**：槽状态快照 —— `(current, [recording], [submitted_at])`。
+    #[doc(hidden)]
+    pub fn slots_debug(&self) -> (usize, [bool; SLOT_COUNT], [u64; SLOT_COUNT]) {
+        let mut rec = [false; SLOT_COUNT];
+        let mut sub = [0u64; SLOT_COUNT];
+        for i in 0..SLOT_COUNT {
+            rec[i] = self.slots[i].recording.get();
+            sub[i] = self.slots[i].submitted_at;
+        }
+        (self.current, rec, sub)
     }
     /// 本帧的命令列表（`&self`，因为录制不需要改 GPU 的内部结构）。
     pub fn list(&self) -> &ID3D12GraphicsCommandList {

@@ -256,14 +256,98 @@ fn resize_buffers_在画过之后失败_并按设计重建() {
         expected_coverage(sz.0)
     );
 }
-/// **诊断探针 2**：`ResizeBuffers` 被哪一步卡住 —— 采样数 × 只转屏障 / 画 / 画+读回。
+/// **成功 present 之后熔断计数必须清零**（否则熔断一旦触发就是永久的）。
 ///
-/// # 为什么还要再拆一层
+/// # 这条守的是什么
 ///
-/// 探针 1 拆出「画过就失败、与 `Present` 无关」。之后两步都**没用**：等 GPU
-/// （早就有）、`list.Reset` + `allocator.Reset`（`Gpu::release_command_list_refs`）。
-/// 所以「画」本身必须再拆：只转资源状态屏障 / 真画 / 真画+读回，并把采样数也当变量
-/// —— MSAA 的 resolve 是唯一一条**读**后缓冲的命令。
+/// `resize_strikes` 原来只在 `ResizeBuffers` 成功时清零 —— 而实测那个分支**永远不会
+/// 到达**（本机后缓冲一被用过就调不成功）。于是熔断一旦触发就再也回不去：用户实测
+/// 日志里第 4 次之后就再也没重建过，窗口从此再也更新不了。
+///
+/// 清零点改成「成功 present」：它才真的说明新链能画能呈现。熔断要挡的是「重建了却
+/// 一次都没 present 出去」的 GPU churn，而现在每次重建之后至少 present 过一次 ⇒ 计数
+/// 自然回落。
+/// **成功 present 之后熔断计数必须清零**（否则熔断一旦触发就是永久的）。
+///
+/// # 这条守的是什么
+///
+/// `resize_strikes` 原来只在 `ResizeBuffers` 成功时清零 —— 而实测那个分支**永远不会
+/// 到达**（本机后缓冲一被用过就调不成功）。于是熔断一旦触发就再也回不去：用户实测
+/// 日志里第 4 次之后就再也没重建过，窗口从此再也更新不了。
+///
+/// 清零点改成「成功 present」：它才真的说明新链能画能呈现。熔断要挡的是「重建了却
+/// 一次都没 present 出去」的 GPU churn，而现在每次重建之后至少 present 过一次 ⇒ 计数
+/// 自然回落。
+///
+/// # 为什么这里只画一次、不走完整帧循环
+///
+/// 被测行为是「present 成功 ⇒ 计数清零」，所以只需要**画一帧**（让后缓冲被用过，
+/// 从而 `ResizeBuffers` 必然失败）与 **一次 present**。中间不再走第二个
+/// `begin_frame`：实测「重建后紧接着 `begin_frame` → 提交」会让命令列表 `Close` 回
+/// `0x80070057`，那是**另一个**缺陷（见 `docs/gpu-hang-bisect.md` 的已知问题段），
+/// 与本条要验的东西正交，混在一起会让这条门禁变成「修好一个坏两个」。
+#[test]
+#[ignore = "需要真 GPU 与 DComp。手动跑：--ignored --nocapture"]
+fn present_成功后熔断计数清零() {
+    let Ok(mut gpu) = Gpu::new() else {
+        panic!("建不出 D3D12 设备");
+    };
+    let mut chain = Swapchain::new(&gpu, (SIZE, SIZE), &swapchain_desc(), MSAA_SAMPLES).expect("建交换链");
+    let mut renderer = Renderer::new(&gpu.device, ATLAS_SIZE, chain.samples()).expect("建渲染器");
+    let textures = TextureTable::new();
+
+    // 基线：画一帧 → present。计数应为 0。
+    gpu.begin_frame().expect("开帧失败");
+    let sz = chain.size();
+    let q = one_red_quad(sz.0);
+    let (_r, px) = render_and_read(&mut gpu, &mut chain, &mut renderer, &textures, &q, sz);
+    assert!(
+        count_red(&px) as f64 >= expected_coverage(sz.0),
+        "基线帧只画出了 {} 个红像素（几何要求 ≥ {:.0}）",
+        count_red(&px),
+        expected_coverage(sz.0)
+    );
+    chain.present(1).expect("present 失败");
+    assert_eq!(chain.resize_strikes(), 0, "刚 present 完不该有累计");
+
+    // 画过之后改尺寸 ⇒ `ResizeBuffers` 必然失败（实测 0x887A0001）⇒ 走重建，计数 +1。
+    chain.resize(&mut gpu, (SIZE * 2, SIZE * 2)).expect("resize 不该报错");
+    drop(chain.take_superseded());
+    assert!(
+        chain.was_recreated(),
+        "画过之后 ResizeBuffers 必然失败（实测 0x887A0001），应走重建"
+    );
+    assert_eq!(chain.resize_strikes(), 1, "重建后计数应为 1");
+
+    // 一次成功 present ⇒ 计数必须回落，否则熔断会永久锁死。
+    if chain.take_first_present_flush() {
+        gpu.wait_gpu().expect("新链首帧 present 前等 GPU");
+    }
+    chain.present(1).expect("重建后首次 present 失败");
+    assert_eq!(
+        chain.resize_strikes(),
+        0,
+        "成功 present 就是链健康的证据，熔断计数必须在这里清零 —— \
+         否则计数只增不减，熔断一旦触发窗口就永远不再更新"
+    );
+
+    // 再来一轮 —— 这里顺带钉住实测得到的那条规律。
+    //
+    // 刚重建出来的链，它的**后缓冲一次都没被用过**，于是 `ResizeBuffers` 又能成功
+    // （实测矩阵里「什么都不开帧 ⇒ 成功」那一格）。所以第二轮**不重建**、计数保持 0。
+    //
+    // 这也解释了为什么生产路径上「重建 → 画一帧 → 下次 resize 又失败」会稳定复现：
+    // 每条新链在第一次被画之前都还是「干净」的。
+    chain.resize(&mut gpu, (SIZE * 3, SIZE * 2)).expect("resize 不该报错");
+    drop(chain.take_superseded());
+    assert!(
+        !chain.was_recreated(),
+        "新链的后缓冲还没被画过，ResizeBuffers 应当能成功（实测矩阵的「什么都不开帧」格）"
+    );
+    assert_eq!(chain.resize_strikes(), 0, "没走重建就不该累计计数");
+    assert_eq!(chain.size(), (SIZE * 3, SIZE * 2), "尺寸应真的变了");
+}
+
 #[test]
 #[ignore = "诊断用。手动跑：--ignored --nocapture"]
 fn probe2_resize_buffers_矩阵() {
