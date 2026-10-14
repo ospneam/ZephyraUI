@@ -209,6 +209,53 @@ impl DcompCompositor {
         unsafe { v2.SetOffsetY2(y) }
     }
 
+    /// 把 visual 的内容按 `scale_x/scale_y` **缩放**（治「黑边」）。
+    ///
+    /// # 为什么需要它
+    ///
+    /// DComp 默认把 visual 的内容按**自然尺寸**画在原点。所以只要交换链的尺寸
+    /// 与窗口客户区对不上，多出来的那一块就是**没人画的黑边**。
+    ///
+    /// 这不是理论问题：本机的 `ResizeBuffers` 在后缓冲被用过之后就再也调不成功
+    /// （实测矩阵见 `Swapchain::resize` 文档与 `docs/gpu-hang-bisect.md`），于是
+    /// 「尺寸对不上」是**常态**而不是异常。熔断触发后看到的「黑边」就是这么来的 ——
+    /// 熔断让 `resize` 静默跳过，链停在旧尺寸，窗口却已经是新尺寸。
+    ///
+    /// 缩放之后同一份内容会铺满整个客户区：内容略微变形，但没有黑边、没有重建
+    /// 开销、也没有 GPU churn。等真的重建出正确分辨率的交换链，把缩放收回 1,1 即可。
+    ///
+    /// # 为什么走 `SetTransform2` 而不是「设置尺寸」
+    ///
+    /// DComp **没有**设置 visual 尺寸的 API，尺寸是**算出来的**：内容自然尺寸 × 缩放。
+    /// `windows` crate 0.62 的 `IDCompositionVisual2` 只绑到
+    /// `SetOffsetX2` / `SetOpacity2` / `SetDepthMode` / `SetTransform2` / `SetVisible`
+    /// / `SetClipRect2` —— 缩放能力落在 `SetTransform2` 的 4×4 矩阵上。
+    ///
+    /// （`SetScaleX2/SetScaleY2` 看着像，但它们在 `IDCompositionScaleTransform` 上，
+    /// 那是 3D 特效那条线，要 `CreateScaleTransform` + 3D visual，不是这里要的。）
+    ///
+    /// 入参是 `windows_numerics::Matrix3x2`（3×2），而 `windows` 只转发不重导出这个
+    /// 类型 —— 所以本 crate 直接依赖 `windows-numerics` 才能把矩阵传进去。
+    pub fn set_scale(
+        &self,
+        slot: &VisualSlot,
+        scale_x: f32,
+        scale_y: f32,
+    ) -> windows::core::Result<()> {
+        use windows_numerics::Matrix3x2;
+        let v2: windows::Win32::Graphics::DirectComposition::IDCompositionVisual2 =
+            slot.visual.cast()?;
+        // DComp 是**行向量**约定（平移在第 3 行 M31/M32），纯缩放就是：
+        //   [sx  0  0]
+        //   [ 0 sy  0]
+        //   [ 0  0  1]
+        let m = Matrix3x2 {
+            M11: scale_x,
+            M22: scale_y,
+            ..Default::default()
+        };
+        unsafe { v2.SetTransform2(&m as *const Matrix3x2) }
+    }
     /// 提交全部变更。
     pub fn commit(&self) -> windows::core::Result<()> {
         unsafe { self.device.Commit() }

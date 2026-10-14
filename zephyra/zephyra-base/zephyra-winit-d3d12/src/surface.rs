@@ -52,8 +52,10 @@ use windows::Win32::Graphics::Dxgi::{CreateDXGIFactory1, DXGI_ERROR_NOT_FOUND, I
 pub struct Gpu {
     pub device: ID3D12Device,
     pub queue: ID3D12CommandQueue,
-    pub allocator: ID3D12CommandAllocator,
-    pub list: ID3D12GraphicsCommandList,
+    /// 帧的录制靶子：分配器 + 命令列表。**两槽轮转** —— 见 [`FrameSlot`]。
+    slots: [FrameSlot; SLOT_COUNT],
+    /// 这一帧用哪个槽。
+    current: usize,
     fence: ID3D12Fence,
     fence_event: windows::Win32::Foundation::HANDLE,
     /// 每提交一次加一。
@@ -61,6 +63,58 @@ pub struct Gpu {
     /// 调试层（`None` = 关掉了）。
     debug: Option<DebugInfo>,
 }
+
+/// 录制一帧命令所需的「分配器 + 命令列表」配对。
+///
+/// # 为什么要有**两个**
+///
+/// `ID3D12CommandAllocator` 会**一直攥着**它分配出去的命令所引用过的资源，直到
+/// `Reset` 才放开。而 `ResizeBuffers` 的硬要求正是「所有**间接引用**都已消失」。
+/// 单槽方案（一个长生命周期分配器）于是必然失败：`ID3D12CommandAllocator::Reset`
+/// 在 GPU 还没跑完这个分配器的命令时回 `E_FAIL`（本机实测恒定如此，见
+/// [`Gpu::begin_frame`]），而不 Reset 的话引用就永远在。
+///
+/// 双槽把「要重置的那个槽」与「GPU 正在写的那个槽」错开：
+///
+/// ```text
+/// 帧 N  : 槽 0  录制 → 提交（fence = N）
+/// 帧 N+1: 槽 1  录制 → 提交（fence = N+1）
+/// 帧 N+2: 槽 0  ← 等到 fence ≥ N+1 ≫ N，安全 Reset
+/// ```
+///
+/// `begin_frame` 开头本来就 `wait_gpu()`（等**全部**跑完），所以轮到的槽一定是
+/// 空闲的，`allocator.Reset()` 此时**必然**成功。
+///
+/// 本仓早先的结论「本机 `ResizeBuffers` 一旦画过就失败，只能整条重建」正是
+/// 单槽造成的，不是机器的特性 —— 代价是拖动窗口时每个中间尺寸都重建交换链，
+/// 实测一拖 20 次就把 GPU 拖进 `DEVICE_HUNG`。
+struct FrameSlot {
+    allocator: ID3D12CommandAllocator,
+    list: ID3D12GraphicsCommandList,
+    /// 本槽最后一次提交时的栅栏值（没提交过 = 0）。只用于诊断与断言。
+    submitted_at: u64,
+    /// 本槽的命令列表当前是否处于**记录中**。
+    ///
+    /// # 为什么自己记，而不是去查
+    ///
+    /// D3D12 没有「查询命令列表状态」的 API，只有 `Close` 会因状态不对而报错。
+    /// 而 [`Gpu::release_command_list_refs`] 必须**跳过**正在录制的槽 —— 对一个
+    /// 录着命令的列表调 `Close` 会把调用方已录制的命令**静默丢掉**，症状是紧接着
+    /// `submit` 报 `0x80070057 E_INVALIDARG`（实测踩过）。
+    ///
+    /// 自己记一个布尔值是唯一可靠的办法，且它在 `begin_frame` / `submit` 两处维护，
+    /// 漏一处就会退化成上面那个症状。
+    ///
+    /// 用 `Cell` 而不是裸 `bool`，是因为 [`Gpu::begin_frame`] 收的是 `&self` ——
+    /// 改成 `&mut self` 会一路传染到所有调用点，而换不到任何好处。
+    recording: std::cell::Cell<bool>,
+}
+
+/// 槽数。2 就够 —— 见 [`FrameSlot`] 的时序图。
+///
+/// ⚠ 不是 1（那就是单槽，见那里的问题），也不是 3（多一个槽只是把
+/// `wait_gpu()` 能等的深度从 1 帧变成 2 帧，而我们本来等的就是「全部」。
+const SLOT_COUNT: usize = 2;
 
 /// 开/关调试层。
 ///
@@ -262,16 +316,40 @@ impl Gpu {
             unsafe { device.CreateCommandQueue(&D3D12_COMMAND_QUEUE_DESC::default()) }
                 .map_err(|e| SurfaceError::new("CreateCommandQueue", e))?;
 
-        let allocator: ID3D12CommandAllocator =
-            unsafe { device.CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT) }
-                .map_err(|e| SurfaceError::new("CreateCommandAllocator", e))?;
-
-        let list: ID3D12GraphicsCommandList =
-            unsafe { device.CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, &allocator, None) }
-                .map_err(|e| SurfaceError::new("CreateCommandList", e))?;
-        // `CreateCommandList` 交付时处于**记录中**状态，必须先关掉才能在帧循环里复用。
-        unsafe { list.Close() }
-            .map_err(|e| SurfaceError::new("Close 初始命令列表", e))?;
+        // 分配器 + 命令列表**成对**造 `SLOT_COUNT` 份，理由见 [`FrameSlot`]。
+        let mut slots: Vec<FrameSlot> = Vec::with_capacity(SLOT_COUNT);
+        for _slot in 0..SLOT_COUNT {
+            let allocator: ID3D12CommandAllocator =
+                unsafe { device.CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT) }
+                    .map_err(|e| SurfaceError::new("CreateCommandAllocator", e))?;
+            let list: ID3D12GraphicsCommandList = unsafe {
+                device.CreateCommandList(
+                    0,
+                    D3D12_COMMAND_LIST_TYPE_DIRECT,
+                    &allocator,
+                    None,
+                )
+            }
+            .map_err(|e| SurfaceError::new("CreateCommandList", e))?;
+            // `CreateCommandList` 交付时处于**记录中**状态，必须先关掉才能在帧循环里复用。
+            unsafe { list.Close() }
+                .map_err(|e| SurfaceError::new("Close 初始命令列表", e))?;
+            slots.push(FrameSlot {
+                allocator,
+                list,
+                submitted_at: 0,
+                recording: std::cell::Cell::new(false),
+            });
+        }
+        // 转成定长数组。`SLOT_COUNT` 是常量，两个分支都会走同一段。
+        let mut slots_arr: [Option<FrameSlot>; SLOT_COUNT] = Default::default();
+        for (i, s) in slots.into_iter().enumerate() {
+            slots_arr[i] = Some(s);
+        }
+        let slots = slots_arr
+            .each_mut()
+            .map(|o| o.take().expect("刚刚逐个塞进去的"))
+            .into();
 
         let fence: ID3D12Fence = unsafe {
             device.CreateFence(0, D3D12_FENCE_FLAG_NONE)
@@ -293,8 +371,8 @@ impl Gpu {
         Ok(Self {
             device,
             queue,
-            allocator,
-            list,
+            slots,
+            current: 0,
             fence,
             fence_event,
             fence_value: 0,
@@ -342,38 +420,31 @@ impl Gpu {
     /// —— 症状是「跑着跑着整个窗口卡死」，debug 层之外什么都看不到。
     pub fn begin_frame(&self) -> Result<(), SurfaceError> {
         self.drain_debug();
+        // 等**全部**跑完 ⇒ 轮到的这一槽必然空闲，于是下面两个 `Reset` 都必然成功。
         self.wait_gpu()?;
-        // ⚠ 只调 `list.Reset`，**不**调 `ID3D12CommandAllocator::Reset` —— 后者在本机
-        // 恒定回 `E_FAIL`，无论开不开调试层。
+        let slot = &self.slots[self.current];
+        // ⚠⚠ **顺序必须是 allocator 先、list 后** —— 反了就必然 `E_FAIL`。
         //
-        // 失败时的官方说法是「there is an **actively recording** command list
-        // referencing the command allocator」，而此刻**没有人在记录**：列表已被上一帧
-        // 的 `submit` 关过。于是「按文档的顺序（先分配器后列表）走」这条路在本机
-        // **根本走不通** —— 这是本轮实测出来的（`tests/swapchain_draw.rs` 的
-        // `resize_失败点_是建链还是帧流程` 有对照）。
+        // 官方对 `ID3D12CommandAllocator::Reset` 的失败条件是「有关联的命令列表
+        // **正在记录**（currently recording）」。而
+        // `ID3D12GraphicsCommandList::Reset` 做的恰恰是把列表切到**记录中**状态。
         //
-        // 于是代价落在别处：分配器一直攥着那些命令用过的资源，所以画过之后
-        // `ResizeBuffers` 会回 `DXGI_ERROR_INVALID_CALL`。官方对「还有引用时
-        // resize」的原文：
+        // 所以先 `list.Reset()` 再 `allocator.Reset()` = 亲手制造那个失败条件。
+        // 正确顺序：列表此刻是**关闭**的（`submit` 关过了）⇒ 先重置分配器 ⇒
+        // 再重置列表开始录制。
         //
-        //     "Indirect references are held by views to a resource, binding a view
-        //      of the resource to a device context, a command list that used the
-        //      resource, …"
-        //
-        // 我先怀疑命令列表，每帧 `begin_frame` 都 `list.Reset` —— **没用**，因为
-        // `list.Reset()` 并不重置分配器（文档没这么说，是我当时假设的）。
-        //
-        // 正路是**重建整个交换链**而不是 resize —— 见 `Swapchain::resize`。
-        //
-        // https://learn.microsoft.com/en-us/windows/win32/api/d3d12/nf-d3d12-id3d12commandallocator-reset
-        // https://learn.microsoft.com/en-us/windows/win32/api/d3d12/nf-d3d12-id3d12graphicscommandlist-reset
-        //
-        // 失败时立刻拉调试层消息：`drain_debug` 只在开头调过一次，漏了就得等下一帧
-        // —— 那时进程可能已经死了。
-        if let Err(e) = unsafe { self.list.Reset(&self.allocator, None) } {
+        // 实测（本机）：顺序写反时 `allocator.Reset()` 稳定回
+        // `E_FAIL (0x80004005)`，与上面这条语义逐字对上。
+        if let Err(e) = unsafe { slot.allocator.Reset() } {
+            self.drain_debug();
+            return Err(SurfaceError::new("Reset 命令分配器（列表必须先处于关闭态）", e));
+        }
+        if let Err(e) = unsafe { slot.list.Reset(&slot.allocator, None) } {
             self.drain_debug();
             return Err(SurfaceError::new("Reset 命令列表", e));
         }
+        // `Reset` 把列表切到记录中 —— 记下来，`release_command_list_refs` 要靠它避让。
+        self.slots[self.current].recording.set(true);
         Ok(())
     }
 
@@ -381,7 +452,8 @@ impl Gpu {
     pub fn submit(&mut self) -> Result<(), SurfaceError> {
         // 失败时立刻拉调试层消息 —— `drain_debug` 只在 `begin_frame` 开头调过，
         // 而本帧记录命令期间产生的任何错误都要等到下一帧才看得见，那时可能已经崩了。
-        if let Err(e) = unsafe { self.list.Close() } {
+        let slot = &self.slots[self.current];
+        if let Err(e) = unsafe { slot.list.Close() } {
             self.drain_debug();
             return Err(SurfaceError::new("Close 命令列表", e));
         }
@@ -389,13 +461,129 @@ impl Gpu {
         let value = self.fence_value;
         // `ExecuteCommandLists` 收的是基类 `ID3D12CommandList`。`cast()` 走 QueryInterface，
         // 拿到的是**同一个对象**（D3D12 的接口继承不做包装），所以这里没有额外开销。
-        let base: ID3D12CommandList = self.list.cast().map_err(|e| {
+        let base: ID3D12CommandList = slot.list.cast().map_err(|e| {
             SurfaceError::new("把命令列表转成 ID3D12CommandList", e)
         })?;
         unsafe { self.queue.ExecuteCommandLists(&[Some(base)]) };
         unsafe { self.queue.Signal(&self.fence, value) }
             .map_err(|e| SurfaceError::new("Signal 栅栏", e))?;
+        // 轮到下一槽 —— 这就是「双槽让要 Reset 的那个槽与 GPU 正在写的槽错开」。
+        self.slots[self.current].submitted_at = value;
+        self.slots[self.current].recording.set(false);
+        self.current = (self.current + 1) % SLOT_COUNT;
         Ok(())
+    }
+
+    /// 放开**所有槽里已录制的命令**对资源的引用，并让每个槽回到「关闭态、干净」。
+    ///
+    /// # 为什么 `wait_gpu()` 不够
+    ///
+    /// DXGI 对 `ResizeBuffers` 的硬要求是「直接引用与间接引用全清」，而它把间接引用
+    /// 明确定为「**用过该资源的命令列表**」。`wait_gpu()` 只让 **GPU** 把命令跑完 ——
+    /// **不会**清掉命令列表里**已录制**的那些引用。那些引用要等命令列表 `Reset`。
+    ///
+    /// 本仓的帧顺序恰好把这件事漏掉了：
+    ///
+    /// ```text
+    /// sync_swapchain() → … → begin_frame() → 录制 → submit() → present()
+    ///        ^ resize 在这里，而 begin_frame 还没跑
+    /// ```
+    ///
+    /// 于是 resize 那一刻，上一帧的命令列表里还留着引用后缓冲的那些命令 ⇒
+    /// `ResizeBuffers` 回 `0x887A0001`（`DXGI_ERROR_INVALID_CALL`）。
+    ///
+    /// # ⚠⚠ 必须重置**全部**槽，不是「当前」那个
+    ///
+    /// [`Gpu::submit`] 提交完会把 `current` 推进到**下一个**槽。所以「当前槽」恰恰是
+    /// **没**录过上一帧的那个 —— 攥着后缓冲引用的是**刚提交完的那一个**。
+    ///
+    /// 只重置当前槽时，症状极具迷惑性：**空提交**能 resize 成功，而**任何碰了后缓冲的
+    /// 提交**都失败。实测（`probe2_ResizeBuffers_矩阵`）：
+    ///
+    /// | 一帧里做了什么 | `ResizeBuffers` |
+    /// |---|---|
+    /// | 什么都不开帧 | **成功** |
+    /// | 开帧 + 提交**空**列表 | **成功** |
+    /// | 开帧 + 只转后缓冲资源屏障 | `INVALID_CALL` |
+    /// | 开帧 + 画（单采样 / 4× MSAA） | `INVALID_CALL` |
+    ///
+    /// 「空提交能过」正是当时误判成「双槽分配器没生效」的根源。
+    ///
+    /// # 为什么 Reset 完要再 `Close()`
+    ///
+    /// `list.Reset()` 会把列表切到**记录中**状态，而 `allocator.Reset()` 的前置条件是
+    /// 「没有列表在记录」。这里立刻 `Close()` 回去，让每个槽回到
+    /// [`Gpu::begin_frame`] 期望的状态（关闭、无引用）。代价是每次 resize
+    /// `2 × SLOT_COUNT` 次 API 调用，而 resize 只在尺寸变化时发生。
+    ///
+    /// # 前置条件
+    ///
+    /// 调用方必须先 [`Gpu::wait_gpu`] —— `Reset` 一个 GPU 还在执行的列表是非法的。
+    /// `Swapchain::resize` 正是这么排的。
+    ///
+    /// https://learn.microsoft.com/en-us/windows/win32/api/d3d12/nf-d3d12-id3d12graphicscommandlist-reset
+    pub fn release_command_list_refs(&mut self) -> Result<(), SurfaceError> {
+        for i in 0..SLOT_COUNT {
+            // ⚠ 正在录制的槽**必须跳过**：`Close` 一个录着命令的列表会静默丢掉那些
+            // 命令，症状是紧接着 `submit` 报 `E_INVALIDARG`（实测踩过）。
+            if self.slots[i].recording.get() {
+                continue;
+            }
+            let slot = &self.slots[i];
+            // 顺序：先 `list.Reset`（清掉已录制命令里的资源引用）→ 再 `Close`（把列表
+            // 从「记录中」拉回「关闭」）→ 最后 `allocator.Reset`（清掉**分配器**攥着的
+            // 那份引用）。`Close` 不能省：分配器 Reset 的前置条件是「没有列表在记录」。
+            unsafe { slot.list.Reset(&slot.allocator, None) }
+                .map_err(|e| SurfaceError::new(format!("放开引用：Reset 命令列表（槽 {i}）"), e))?;
+            unsafe { slot.list.Close() }
+                .map_err(|e| SurfaceError::new(format!("放开引用：Close 命令列表（槽 {i}）"), e))?;
+            unsafe { slot.allocator.Reset() }
+                .map_err(|e| SurfaceError::new(format!("放开引用：Reset 命令分配器（槽 {i}）"), e))?;
+        }
+        Ok(())
+    }
+    /// **仅供诊断**：把每个槽的分配器与命令列表**整体销毁重建**。
+    ///
+    /// 用来区分两种可能：「`Reset` 本身不放引用」与「`Reset` 之后引用还在别处」。
+    /// 若销毁重建后 `ResizeBuffers` 就成功，说明那份引用只有**销毁**才能释放 ——
+    /// 那么正解就是在 resize 前重建命令基础设施，而不是每帧 Reset。
+    ///
+    /// 不在生产路径上：它每帧两个分配器 + 两个命令列表的构造开销。
+    #[doc(hidden)]
+    pub fn recreate_command_slots(&mut self) -> Result<(), SurfaceError> {
+        let device = self.device.clone();
+        for i in 0..SLOT_COUNT {
+            let allocator: ID3D12CommandAllocator =
+                unsafe { device.CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT) }
+                    .map_err(|e| SurfaceError::new("重建槽：CreateCommandAllocator", e))?;
+            let list: ID3D12GraphicsCommandList = unsafe {
+                device.CreateCommandList(
+                    0,
+                    D3D12_COMMAND_LIST_TYPE_DIRECT,
+                    &allocator,
+                    None,
+                )
+            }
+            .map_err(|e| SurfaceError::new("重建槽：CreateCommandList", e))?;
+            unsafe { list.Close() }.map_err(|e| SurfaceError::new("重建槽：Close", e))?;
+            self.slots[i] = FrameSlot {
+                allocator,
+                list,
+                submitted_at: 0,
+                recording: std::cell::Cell::new(false),
+            };
+        }
+        self.current = 0;
+        Ok(())
+    }
+    /// 本帧的命令列表（`&self`，因为录制不需要改 GPU 的内部结构）。
+    pub fn list(&self) -> &ID3D12GraphicsCommandList {
+        &self.slots[self.current].list
+    }
+
+    /// 本帧的命令分配器。
+    pub fn allocator(&self) -> &ID3D12CommandAllocator {
+        &self.slots[self.current].allocator
     }
 
     /// 等队列排空。
@@ -445,9 +633,9 @@ impl Gpu {
         F: FnOnce(&ID3D12GraphicsCommandList),
     {
         self.wait_gpu()?;
-        unsafe { self.list.Reset(&self.allocator, None) }
+        unsafe { self.list().Reset(self.allocator(), None) }
             .map_err(|e| SurfaceError::new("一次性命令：Reset 命令列表", e))?;
-        record(&self.list);
+        record(self.list());
         // ⚠ 这里**不能**自己 `Close` —— `submit` 内部已经关了一次。
         //
         // 对一条已关闭的列表再 `Close`，D3D12 不返回错误：`Close` 的返回码是

@@ -232,7 +232,7 @@ impl D3D12 {
         self.renderer
             .record(zephyra_winit_d3d12::RenderCtx {
                 device: &self.gpu.device,
-                list: &self.gpu.list,
+                list: self.gpu.list(),
                 rtv: self.target.rtv,
                 display_list: list,
                 size: (SIZE, SIZE),
@@ -244,7 +244,7 @@ impl D3D12 {
             .expect("记录绘制命令失败");
         let staging = self
             .target
-            .record_readback(&self.gpu.device, &self.gpu.list)
+            .record_readback(&self.gpu.device, self.gpu.list())
             .expect("记录回读拷贝失败");
         self.gpu.submit().expect("提交失败");
         self.gpu.wait_gpu().expect("等 GPU 失败");

@@ -85,7 +85,24 @@ pub struct HostWindow<V: View> {
     swap_state: SwapState,
     /// 连续 resize 失败的次数。只给 trace 用：它是「为什么拖动时不动了」的判据。
     resize_failures: u32,
-    /// 「设备已不可用」是否已经报过一次。见 [`Self::report_device_dead_once`]。
+    /// 客户区尺寸**最后一次变化**的时刻 + 当时的尺寸。拖动去抖用。
+    ///
+    /// # 为什么要有它
+    ///
+    /// 本机 `ResizeBuffers` 在后缓冲被用过之后就再也调不成功（实测矩阵见
+    /// [`Swapchain::resize`] 文档），所以尺寸一变就只能**重建整条交换链**。而拖边时
+    /// `WM_SIZE` 每秒来几十次 —— 每次都重建，实测一口气重建 140 次，GPU 直接进
+    /// `DEVICE_HUNG`，屏幕上就是「一直闪」。
+    ///
+    /// 所以这里**不再跟着每一次 `WM_SIZE` 重建**：尺寸还在变的时候只把已有画面
+    /// 缩放铺满窗口（见 [`Self::stretch_visual_to_client`]），等它**稳下来**才真的
+    /// 重建一次。于是一次拖动 = 1 次重建，而不是 140 次。
+    resize_pending_since: Option<std::time::Instant>,
+    /// `resize_pending_since` 那一刻的尺寸。变了就说明还在动，去抖重新计时。
+    resize_pending_size: (u32, u32),
+    /// visual 当前被缩放到多少（相对链尺寸）。`(0,0)` = 没在缩放。见
+    /// [`Self::stretch_visual_to_client`]。
+    stretched_to: (u32, u32),    /// 「设备已不可用」是否已经报过一次。见 [`Self::report_device_dead_once`]。
     reported_device_dead: bool,
     /// 文本引擎。用 `RefCell` 是为了让 core 的 `Context` 保持 `Copy` —— 布局递归要求
     /// 这一点。
@@ -299,6 +316,9 @@ impl<V: View> HostWindow<V> {
             reported_device_dead: false,
             swap_state: SwapState::Same,
             resize_failures: 0,
+            resize_pending_since: None,
+            resize_pending_size: (0, 0),
+            stretched_to: (0, 0),
             engine: std::cell::RefCell::new(engine),
             atlas_revision_uploaded: 0,
             backdrop_active: false,
@@ -670,7 +690,7 @@ impl<V: View> HostWindow<V> {
         if revision_now != self.atlas_revision_uploaded {
             if let Err(e) = self
                 .renderer
-                .record_upload_atlas(&self.gpu.list, self.engine.borrow().atlas().pixels())
+                .record_upload_atlas(self.gpu.list(), self.engine.borrow().atlas().pixels())
             {
                 eprintln!("[zephyra-d3d12] 图集上传失败（{e}），本帧文字可能不显示");
             }
@@ -681,7 +701,7 @@ impl<V: View> HostWindow<V> {
         //
         // MSAA 开启时它**仍然要转**：它是 resolve 的目标，而 D3D12 不为 resolve
         // 自动转换状态。所以这一段与 MSAA 无关，始终执行。
-        if let Err(e) = self.chain.barrier_to_render_target(&self.gpu.list) {
+        if let Err(e) = self.chain.barrier_to_render_target(self.gpu.list()) {
             eprintln!("[zephyra-d3d12] 后缓冲转 RENDER_TARGET 失败: {e}");
             return RenderReport::default();
         }
@@ -725,7 +745,7 @@ impl<V: View> HostWindow<V> {
         let rt = self.chain.back_buffer().ok();
         let report = match self.renderer.record(RenderCtx {
             device: &self.gpu.device,
-            list: &self.gpu.list,
+            list: self.gpu.list(),
             rtv,
             display_list: self.cache.list(),
             damage,
@@ -746,11 +766,11 @@ impl<V: View> HostWindow<V> {
         // 旧内容」或「全黑」，且零 HRESULT 错误。顺序也不能反：先转回 PRESENT
         // 再 resolve 是非法的（resolve 目标必须在 RENDER_TARGET）。
         if self.chain.samples() > 1 {
-            if let Err(e) = self.chain.resolve_msaa(&self.gpu.list) {
+            if let Err(e) = self.chain.resolve_msaa(self.gpu.list()) {
                 eprintln!("[zephyra-d3d12] MSAA 解析失败: {e}");
             }
         }
-        if let Err(e) = self.chain.barrier_to_present(&self.gpu.list) {
+        if let Err(e) = self.chain.barrier_to_present(self.gpu.list()) {
             eprintln!("[zephyra-d3d12] 后缓冲转回 PRESENT 失败: {e}");
         }
         if let Err(e) = self.gpu.submit() {
@@ -957,6 +977,8 @@ impl<V: View> HostWindow<V> {
     fn sync_swapchain(&mut self) -> SwapState {
         let (w, h) = self.client_size();
         if (w, h) == self.chain.size() {
+            self.resize_pending_since = None;
+            self.resize_pending_size = (w, h);
             return SwapState::Same;
         }
         // ⚠ 零尺寸 = 窗口被最小化。此时**什么都不做、本帧跳过**。
@@ -977,10 +999,41 @@ impl<V: View> HostWindow<V> {
         if w == 0 || h == 0 {
             return SwapState::Failed;
         }
+        // ★ 拖动去抖：尺寸还在变的时候**不重建**，只把已有画面缩放铺满窗口。
+        //
+        // 理由见 `resize_pending_since` 的文档。对照实测：一帧一重建会把 GPU 拖进
+        // DEVICE_HUNG 并让窗口一直闪；稳下来才重建 ⇒ 一次拖动只重建一次。
+        //
+        // RESIZE_SETTLE 取 **120ms** 的依据：Windows 把鼠标移动节流到显示器刷新率
+        // （约 60Hz），所以拖动中相邻两次尺寸变化最快也差 ~16ms，而「拖完松手」之后
+        // 尺寸会一直不变。120ms 远大于一帧、又短到人察觉不出，比最小值多留了几帧余量。
+        const RESIZE_SETTLE: std::time::Duration = std::time::Duration::from_millis(120);
+
+        let now = std::time::Instant::now();
+        let settled = resize_settled(
+            self.resize_pending_size,
+            self.resize_pending_since,
+            now,
+            (w, h),
+            RESIZE_SETTLE,
+        );
+        if !settled {
+            if self.resize_pending_size != (w, h) {
+                self.resize_pending_size = (w, h);
+                self.resize_pending_since = Some(now);
+            }
+            // 缩放铺满 ⇒ 没有黑边。本帧空过（不按新尺寸排版、也不 present），
+            // DComp 会继续显示上一次成功 present 的内容。
+            self.stretch_visual_to_client(w, h);
+            return SwapState::Failed;
+        }
+        // 真的要重建了：去抖计时器复位。
+        self.resize_pending_since = None;
+
         let (ew, eh) = self.effective_size();
         let scale = self.window.scale_factor();
         let before = self.chain.size();
-        if let Err(e) = self.chain.resize(&self.gpu, (w, h)) {
+        if let Err(e) = self.chain.resize(&mut self.gpu, (w, h)) {
             // 设备已死在 `frame()` 里已经先拦过一道；这里只可能是「暂时不能 resize」
             // （典型原因：GPU 还攥着上一帧的后缓冲）。让本帧空过，下一帧再试。
             // ⚠ 这里**不**再打 error：拖动期间它每秒会来几十次，而唯一有用的信息
@@ -1056,12 +1109,50 @@ impl<V: View> HostWindow<V> {
             eprintln!("[zephyra-d3d12] 重新挂 visual 失败: {e}");
             return false;
         }
+        // 新链尺寸已经和客户区一致 ⇒ 把缩放收回 1,1，否则内容会被多缩一次。
+        let (w, h) = self.client_size();
+        if let Err(e) = comp.set_scale(vis, 1.0, 1.0) {
+            eprintln!("[zephyra-d3d12] 复位 visual 缩放失败: {e}");
+            return false;
+        }
+        self.stretched_to = (w, h);
         if let Err(e) = comp.commit() {
             // ⚠ 这一步失败也算「DComp 还没切过去」—— 见方法文档。
             eprintln!("[zephyra-d3d12] DComp commit 失败: {e}");
             return false;
         }
         true
+    }
+
+    /// 把 visual 的内容缩放，铺满整个客户区 —— 「黑边」的对症解。
+    ///
+    /// 链的尺寸追不上窗口时，DComp 默认按内容自然尺寸画，多出来的区域就是黑的。
+    /// 缩放比 = 客户区尺寸 ÷ 链尺寸（两个方向独立算，宽高比不一致时各自变形）。
+    ///
+    /// 幂等：目标尺寸没变就什么都不做，所以每帧调也只花一次比较。
+    fn stretch_visual_to_client(&mut self, w: u32, h: u32) {
+        if (w, h) == self.stretched_to {
+            return;
+        }
+        let (cw, ch) = self.chain.size();
+        if cw == 0 || ch == 0 {
+            return;
+        }
+        let (Some(comp), Some(vis)) = (self.compositor.as_ref(), self.visual.as_ref()) else {
+            return;
+        };
+        let sx = w as f32 / cw as f32;
+        let sy = h as f32 / ch as f32;
+        match comp.set_scale(vis, sx, sy) {
+            Ok(()) => {
+                if let Err(e) = comp.commit() {
+                    eprintln!("[zephyra-d3d12] 缩放 visual 的 commit 失败: {e}");
+                    return;
+                }
+                self.stretched_to = (w, h);
+            }
+            Err(e) => eprintln!("[zephyra-d3d12] 设置 visual 缩放失败: {e}"),
+        }
     }
 
     /// 把上一帧的顶点流按 `kind` 归类（0 矩形 / 1 字形 / 2 图像），逐个返回。
@@ -1365,4 +1456,32 @@ pub fn run_with<V: View + 'static>(app: HostWindow<V>) -> Result<(), winit::erro
     let mut app = app;
     let el: EventLoop<()> = EventLoop::new()?;
     el.run_app(&mut app)
+}
+
+/// 拖动去抖的判定：现在**该不该**真的去重建交换链。
+///
+/// # 为什么需要它
+///
+/// 本机 `ResizeBuffers` 在后缓冲被用过之后就再也调不成功（实测矩阵见
+/// [`Swapchain::resize`]），所以尺寸一变就只能重建整条交换链。而拖边时 `WM_SIZE`
+/// 每秒来几十次 —— 一帧一重建实测能把 GPU 拖进 `DEVICE_HUNG` 并让窗口一直闪。
+/// 于是改成：尺寸还在变就只缩放铺满，等它稳下来才重建一次。
+///
+/// # 规则
+///
+/// `target` 与 `pending_size` 不同 ⇒ 尺寸还在变 ⇒ **不重建**。
+/// 相同且距 `pending_since` 已过 `settle` ⇒ 认定拖动结束 ⇒ **重建**。
+/// `pending_since` 是 `None`（还没开始计时）⇒ **不重建**。
+///
+/// 抽成纯函数是为了能在**没有窗口、没有 GPU** 的情况下测它 —— 门禁见
+/// `tests/resize_debounce.rs`。
+pub fn resize_settled(
+    pending_size: (u32, u32),
+    pending_since: Option<std::time::Instant>,
+    now: std::time::Instant,
+    target: (u32, u32),
+    settle: std::time::Duration,
+) -> bool {
+    pending_size == target
+        && pending_since.is_some_and(|t0| now.duration_since(t0) >= settle)
 }

@@ -658,7 +658,7 @@ impl Swapchain {
     /// HRESULT。见类型文档。
     pub fn resize(
         &mut self,
-        gpu: &Gpu,
+        gpu: &mut Gpu,
         size: (u32, u32),
     ) -> Result<(), SurfaceError> {
         // 零尺寸是最小化后的状态，DXGI 会拒绝 `ResizeBuffers(0, 0, …)`。
@@ -688,6 +688,17 @@ impl Swapchain {
         // 交换链 + `SetContent` + `Commit`，实测一拖 20 次，最后 GPU 直接
         // `DEVICE_HUNG`（见 `resize_strikes` 与 `RECREATE_STRIKE_LIMIT`）。
         gpu.wait_gpu()?;
+
+        // ★★★ **光等 GPU 不够，必须把命令列表 Reset 掉。**
+        //
+        // DXGI 把「用过该资源的**命令列表**」列为间接引用，`wait_gpu()` 只让 GPU
+        // 跑完，**清不掉列表里已录制的引用**。而帧序是 resize 在 `begin_frame`
+        // **之前**，所以此刻列表还攥着上一帧引用后缓冲的命令 —— 那就是
+        // `0x887A0001 DXGI_ERROR_INVALID_CALL` 的来源。
+        //
+        // 实测依据见 `Gpu::release_command_list_refs` 的表格：画过之后一定失败，
+        // 没画过就一定成功，而 **present 与否不影响**。
+        gpu.release_command_list_refs()?;
 
         // 设备已死 ⇒ 一个 API 都不调。每帧重试正是「闪 + 刷屏」的直接成因。
         if let Some(code) = self.device_dead {
@@ -760,7 +771,16 @@ impl Swapchain {
                 //
                 // 为什么不用 consecutive_present_errors 那个计数：它数的是 present
                 // 失败，而这里要数的是「重建了几次都没成功」—— 后者才是 GPU churn 的度量。
-                self.resize_strikes = self.resize_strikes.saturating_add(1);
+                                // ★★ 让日志说话：这个 HRESULT 是「为什么不能 resize」的**唯一**答案。
+                // 本仓为此绕了三轮弯路，每轮都靠读码猜成因、三轮都猜错 ——
+                // 先猜命令列表、再猜分配器、再猜 MSAA 纹理。真正的证据只有回码本身。
+                // 只打前 4 次，免得拖动时刷屏（刷屏本身又成一个新问题）。
+                if self.resize_strikes < 4 {
+                    eprintln!(
+                        "[zephyra-d3d12] ResizeBuffers 失败 0x{:08X}（目标 {size:?}，链原尺寸 {:?}，views 已清空，wait_gpu 已过）",
+                        e.code().0 as u32, self.size
+                    );
+                }self.resize_strikes = self.resize_strikes.saturating_add(1);
                 if self.resize_strikes > Self::RECREATE_STRIKE_LIMIT {
                     // 安静地跳过本帧的 resize：链停在旧尺寸、自洽、可画。
                     // 用户看到的是「窗口改小后内容没跟着变」，而不是设备挂掉。
@@ -962,7 +982,7 @@ mod tests {
         );
         // 无 MSAA 时 `resolve_msaa` 必须是**空操作**而非报错 —— 生产路径每帧都调它。
         single
-            .resolve_msaa(&gpu.list)
+            .resolve_msaa(gpu.list())
             .expect("无 MSAA 时 resolve 应为空操作");
     }
 

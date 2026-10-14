@@ -2179,6 +2179,7 @@ version = "0.1.0"
 dependencies = [
  "log",
  "windows",
+ "windows-numerics",
 ]
 
 [[package]]

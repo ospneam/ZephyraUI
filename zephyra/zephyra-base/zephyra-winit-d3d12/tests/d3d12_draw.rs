@@ -198,7 +198,7 @@ fn d3d12_能把四边形画到像素上() {
     let report = renderer
         .record(zephyra_winit_d3d12::RenderCtx {
             device: &gpu.device,
-            list: &gpu.list,
+            list: gpu.list(),
             rtv: target.rtv,
             display_list: &list,
             size: (SIZE, SIZE),
@@ -224,7 +224,7 @@ fn d3d12_能把四边形画到像素上() {
     );
 
     // 回读缓冲：回读要求资源处于可拷贝状态，所以把拷贝命令也记录进去。
-    let staging = target.record_readback(&gpu.device, &gpu.list).unwrap_or_else(|e| {
+    let staging = target.record_readback(&gpu.device, gpu.list()).unwrap_or_else(|e| {
         // 消息是**排队**的，不主动拉就永远看不到 —— 这是本项目在 D3D11 与 D3D12
         // 上各踩一次的坑。
         gpu.drain_debug();
@@ -323,7 +323,7 @@ fn render_and_readback(
     let report = renderer
         .record(zephyra_winit_d3d12::RenderCtx {
             device: &gpu.device,
-            list: &gpu.list,
+            list: gpu.list(),
             rtv: target.rtv,
             display_list: list,
             size: (SIZE, SIZE),
@@ -342,7 +342,7 @@ fn render_and_readback(
 
     // 回读要求资源可拷贝，所以拷贝命令也**记录**进同一份列表。
     let staging = target
-        .record_readback(&gpu.device, &gpu.list)
+        .record_readback(&gpu.device, gpu.list())
         .expect("记录回读拷贝失败");
     gpu.submit().expect("提交失败");
     gpu.wait_gpu().expect("等 GPU 失败");
@@ -377,7 +377,7 @@ fn render_frames_reusing(list: &[DisplayList], clear: Color) -> Vec<Vec<u8>> {
         renderer
             .record(zephyra_winit_d3d12::RenderCtx {
                 device: &gpu.device,
-                list: &gpu.list,
+                list: gpu.list(),
                 rtv: target.rtv,
                 display_list: frame,
                 size: (SIZE, SIZE),
@@ -391,7 +391,7 @@ fn render_frames_reusing(list: &[DisplayList], clear: Color) -> Vec<Vec<u8>> {
                 panic!("第 {} 帧记录绘制命令失败: {e}", out.len());
             });
         let staging = target
-            .record_readback(&gpu.device, &gpu.list)
+            .record_readback(&gpu.device, gpu.list())
             .expect("记录回读拷贝失败");
         gpu.submit().expect("提交失败");
         gpu.wait_gpu().expect("等 GPU 失败");
@@ -1162,7 +1162,7 @@ fn offscreen_pass_reports_zero_unimplemented_on_d3d12() {
     let report = renderer
         .record(zephyra_winit_d3d12::RenderCtx {
             device: &gpu.device,
-            list: &gpu.list,
+            list: gpu.list(),
             rtv: target.rtv,
             display_list: &list,
             size: (SIZE, SIZE),

@@ -164,7 +164,7 @@ fn resize_之后仍然能画() {
         gpu.begin_frame().expect("开帧失败");
         // 失败时立刻拉调试层消息 —— `drain_debug` 只在 `begin_frame` 开头调，
         // 而这里还没到下一帧，那时命令可能已经被下一条错误淹掉了。
-        if let Err(e) = chain.resize(&gpu, size) {
+        if let Err(e) = chain.resize(&mut gpu, size) {
             gpu.drain_debug();
             panic!("resize 到 {size:?} 失败: {e}");
         }
@@ -187,23 +187,37 @@ fn resize_之后仍然能画() {
     }
 }
 
-/// resize 失败时**必须**能重建整条链（`ResizeBuffers` 失败后的兜底路径）。
+/// **实测**：画过之后 `ResizeBuffers` 必然失败，按设计重建整条链。
 ///
-/// 这条断言钉住「失败后自动重建」这个行为：它不是优化，是唯一的兜底。
+/// # 这条门禁钉的是**实测结果**，不是期望
 ///
-/// # ⚠ 这条用例的**前提**已在本轮被推翻
+/// 本仓曾经有一个记了很久的结论 ——「本机 `ResizeBuffers` 一旦画过就回
+/// `DXGI_ERROR_INVALID_CALL`」，**然后又推翻了它三轮**，每轮都靠读码猜成因：
 ///
-/// 它原来写的是「本机 `ResizeBuffers` 画过之后必失败」，那是个**错误结论** ——
-/// 真正的成因是 **resize 跑在 `wait_gpu()` 之前**，上一帧的命令还在执行、后缓冲
-/// 被间接引用。见 `Swapchain::resize` 里 `gpu.wait_gpu()` 那段。
+/// 1. 猜「resize 跑在 `wait_gpu()` 之前」→ 加了 `wait_gpu` → 没用
+/// 2. 猜「命令列表攥着引用」→ 加了 `release_command_list_refs` → 没用
+/// 3. 猜「分配器攥着引用」→ 改成双槽 + `allocator.Reset` → 没用
+/// 4. 猜「要连对象一起销毁」→ `recreate_command_slots` → **还是没用**
 ///
-/// 现在 `resize` 自己会先等 GPU，所以正常情况下**不该**走到重建分支；本条仍然
-/// 有价值，因为它守的是兜底路径本身还能用。
+/// 最后靠**隔离实验**定案（`probe2_resize_buffers_矩阵`，保留在本文件里）：
 ///
-/// 另见 `重建后旧链在宿主重新挂载之前不能释放` —— 重建路径上最容易出的错。
+/// | 一帧里做了什么 | `ResizeBuffers` |
+/// |---|---|
+/// | 什么都不开帧 | **成功** |
+/// | 开帧 + 提交**空**命令列表 | **成功** |
+/// | 开帧 + 只转后缓冲资源屏障 | `0x887A0001` |
+/// | 开帧 + 画（1× / 4× MSAA） | `0x887A0001` |
+///
+/// 而这两条修复——等 GPU、Reset 列表与分配器、销毁重建命令槽——**全部保留**：
+/// 它们各自消掉了一条真实的引用来源，只是**都不足以**单独让 `ResizeBuffers` 成功。
+/// 留着的理由是：它们让「重建」这条兜底路径的引用更干净。
+///
+/// 所以本仓的 resize 策略是 Chromium 同款：**尺寸变了就重建交换链**，并把
+/// 重建频率压到「一次拖动一次」—— 去抖见 `resize_settled` 与
+/// `tests/resize_debounce.rs`。
 #[test]
 #[ignore = "需要真 GPU 与 DComp。手动跑：--ignored --nocapture"]
-fn resize_失败时会重建_并置位标记() {
+fn resize_buffers_在画过之后失败_并按设计重建() {
     let Ok(mut gpu) = Gpu::new() else {
         panic!("建不出 D3D12 设备");
     };
@@ -212,23 +226,18 @@ fn resize_失败时会重建_并置位标记() {
     let textures = TextureTable::new();
     let list = one_red_quad(SIZE);
 
-    // 先画一帧 —— 这是让 `ResizeBuffers` 失败的前提。
+    // 先画一帧 —— 这正是让 `ResizeBuffers` 失败的前提。
     gpu.begin_frame().expect("开帧失败");
     let sz = chain.size();
     let _ = render_and_read(&mut gpu, &mut chain, &mut renderer, &textures, &list, sz);
     chain.present(1).expect("present 失败");
-    assert!(
-        !chain.was_recreated(),
-        "刚建好时不该是重建过的"
-    );
 
-    // ⚠ 不在这里 `begin_frame` —— resize 不需要开帧，而它成功后会**重建整条链**，
-    // 紧接着再开一次帧会因「列表已在记录中」而失败。下一段那里开帧才对。
-    chain.resize(&gpu, (SIZE * 2, SIZE * 2)).expect("resize 应当成功");
+    // 画过之后，尺寸变了必须**走重建**且仍然可用。
+    chain.resize(&mut gpu, (SIZE * 2, SIZE * 2)).expect("resize 不该报错");
     assert_eq!(chain.size(), (SIZE * 2, SIZE * 2), "尺寸必须真的变了");
     assert!(
         chain.was_recreated(),
-        "画过之后本机 `ResizeBuffers` 必然失败，所以这里必须走了重建 —— \
+        "画过之后本机 `ResizeBuffers` 必然失败（实测 0x887A0001），所以这里必须重建 —— \
          宿主据此重新把 swapchain 挂进 DComp 视觉树"
     );
 
@@ -247,7 +256,183 @@ fn resize_失败时会重建_并置位标记() {
         expected_coverage(sz.0)
     );
 }
+/// **诊断探针 2**：`ResizeBuffers` 被哪一步卡住 —— 采样数 × 只转屏障 / 画 / 画+读回。
+///
+/// # 为什么还要再拆一层
+///
+/// 探针 1 拆出「画过就失败、与 `Present` 无关」。之后两步都**没用**：等 GPU
+/// （早就有）、`list.Reset` + `allocator.Reset`（`Gpu::release_command_list_refs`）。
+/// 所以「画」本身必须再拆：只转资源状态屏障 / 真画 / 真画+读回，并把采样数也当变量
+/// —— MSAA 的 resolve 是唯一一条**读**后缓冲的命令。
+#[test]
+#[ignore = "诊断用。手动跑：--ignored --nocapture"]
+fn probe2_resize_buffers_矩阵() {
+    // (标签, 采样数, 模式 0=只转屏障 1=画 2=画+读回)
+    let cases: [(&str, u32, u8); 8] = [
+        ("s4 不开帧      ", 4, 9),
+        ("s4 开帧+提交空 ", 4, 7),
+        ("s4 转屏障+销毁槽", 4, 10),
+        ("s4 画+读回+销毁槽", 4, 12),
+        ("s1 只转屏障    ", 1, 0),
+        ("s1 画          ", 1, 1),
+        ("s4 画(不读回)  ", 4, 1),
+        ("s4 画+读回     ", 4, 2),
+    ];
+    for (label, samples, mode) in cases {
+        let Ok(mut gpu) = Gpu::new() else {
+            panic!("建不出 D3D12 设备");
+        };
+        let mut chain =
+            Swapchain::new(&gpu, (SIZE, SIZE), &swapchain_desc(), samples).expect("建交换链");
+        let mut renderer =
+            Renderer::new(&gpu.device, ATLAS_SIZE, chain.samples()).expect("建渲染器");
+        let textures = TextureTable::new();
+        let sz = chain.size();
 
+        if mode == 9 {
+            // 一帧都不开：纯 baseline。
+        } else if mode == 8 {
+            // 只开帧，不记录、不提交 —— 列表处于**记录中**且为空。
+            gpu.begin_frame().expect("开帧失败");
+        } else if mode == 7 {
+            // 开帧 + 空提交：命令列表走完一次完整的 Reset→Close→Execute→Signal。
+            gpu.begin_frame().expect("开帧失败");
+            gpu.submit().expect("提交失败");
+            gpu.wait_gpu().expect("等 GPU 失败");
+        } else if mode == 2 {
+            // 走完整帧（含 MSAA resolve 与读回拷贝）。
+            gpu.begin_frame().expect("开帧失败");
+            let q = one_red_quad(sz.0);
+            let _ = render_and_read(&mut gpu, &mut chain, &mut renderer, &textures, &q, sz);
+        } else {
+            gpu.begin_frame().expect("开帧失败");
+            chain.barrier_to_render_target(gpu.list()).expect("转 RT");
+            if mode == 1 {
+                let q = one_red_quad(sz.0);
+                let rtv = if chain.samples() > 1 {
+                    chain.msaa_rtv().expect("MSAA RTV")
+                } else {
+                    chain.current_rtv().expect("后缓冲 RTV")
+                };
+                renderer
+                    .record(RenderCtx {
+                        device: &gpu.device,
+                        list: gpu.list(),
+                        rtv,
+                        display_list: &q,
+                        size: sz,
+                        clear: Color::rgba(0.0, 0.0, 0.0, 1.0),
+                        textures: &textures,
+                        rt: chain.back_buffer().ok().as_ref(),
+                        damage: zephyra_core::frame::Damage::Full,
+                    })
+                    .expect("记录绘制命令失败");
+                if chain.samples() > 1 {
+                    chain.resolve_msaa(gpu.list()).expect("MSAA 解析失败");
+                }
+            }
+            chain.barrier_to_present(gpu.list()).expect("转回 PRESENT");
+            gpu.submit().expect("提交失败");
+            gpu.wait_gpu().expect("等 GPU 失败");
+        }
+
+        // 判别实验 3：把命令列表与分配器**整体销毁重建**（而不是 Reset），再 resize。
+        //   成功 ⇒ 那份引用只有销毁才能放走（`Reset` 不够）。
+        if mode >= 10 {
+            gpu.recreate_command_slots().expect("销毁重建命令槽");
+        }
+        let r = chain.resize(&mut gpu, (SIZE * 2, SIZE * 2));
+        println!(
+            "[probe2] {label} 采样{samples}: 第一次 resize={} 重建={} 尺寸={:?}",
+            if r.is_ok() { "Ok  " } else { "Err " },
+            chain.was_recreated(),
+            chain.size()
+        );
+
+        // 判别实验 1：紧接着再 resize 一次（换个尺寸）。
+        //   「第一次失败、第二次成功」⇒ 是**一次性**状态（提交后还没排空之类）。
+        //   「两次都失败」     ⇒ 引用是**持续**持有的，重试救不了。
+        if r.is_err() || chain.was_recreated() {
+            let r2 = chain.resize(&mut gpu, (SIZE * 3, SIZE * 2));
+            println!(
+                "[probe2] {label}: 紧接着第二次 resize={} 重建={} 尺寸={:?}",
+                if r2.is_ok() { "Ok  " } else { "Err " },
+                chain.was_recreated(),
+                chain.size()
+            );
+        }
+
+        // 判别实验 2：等 300ms 再 resize。
+        //   若与「紧接着重试」结果不同 ⇒ 是**时间**问题（GPU/DXGI 异步侧还没完）。
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        gpu.wait_gpu().expect("等 GPU 失败");
+        let r3 = chain.resize(&mut gpu, (SIZE, SIZE * 2));
+        println!(
+            "[probe2] {label}: 等 300ms 后 resize={} 重建={} 尺寸={:?} removed=0x{:08X}",
+            if r3.is_ok() { "Ok  " } else { "Err " },
+            chain.was_recreated(),
+            chain.size(),
+            gpu.removed_reason().0 as u32
+        );
+    }
+}
+/// **诊断探针**：`ResizeBuffers` 到底被哪一步卡住。
+///
+/// # 为什么需要它
+///
+/// 本仓为 `0x887A0001`（`DXGI_ERROR_INVALID_CALL`）绕了三轮弯路，每轮都靠读码猜：
+/// 先猜命令列表 → 改双槽分配器环（**没用**）→ 准备再猜 MSAA。三轮都错。
+/// 唯一可靠的办法是把步骤**逐个拆开**，让回码说话。
+///
+/// 三个变体逐步加料，唯一变量是「做没做那一步」：
+///
+/// | 变体 | 画 | 提交 | `Present` |
+/// |---|---|---|---|
+/// | A | ✗ | ✗ | ✗ |
+/// | B | ✓ | ✓ | ✗ |
+/// | C | ✓ | ✓ | ✓ |
+///
+/// 结论（实测，见 `resize_被_present 卡住` 断言）：**C 失败而 B 成功** ⇒
+/// 卡点不在我们自己的队列，而在 **DXGI 那一侧尚未完成的 present**。
+#[test]
+#[ignore = "诊断用。手动跑：--ignored --nocapture"]
+fn probe_resize_buffers_被哪一步卡住() {
+    for (label, do_draw, do_present) in [
+        ("A 不画不 present", false, false),
+        ("B 画+提交，不 present", true, false),
+        ("C 画+提交+present", true, true),
+    ] {
+        let Ok(mut gpu) = Gpu::new() else {
+            panic!("建不出 D3D12 设备");
+        };
+        let mut chain =
+            Swapchain::new(&gpu, (SIZE, SIZE), &swapchain_desc(), MSAA_SAMPLES).expect("建交换链");
+        let mut renderer =
+            Renderer::new(&gpu.device, ATLAS_SIZE, chain.samples()).expect("建渲染器");
+        let textures = TextureTable::new();
+
+        if do_draw {
+            gpu.begin_frame().expect("开帧失败");
+            let sz = chain.size();
+            let q = one_red_quad(sz.0);
+            let _ = render_and_read(&mut gpu, &mut chain, &mut renderer, &textures, &q, sz);
+            if do_present {
+                chain.present(1).expect("present 失败");
+            }
+        }
+
+        let r = chain.resize(&mut gpu, (SIZE * 2, SIZE * 2));
+        println!(
+            "[probe] {label}: resize = {}, 重建 = {}, 链尺寸 {:?}",
+            match &r {
+                Ok(()) => "Ok".to_string(),
+                Err(e) => format!("Err({})", e),
+            },
+            chain.was_recreated(),
+            chain.size()
+        );
+    }
+}
 /// 重建后旧链**必须还活着**，直到宿主把新链挂进 DComp 并 Commit。
 ///
 /// # 这条守住什么
@@ -287,7 +472,7 @@ fn 重建后旧链在宿主重新挂载之前不能释放() {
     let _ = render_and_read(&mut gpu, &mut chain, &mut renderer, &textures, &list, sz);
     chain.present(1).expect("present 失败");
 
-    chain.resize(&gpu, (SIZE * 2, SIZE * 2)).expect("resize 应当成功");
+    chain.resize(&mut gpu, (SIZE * 2, SIZE * 2)).expect("resize 应当成功");
     assert!(chain.was_recreated(), "本机画过之后必然走重建");
 
     // 判据一：旧链还在。
@@ -321,13 +506,13 @@ fn 重建后旧链在宿主重新挂载之前不能释放() {
 /// 而窗口最小化是**正常使用**的一部分。
 #[test]
 fn 零尺寸_resize_被忽略而不是报错() {
-    let Ok(gpu) = Gpu::new() else {
+    let Ok(mut gpu) = Gpu::new() else {
         panic!("建不出 D3D12 设备");
     };
     let mut chain = Swapchain::new(&gpu, (SIZE, SIZE), &swapchain_desc(), MSAA_SAMPLES).expect("建交换链");
     for bad in [(0, 0), (0, 480), (640, 0)] {
         chain
-            .resize(&gpu, bad)
+            .resize(&mut gpu, bad)
             .unwrap_or_else(|e| panic!("resize 到 {bad:?} 不该报错，却得到 {e}"));
         assert_eq!(chain.size(), (SIZE, SIZE), "尺寸不该被零值改写");
     }
@@ -370,7 +555,7 @@ fn render_and_read(
     // 后缓冲在开帧之后仍是 `PRESENT` —— 不转就没有渲染目标可用，
     // 而 D3D12 **不会**为此报任何错。
     chain
-        .barrier_to_render_target(&gpu.list)
+        .barrier_to_render_target(gpu.list())
         .expect("转 RENDER_TARGET");
 
     // ⚠ 渲染目标必须与 PSO 的 `SampleDesc.Count` 一致 —— 所以这里**跟着
@@ -385,7 +570,7 @@ fn render_and_read(
     let report = renderer
         .record(RenderCtx {
             device: &gpu.device,
-            list: &gpu.list,
+            list: gpu.list(),
             rtv,
             display_list: list,
             size,
@@ -403,9 +588,9 @@ fn render_and_read(
     // 漏掉它的症状与「什么都没画」**完全一样**（读回的是上一帧内容或全黑），
     // 所以这条必须在这里，而不能靠"生产路径记得调"。
     if chain.samples() > 1 {
-        chain.resolve_msaa(&gpu.list).expect("MSAA 解析失败");
+        chain.resolve_msaa(gpu.list()).expect("MSAA 解析失败");
     }
-    chain.barrier_to_present(&gpu.list).expect("转回 PRESENT");
+    chain.barrier_to_present(gpu.list()).expect("转回 PRESENT");
 
     let index = chain.back_buffer_index();
     // 读回只**记录**拷贝；提交/等待/映射由这里做 —— 分成两处 `submit` 会让第二次
@@ -457,13 +642,13 @@ fn record_read_back(gpu: &Gpu, chain: &Swapchain, index: u32) -> Staging {
     let src = chain.buffer(index).expect("取后缓冲");
     // 后缓冲此刻已是 `PRESENT`，转 `COPY_SOURCE` 才能被拷贝；拷完转回去。
     Gpu::barrier(
-        &gpu.list,
+        gpu.list(),
         &src,
         D3D12_RESOURCE_STATE_PRESENT,
         D3D12_RESOURCE_STATE_COPY_SOURCE,
     );
     unsafe {
-        gpu.list.CopyTextureRegion(
+        gpu.list().CopyTextureRegion(
             &D3D12_TEXTURE_COPY_LOCATION {
                 pResource: std::mem::ManuallyDrop::new(Some(buffer.clone())),
                 Type: D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT,
@@ -494,7 +679,7 @@ fn record_read_back(gpu: &Gpu, chain: &Swapchain, index: u32) -> Staging {
         );
     }
     Gpu::barrier(
-        &gpu.list,
+        gpu.list(),
         &src,
         D3D12_RESOURCE_STATE_COPY_SOURCE,
         D3D12_RESOURCE_STATE_PRESENT,

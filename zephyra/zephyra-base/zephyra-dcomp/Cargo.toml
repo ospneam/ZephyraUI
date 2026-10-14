@@ -38,6 +38,11 @@ log = "0.4"
 # 版本错配而不是任何一段代码。所以这里与宿主对齐版本，让"接得上"这件事由类型系统
 # 保证。
 [target.'cfg(windows)'.dependencies]
+# `IDCompositionVisual2::SetTransform2` 的入参类型就是 `windows_numerics::Matrix3x2`，
+# 而 `windows` 只**转发**这个类型、不重导出 —— 所以要直接依赖它才能把矩阵传进去。
+# 它是 `windows` 的同仓子 crate，本就��� `Cargo.lock` 里，不引入额外下载。
+windows-numerics = "0.3"
+
 windows = { version = "0.62", features = [
     "Win32_Foundation",
     "Win32_Graphics_Direct3D11",

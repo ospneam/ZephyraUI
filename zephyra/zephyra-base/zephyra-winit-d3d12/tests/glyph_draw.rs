@@ -173,14 +173,14 @@ fn 字形_在GPU上与CPU参考图一致() {
     // 图集必须在**绘制之前**录进同一条命令列表：图集纹理是每帧重建的资源，
     // 「先画下一帧再传」会在中间那帧读到已释放的纹理。
     renderer
-        .record_upload_atlas(&gpu.list, &cpu.atlas_pixels())
+        .record_upload_atlas(gpu.list(), &cpu.atlas_pixels())
         .expect("上传图集失败");
 
     let textures = TextureTable::new();
     let report = renderer
         .record(zephyra_winit_d3d12::RenderCtx {
             device: &gpu.device,
-            list: &gpu.list,
+            list: gpu.list(),
             rtv: target.rtv,
             display_list: cpu.list(),
             size: (SIZE, SIZE),
@@ -197,7 +197,7 @@ fn 字形_在GPU上与CPU参考图一致() {
     );
 
     let staging = target
-        .record_readback(&gpu.device, &gpu.list)
+        .record_readback(&gpu.device, gpu.list())
         .expect("记录回读拷贝失败");
     gpu.submit().expect("提交失败");
     gpu.wait_gpu().expect("等 GPU 失败");
