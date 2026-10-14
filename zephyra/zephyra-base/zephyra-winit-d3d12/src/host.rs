@@ -240,7 +240,7 @@ impl<V: View> HostWindow<V> {
             buffer_count: 2,
             format: windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_R8G8B8A8_UNORM,
         };
-        let chain = Swapchain::new(&gpu, (size.width, size.height), &desc, crate::swapchain::MSAA_SAMPLES)
+        let chain = Swapchain::new(&gpu, (size.width, size.height), &desc, crate::swapchain::msaa_samples())
             .expect("创建 composition swapchain");
 
         // composition swapchain **必须**挂在 visual 上才会被合成，否则窗口是黑的。
@@ -275,6 +275,12 @@ impl<V: View> HostWindow<V> {
             "[zephyra-d3d12] MSAA: {}×",
             if chain.samples() > 1 { "开" } else { "关（无多重采样目标）" }
         );
+        // 二分开关必须**自己打出来**：跑完一轮二分，回头看日志时如果分不清
+        // 「关掉 MSAA 之后不挂了」和「那次根本没设环境变量」，这轮二分就白做。
+        // 这一行让每份日志自带生效配置。
+        if crate::renderer::filters_disabled() {
+            eprintln!("[zephyra-d3d12] 离屏滤镜：整条关掉（ZEPHYRA_NO_FILTERS）");
+        }
 
         let theme: &'static Theme = Box::leak(Box::new(Theme::dark()));
         Self {

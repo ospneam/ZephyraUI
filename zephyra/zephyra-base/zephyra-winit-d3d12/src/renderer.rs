@@ -766,6 +766,16 @@ fn damage_clear_rects(size: (u32, u32), damage: zephyra_core::frame::Damage) -> 
     }
 }
 
+/// 是否**整条离屏路径都不跑**（`ZEPHYRA_NO_FILTERS=1`）。
+///
+/// 给 GPU 挂掉时做二分用，见 [`Renderer::record`] 里 `no_filters` 那段说明。
+pub fn filters_disabled() -> bool {
+    matches!(
+        std::env::var("ZEPHYRA_NO_FILTERS").as_deref().map(str::trim),
+        Ok("1") | Ok("true") | Ok("on")
+    )
+}
+
 impl Renderer {
     /// 建根签名、PSO、描述符堆、顶点/索引缓冲与图集纹理。
     ///
@@ -1608,7 +1618,23 @@ pub fn record(&mut self, ctx: RenderCtx<'_>) -> Result<RenderReport, SurfaceErro
 
     // ---- 2. 分段 ----
     let mut report = RenderReport::default();
-    for seg in zephyra_fx::offscreen::plan_segments(display_list) {
+    // ⚠ `ZEPHYRA_NO_FILTERS=1` 把所有离屏（滤镜）段降级成普通段 —— 于是**整条离屏
+    // 路径一次都不跑**：不建 RT、不写描述符、不发那几道跨状态屏障。
+    //
+    // # 这是给 GPU 挂掉时做二分用的开关，不是产品选项
+    //
+    // 本机反复出现 `Present` 报 `DEVICE_REMOVED` 而 `GetDeviceRemovedReason` 说
+    // `DEVICE_HUNG`（真 TDR），而**调试层在本机两条路都不可用**（事后开启会让设备
+    // 刚建好就挂；改成建设备带 `D3D12_CREATE_DEVICE_DEBUG` 后直接访问违例退出）。
+    // 拿不到「哪个 API」的证据，只能靠**关掉子系统**二分。
+    //
+    // 离屏路径是首要嫌疑：本仓自己记过两处 `DEVICE_HUNG` 都在这里 —— 末趟结果还停在
+    // `RENDER_TARGET` 却被当采样源，以及往 `srv_heap` 写新描述符后没重新
+    // `SetDescriptorHeaps`。两处都已修，但离屏 RT 在 resize 时会**按新尺寸重建**，
+    // 而它的状态追踪是跨帧的 —— 重建与状态推理的交界处仍是最可疑的一段。
+    let segments = zephyra_fx::offscreen::plan_segments(display_list);
+    let no_filters = filters_disabled();
+    for seg in segments {
         match seg {
             zephyra_fx::offscreen::Segment::Plain(range) => {
                 if range.is_empty() {
@@ -1622,6 +1648,13 @@ pub fn record(&mut self, ctx: RenderCtx<'_>) -> Result<RenderReport, SurfaceErro
                 redraw,
                 key,
             } => {
+                if no_filters {
+                    // 降级成「什么都不做」而不是「画原命令」：滤镜一旦不生效，
+                    // 画原始内容（比如一张被模糊的图）会给出**看起来正常**的画面，
+                    // 让人以为二分没生效。只有什么都不画才能确定「这条路径没跑」。
+                    report.unimplemented_filters += 1;
+                    continue;
+                }
                 let item = display_list
                     .iter()
                     .nth(index)

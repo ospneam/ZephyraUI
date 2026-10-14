@@ -85,6 +85,31 @@ pub const BUFFER_COUNT: u32 = 2;
 /// 而不是冒"也许某设备不支持"的风险换一个理论上更好的 8×。
 pub const MSAA_SAMPLES: u32 = 4;
 
+/// **运行期**的 MSAA 采样数：`ZEPHYRA_MSAA=0` 关掉多��采样，否则用 [`MSAA_SAMPLES`]。
+///
+/// # 为什么要能关（这是给 GPU 挂掉时做二分用的开关，不是产品选项）
+///
+/// 本机反复出现 `Present` 报 `DEVICE_REMOVED` 而 `GetDeviceRemovedReason` 说
+/// `DEVICE_HUNG`（真 TDR），而**调试层在本机两条路都不可用**：事后
+/// `EnableDebugLayer()` 会让设备刚建好就挂；改成建设备时带
+/// `D3D12_CREATE_DEVICE_DEBUG` 后应用直接访问违例退出。于是拿不到「哪个 API」
+/// 的证据，只能靠**关掉子系统**来二分。
+///
+/// MSAA 的解析（`Swapchain::resolve_msaa`）与 `barrier_to_present` 的相对顺序是
+/// 首要嫌疑之一：resolve 目标必须在 `RENDER_TARGET`，而 MSAA 纹理在
+/// [`Swapchain::resize`] 里会被**整体重建**。
+///
+/// # 为什么不用命令行 flag 而是环境变量
+///
+/// 后端不解析命令行（那属于应用层）。环境变量在 `Gpu`/宿主初始化时就能读到，
+/// 不需要把参数一路传到渲染层。
+pub fn msaa_samples() -> u32 {
+    match std::env::var("ZEPHYRA_MSAA").as_deref().map(str::trim) {
+        Ok("0") | Ok("off") | Ok("false") => 1,
+        _ => MSAA_SAMPLES,
+    }
+}
+
 /// 一张多重采样颜色目标：纹理本体 + 它的渲染目标视图。
 ///
 /// # 为什么 RTV 描述符要与后缓冲**分开**数
