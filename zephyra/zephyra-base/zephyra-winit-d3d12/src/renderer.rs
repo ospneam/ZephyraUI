@@ -2444,12 +2444,19 @@ impl StreamBuffer {
         };
 
         unsafe {
-            gpu_barrier(
-                list,
-                &self.staging.resource,
-                D3D12_RESOURCE_STATE_GENERIC_READ,
-                D3D12_RESOURCE_STATE_COPY_SOURCE,
-            );
+            // ⚠⚠ **上传堆资源上不发任何屏障** —— 这是每帧上传路径上最大的浪费。
+            //
+            // D3D12 的上传堆资源**恒为 `GENERIC_READ`**，而它本身就是 `CopyBufferRegion`
+            // 要求的拷贝源状态。所以：
+            //
+            // - 转换 `GENERIC_READ → COPY_SOURCE → GENERIC_READ` 是**纯浪费**：状态最终
+            //   与没转换时一模一样，中间那段还得让 GPU 等一次；
+            // - 而且它是**非法**的 —— 上传堆资源不允许做状态转换（同文件纹理路径
+            //   `upload_atlas` / `upload_texture` 早就把这��句写进注释了：原先那条
+            //   `GENERIC_READ → COPY_SOURCE` 是非法的，现在纹理上传一条都不发）。
+            //
+            // 原先这两条屏障每帧发 2 次（顶点 + 索引），也就是每帧 4 条屏障白白排进
+            // 命令流，让 GPU 多做 4 次状态校验与屏障处理。
             gpu_barrier(
                 list,
                 &self.resident,
@@ -2462,12 +2469,6 @@ impl StreamBuffer {
                 &self.resident,
                 D3D12_RESOURCE_STATE_COPY_DEST,
                 self.draw_state,
-            );
-            gpu_barrier(
-                list,
-                &self.staging.resource,
-                D3D12_RESOURCE_STATE_COPY_SOURCE,
-                D3D12_RESOURCE_STATE_GENERIC_READ,
             );
         }
         Ok(())
