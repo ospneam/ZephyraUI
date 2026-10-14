@@ -512,13 +512,20 @@ fn 改偏移会重画() {
     );
 }
 
-/// 引擎替身在偏移后仍能给出字形（守住 `text_command` 折进 `origin` 那条路）。
+/// 引擎替身在偏移后仍能给出字形，且**最终屏幕位置**跟着容器平移。
+///
+/// # 断言的是「局部 + offset」而不是字形自身
+///
+/// 字形四边形按**元素原点**缓存（见 `Command::Text::glyphs`），平移体现在
+/// `offset` 上。断言 `glyphs[0].dst.x` 变了，等于要求缓存失效重算 —— 那正好是
+/// 本次要消掉的开销。所以这里断言**合起来**的结果：`(dst + offset).x` 的差。
 #[test]
 fn 文字跟着容器一起位移() {
     let theme = Theme::builtin(ThemeVariant::Dark);
     let engine = null_engine();
     let ctx = Context::with_engine(&theme, &engine);
 
+    // 返回 (局部首字形 x, offset.x)。
     let origin_x = |tx: f32| {
         let el = Element::new(NodeTag::Text)
             .with_key("t")
@@ -528,22 +535,78 @@ fn 文字跟着容器一起位移() {
         zephyra_core::layout::layout(&mut node, Rect::new(0.0, 0.0, W, H), ctx);
         let mut list = DisplayList::new();
         zephyra_core::paint::render(&node, ctx, &mut list);
-        let g = list
+        let (dx, off) = list
             .iter()
             .find_map(|i| match &i.command {
-                Command::Text { glyphs, .. } => Some(glyphs.clone()),
+                Command::Text { glyphs, offset, .. } => Some((glyphs[0].dst.x, offset.x)),
                 _ => None,
             })
             .expect("应当产出字形");
-        g
+        (dx, off)
     };
 
-    let a = origin_x(0.0);
-    let b = origin_x(12.0);
-    assert!(!a.is_empty(), "NullEngine 也应给出字形");
+    let (da, oa) = origin_x(0.0);
+    let (db, ob) = origin_x(12.0);
     assert_eq!(
-        b[0].dst.x - a[0].dst.x,
+        (db + ob) - (da + oa),
         12.0,
-        "字形应随容器平移 12"
+        "字形的最终屏幕位置应随容器平移 12"
+    );
+}
+
+/// 跨帧**复用同一份字形四边形**（`Arc::ptr_eq`），只有 `offset` 变。
+///
+/// 这条是本轮优化的主判据：`Vec<GlyphQuad>` 每帧 239 次 × 1024 B = 136 KB，
+/// 占 resize 帧分配量的 40%。改完之后，字形四边形必须**一个字节都不重算**。
+///
+/// # 为什么改 `TRANSLATE_X` 而不是改视口宽
+///
+/// 视口宽变了确实会重排，但**裸 `Text` 节点的摆放矩形不变**（它在根容器里
+/// 从 x=0 起排），于是 `offset` 也不会变 —— 那就测不到「局部量复用 + 只有
+/// offset 变」这件事。`TRANSLATE_X` 只重绘不重排，正好把「几何变了但排版输入
+/// 一个字节没变」这个组合单独拎出来。
+#[test]
+fn 位移时字形四边形不重算() {
+    let theme = Theme::builtin(ThemeVariant::Dark);
+    let engine = null_engine();
+    let ctx = Context::with_engine(&theme, &engine);
+
+    let mut cache = zephyra_core::frame::FrameCache::new();
+    let grab = |cache: &mut zephyra_core::frame::FrameCache, tx: f32| {
+        let el = Element::new(NodeTag::Text)
+            .with_key("t")
+            .with(&props::TEXT, PropertyValue::static_str("ab"))
+            .with(&props::TRANSLATE_X, PropertyValue::float(tx));
+        cache.frame(&el, ctx, (W, H));
+        let mut list = DisplayList::new();
+        // 直接重放缓存里的保留树，绕过 `frame` 的「要不要重画」判定 ——
+        // 那条判定会让第二次调用返回 `Unchanged` 而不回放，字形就取不到了。
+        zephyra_core::paint::render(cache.node().expect("frame 后应有保留树"), ctx, &mut list);
+        // 必须先把结果绑到局部变量再返回：直接把 `list.iter()…` 放在块尾，
+        // 那个借用 `list` 的临时 `Iterator` 会活到 `list` 之后才析构
+        // （tail expression 的临时析构顺序）⇒ E0597。
+        let found = list
+            .iter()
+            .find_map(|i| match &i.command {
+                Command::Text { glyphs, offset, .. } => {
+                    Some((std::sync::Arc::clone(glyphs), *offset))
+                }
+                _ => None,
+            })
+            .expect("应当产出字形");
+        found
+    };
+
+    let (a, off_a) = grab(&mut cache, 0.0);
+    let (b, off_b) = grab(&mut cache, 12.0);
+    assert!(!a.is_empty(), "NullEngine 也应给出字形");
+    assert!(
+        std::sync::Arc::ptr_eq(&a, &b),
+        "跨帧必须复用同一份字形四边形 —— 否则 136 KB/帧 的分配还在"
+    );
+    assert_eq!(
+        off_b.x - off_a.x,
+        12.0,
+        "复用的前提下，只有 origin（offset）该变"
     );
 }

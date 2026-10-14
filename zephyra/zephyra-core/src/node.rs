@@ -65,11 +65,72 @@ pub struct Node {
     /// 刚测出的尺寸而不重算）。对外只暴露 [`Node::cached_size`]，因为外部拿到
     /// `MeasureResult` 也用不上——那会诱使调用方绕过 `pick_axis` 直接改矩形。
     pub(crate) measure_cache: Option<(Constraints, MeasureResult)>,
+    /// 字形四边形缓存（局部坐标，原点在元素上）。
+    ///
+    /// # 为什么是 `RefCell`
+    ///
+    /// 写入方是**绘制趟**（[`crate::paint::render`]），而它只拿到 `&Node`
+    /// —— 因为保留树的遍历是共享借用：绘制不能顺手改布局字段。用 `RefCell`
+    /// 而不是把 `render` 改成 `&mut Node`：后者会让整条渲染链从借用检查里
+    /// 受益变成受阻（`DisplayList` 的写入、`Context` 里那个 `RefCell<TextEngine>`
+    /// 都要跟着改借用关系）。
+    ///
+    /// 借用守卫的**作用域**必须收紧到「读缓存 / 算一次 / 写缓存」三步之内，
+    /// 绝不能跨 `render_rec` 的递归调用 —— 那会在第二次进入同一节点时 panic。
+    ///
+    /// # 失效时机
+    ///
+    /// **不由脏标记、不由 `MeasureResult` 管**。字形的局部坐标只由两件事决定：
+    ///
+    /// 1. 排版的**输入**（文本 / 样式 / `max_width`）⇒ 存在 [`GlyphQuadCache`]
+    ///    里当指纹逐项比。不用「测量趟重算过没有」当判据：resize 时约束一变，
+    ///    `measure` 就会重跑并产出一个**内容相同**的 `MeasureResult`（只是
+    ///    `size` 因 `pick_axis` 被夹了一下）—— 用那种判据命中率恒为 0，
+    ///    136 KB/帧 一分没省。
+    /// 2. 图集修订号（LRU 淘汰会把 uv 整体重排）⇒ 编号对上才用。
+    ///
+    /// 两条都在使用点就地判定，所以**不需要任何人在改样式时记得手动清它** ——
+    /// 那正是「靠人记得」最容易漏的一类缓存。
+    pub(crate) glyph_quads: std::cell::RefCell<Option<GlyphQuadCache>>,
     /// 本节点已摆放的矩形（相对父节点）。`pub(crate)`：只由排列趟写入。
     pub(crate) arranged_rect: Rect,
     /// 当前脏标记。`pub(crate)`：只由 [`crate::diff`] 直接合并（见
     /// [`Node::merge_dirty`]）。
     pub(crate) dirty: Dirty,
+}
+
+/// 挂在节点上的字形四边形缓存条目。
+///
+/// 见 [`Node::glyph_quads`] 的失效规则（两条都在这里就地判定）。
+pub(crate) struct GlyphQuadCache {
+    /// 排版输入指纹：文本。存一份自有副本，命中时与本帧的 `&str` 比。
+    ///
+    /// 为什么要存副本而不是存指针：`Node::text()` 借自 `PropertyStore`，而属性
+    /// 每帧由 diff 重新对账 —— 指针可能在下一帧指向别处。
+    pub(crate) text: Box<str>,
+    /// 排版输入指纹：样式。`TextStyle` 派生了 `PartialEq`。
+    ///
+    /// 里面那个 `Option<String>`（字体族）在命中路径上要克隆一次才能比 ——
+    /// 代价是每帧每文本节点一次小字符串克隆，换掉的是每帧每文本节点一次
+    /// **重新排版**。那个交换是划算的，而且量级差着两个数量级。
+    pub(crate) style: crate::text::TextStyle,
+    /// 排版输入指纹：`max_width`。
+    pub(crate) max_width: Option<f32>,
+    /// 算出这些四边形时的图集修订号（`TextStack::atlas_revision`）。
+    ///
+    /// LRU 淘汰会**整体重排**图集并把修订号加一 ⇒ 缓存里的 uv 全作废。
+    /// 这条判据不能用「已缓存字形数」代替 —— 淘汰一个再放进一个，数量不变而
+    /// uv 已经换了位置。宿主那边也是靠修订号来发现图集变化的
+    /// （`host.rs` 的 `atlas_revision_uploaded`）。
+    pub(crate) revision: u64,
+    /// 上面那个修订号对应的图集句柄。
+    ///
+    /// 一并存下来，是因为命中路径**不能**再调一次 `glyph_quads` 去拿它 ——
+    /// 那个调用会把四边形也重算一遍，等于缓存白做。
+    /// 同修订号 ⇒ 同句柄，宿主那边也是这么判的（`atlas_revision_uploaded`）。
+    pub(crate) atlas: crate::paint::TextureRef,
+    /// 局部坐标（原点 = 元素原点）的字形四边形。
+    pub(crate) glyphs: std::sync::Arc<[crate::paint::GlyphQuad]>,
 }
 
 impl Node {
@@ -82,6 +143,7 @@ impl Node {
             props: element.props().clone(),
             children: element.children().iter().map(Node::from_element).collect(),
             measure_cache: None,
+            glyph_quads: std::cell::RefCell::new(None),
             arranged_rect: Rect::default(),
             // 新节点必然需要一次完整布局。
             dirty: Dirty::Structure,
@@ -142,6 +204,15 @@ impl Node {
         if level.needs_layout() {
             // 布局变化会让测量缓存失效。
             self.measure_cache = None;
+            //
+            // ⚠ 这里**故意不清**字形四边形缓存。字形的局部坐标只由
+            // （文本 / 样式 / `max_width`）和图集修订号决定 —— 元素的**摆放矩形**
+            // 变了它一个字节都不变，而那个矩形正是 resize 那一趟每帧都在改的东西。
+            //
+            // 清它的判据是 [`GlyphQuadCache`] 里那份排版输入指纹。
+            //
+            // 早先这里也清过，于是 resize 时每帧全树清一遍 —— 缓存命中率恒为 0，
+            // 136 KB/帧 一分没省。这条注释是那个错的墓碑。
         }
         if level >= Dirty::Structure {
             for child in &mut self.children {

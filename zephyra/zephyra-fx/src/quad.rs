@@ -1274,6 +1274,7 @@ pub fn expand_range_translated_into(
             }
             Command::Text {
                 glyphs,
+                offset,
                 color,
                 filter,
                 blend,
@@ -1290,14 +1291,27 @@ pub fn expand_range_translated_into(
                 }
                 let rgba = [color.r, color.g, color.b, color.a];
                 let solid_before = out.solid.len();
-                for g in glyphs {
+                // ⚠ 字形的 `dst` 是**局部坐标**（原点 = 元素原点，见
+                // `Command::Text::glyphs`），所以这里要把「元素原点」和
+                // 「整帧的 translate」**都**加上 —— 少加哪一个都是
+                // 「文字整体偏移了一段，且不报任何错」。
+                //
+                // 两者相加在**展开期**而不是命令构造期，正是为了让四边形能跨帧
+                // 复用（构造期平移就等于每帧重算一遍，实测 136 KB/帧）。
+                let glyph_shift = |r: Rect| {
+                    shift_rect(
+                        r,
+                        Point::new(translate.x + offset.x, translate.y + offset.y),
+                    )
+                };
+                for g in glyphs.iter() {
                     // 零尺寸字形（空格）不产出几何，但已经推进了后续字形的
                     // offset —— 跳过它即正确的"什么都不画"。
                     if g.dst.width <= 0.0 || g.dst.height <= 0.0 {
                         continue;
                     }
                     out.solid.extend_from_slice(&Vertex::from_uv_rect(
-                        shift(g.dst),
+                        glyph_shift(g.dst),
                         px,
                         rgba,
                         g.uv,
@@ -1729,7 +1743,9 @@ mod tests {
                     uv: UvRect::new(0.1, 0.2, 0.05, 0.05),
                     dst: Rect::new(0.0, 0.0, 8.0, 8.0),
                     color_glyph: false,
-                }],
+                }]
+                .into(),
+                offset: Point::new(0.0, 0.0),
                 color: Color::rgb(1.0, 1.0, 1.0),
                 filter: zephyra_core::filter::FilterChain::none(),
                 blend: zephyra_core::filter::BlendMode::default(),
@@ -2781,7 +2797,9 @@ fn translate_also_applies_to_glyphs() {
             uv: UvRect::new(0.1, 0.2, 0.05, 0.05),
             dst: Rect::new(16.0, 16.0, 32.0, 32.0),
             color_glyph: false,
-        }],
+        }]
+        .into(),
+        offset: Point::new(0.0, 0.0),
         color: Color::rgb(1.0, 1.0, 1.0),
         filter: zephyra_core::filter::FilterChain::none(),
         blend: zephyra_core::filter::BlendMode::default(),

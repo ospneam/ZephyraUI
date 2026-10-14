@@ -152,8 +152,28 @@ pub enum Command {
     Text {
         /// 字形纹理句柄（宿主定义）。
         atlas: TextureRef,
-        /// 已定位的字形四边形。
-        glyphs: Vec<GlyphQuad>,
+        /// 已定位的字形四边形，坐标**相对 `offset`**。
+        ///
+        /// # 为什么是 `Arc<[GlyphQuad]>` 而不是 `Vec`
+        ///
+        /// 这条命令每帧都会被重建（`DisplayList` 不跨帧存活），而**字形位置本身
+        /// 几乎从不变** —— 变的是 `offset`（元素原点随布局/resize 移动）。
+        /// 若四边形里烘焙了绝对坐标，那么 resize 的每一帧都要重新算一遍 239 个
+        /// 字形、每帧分配 239 个 `Vec`。
+        ///
+        /// 实测（`docs/task-resize.md` §批 C · C1b）：`Vec<GlyphQuad>` 每帧
+        /// **136 KB**（239 × 1024 B），占 resize 帧分配量的 **40%**。
+        ///
+        /// 改成 `Arc<[GlyphQuad]>` + 独立的 `offset` 后，缓存挂在节点上，
+        /// 命令每帧只克隆一个 `Arc`（引用计数 +1，**零分配**）。
+        ///
+        /// 官方对应物：`CLayoutStorage` 存的是**相对元素原点**的布局结果，
+        /// 绘制趟叠加变换（`uielement.cpp` 的 `Render`/`Arrange` 都不重排文字）。
+        glyphs: std::sync::Arc<[GlyphQuad]>,
+        /// `glyphs` 的局部原点要落到屏幕上的哪个点。
+        ///
+        /// 坐标系是**像素**，与 `Quad::rect` / `Image::dst` 一致。
+        offset: Point,
         color: Color,
         filter: crate::filter::FilterChain,
         blend: crate::filter::BlendMode,
@@ -393,7 +413,7 @@ pub fn command_content_rect(cmd: &Command) -> Option<Rect> {
         // 文本的范围是所有字形四边形的并集 —— 一条命令里有 N 个字形四边形，
         // 整体模糊才正确（逐字形模糊会把每个字都糊成独立一块，视觉上完全不是
         // "这段文字被模糊了"）。
-        Command::Text { glyphs, .. } => Some(union_of_quads(glyphs)),
+        Command::Text { glyphs, offset, .. } => Some(union_of_quads(glyphs, *offset)),
         // Path 没有包围盒**字段**，但顶点里就带着位置 —— 遍历一次即得紧包围盒。
         //
         // 用**紧**包围盒而不是节点的布局矩形：三角化的结果不会铺满布局矩形
@@ -419,30 +439,38 @@ pub fn content_rect_is_drawable(cmd: &Command) -> bool {
     }
 }
 
-/// 一批字形四边形的并集。
+/// 一批字形四边形的并集，平移 `offset`。
 ///
 /// 空列表返回零尺寸矩形（不是 `None`）——调用方拿到后自然画不出东西，
 /// 而 `Option` 会逼每个调用点都写一遍 `if let`。
 ///
+/// # `offset` 为什么是参数而不是烘焙进每个 `dst`
+///
+/// 因为四边形要**跨帧复用**（见 [`Command::Text::glyphs`]）：烘焙了绝对坐标就
+/// 没法复用，每帧都得重算 + 重分配。
+///
 /// `pub` 是为了让 fx 的 `plan_offscreens` **调用同一份实现**而不是抄一份：
 /// 两条路径必须给出相同答案（见 `zephyra-fx::offscreen` 的模块文档），
 /// 抄一份就等于把「必须相同」变成「碰巧相同」。
-pub fn union_of_quads(glyphs: &[GlyphQuad]) -> Rect {
+pub fn union_of_quads(glyphs: &[GlyphQuad], offset: Point) -> Rect {
     let mut it = glyphs.iter();
     let Some(first) = it.next() else {
         return Rect::new(0.0, 0.0, 0.0, 0.0);
     };
+    // ⚠ 偏移**只**在这里加一次。四个边界各自加同一个 `offset` 等价于把
+    // 整个矩形平移 —— 与逐字形平移再取并集**完全相同**（平移对 min/max 可交换）。
+    // 写成一次而不是四次，是为了让"漏掉某一处平移"这件事在代码上就不可能发生。
     let (mut x0, mut y0, mut x1, mut y1) = (
-        first.dst.x,
-        first.dst.y,
-        first.dst.right(),
-        first.dst.bottom(),
+        first.dst.x + offset.x,
+        first.dst.y + offset.y,
+        first.dst.right() + offset.x,
+        first.dst.bottom() + offset.y,
     );
     for g in it {
-        x0 = x0.min(g.dst.x);
-        y0 = y0.min(g.dst.y);
-        x1 = x1.max(g.dst.right());
-        y1 = y1.max(g.dst.bottom());
+        x0 = x0.min(g.dst.x + offset.x);
+        y0 = y0.min(g.dst.y + offset.y);
+        x1 = x1.max(g.dst.right() + offset.x);
+        y1 = y1.max(g.dst.bottom() + offset.y);
     }
     Rect::new(x0, y0, x1 - x0, y1 - y0)
 }
@@ -736,6 +764,17 @@ fn moved(r: Rect, offset: Point) -> Rect {
 /// 文字色是 `Color`（含 alpha），而 `Command::Text` 的字形颜色**只有一个** `color`
 /// 字段 —— 没有任何"每字形不透明度"的机制。要让半透明容器里的文字也半透明，
 /// 只能在**造命令时**就把因子乘进颜色。放在 [`render_rec`] 里回填是做不到的。
+/// # 字形四边形缓存：为什么**按元素原点**存，而不是按屏幕位置
+///
+/// 元素原点 `origin` 每个 resize 帧都在变（那正是本轮优化要快的那一趟），
+/// 而字形的**局部**位置一个像素都不会变。把原点折进 `glyph_quads` 的参数里，
+/// 就等于把「每帧都要重算」变成了「每帧都要重算」——正是要消掉的那笔开销。
+///
+/// 官方对应物：`CLayoutStorage` 存的是相对元素原点的结果，变换在绘制趟叠加。
+///
+/// 代价是 [`Command::Text`] 多一个 `offset` 字段，且**三处**必须同步用它：
+/// `text_command`（写入）、`command_content_rect`（滤镜范围）、`zephyra-fx::quad`
+/// （顶点展开）。少改一处 ⇒ 那条路径上的几何整体错位，且不报任何错。
 fn text_command(node: &Node, ctx: Context<'_>, offset: Point, opacity: f32) -> Option<Command> {
     let text = node.text()?;
     let engine = ctx.engine?;
@@ -772,10 +811,53 @@ fn text_command(node: &Node, ctx: Context<'_>, offset: Point, opacity: f32) -> O
     // uv 与图集句柄由 `TextRender::glyph_quads` 给出 —— core 有字形图集
     // （`GlyphAtlas`，纯 CPU 数据），所以能算出 uv；但 core 不碰 GPU 纹理句柄，
     // 于是只用那个不透明的 `TextureRef`。
-    let (atlas, glyphs) = engine.glyph_quads(shaped, origin, &style)?;
+    //
+    // ⚠ 缓存命中时**只**克隆 `Arc`；`atlas` 必须重新取一次，因为它可能随图集
+    // 增长而变（`GlyphAtlas` 满了会重建纹理）。克隆 `Arc` 是引用计数 +1，
+    // 零分配 —— 这就是这一段存在的全部意义。
+    let revision = engine.atlas_revision();
+    // ⚠ 判据是**排版输入指纹**（文本 / 样式 / `max_width`）+ 图集修订号。
+    //
+    // 不要改成「测量趟这帧有没有重算」：resize 时约束一变 `measure` 就会重跑，
+    // 产出一个**内容相同**的 `MeasureResult`（只有 `size` 被 `pick_axis` 夹了一下）。
+    // 用那种判据，命中率恒为 0 —— 这正是早先那版的错误，136 KB/帧 一分没省。
+    let cached = {
+        let slot = node.glyph_quads.borrow();
+        match slot.as_ref() {
+            Some(c)
+                if c.revision == revision
+                    && c.text.as_ref() == text
+                    && c.style == style
+                    && c.max_width == max_width =>
+            {
+                Some((c.atlas.clone(), std::sync::Arc::clone(&c.glyphs)))
+            }
+            _ => None,
+        }
+    };
+    let (atlas, glyphs) = match cached {
+        Some(hit) => hit,
+        None => {
+            let (atlas, v) = engine.glyph_quads(shaped, Point::new(0.0, 0.0), &style)?;
+            let g: std::sync::Arc<[crate::paint::GlyphQuad]> = v.into();
+            // 借用守卫在**写回之前**就必须放掉：`glyph_quads` 已经是 `RefCell`，
+            // 在还持着读守卫时 `borrow_mut()` 会 panic。上面的读借用写在
+            // `let cached = { ... }` 的**独立作用域**里，正是为此。
+            *node.glyph_quads.borrow_mut() = Some(crate::node::GlyphQuadCache {
+                text: text.into(),
+                style: style.clone(),
+                max_width,
+                revision,
+                atlas: atlas.clone(),
+                glyphs: std::sync::Arc::clone(&g),
+            });
+            (atlas, g)
+        }
+    };
     Some(Command::Text {
         atlas,
         glyphs,
+        offset: origin,
         color: node
             .color(&crate::props::TEXT_COLOR, ctx)
             .unwrap_or(Color::rgb(1.0, 1.0, 1.0))

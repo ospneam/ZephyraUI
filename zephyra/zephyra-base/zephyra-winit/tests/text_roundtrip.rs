@@ -188,7 +188,15 @@ fn 文字_从栅格化一路到采样_都能对上() {
         },
         Command::Text {
             atlas: _handle.clone(),
-            glyphs: quads.clone(),
+            glyphs: quads.clone().into(),
+            // 上面 `glyph_quads` 用的原点是 (10, 40)，所以这里的 `quads` **已经**
+            // 是绝对坐标 —— `offset` 必须是零，否则会平移两次。
+            //
+            // 绘制趟走的是另一条路（`origin` = (0,0) 缓存 + `offset` 带位置），
+            // 见 `Command::Text::glyphs`。这里不跟随：这条测试的断言建立在
+            // 「四边形就是最终位置」上，改了形状就得连带改断言，而那不是
+            // 本次改动要验的东西。
+            offset: Point::new(0.0, 0.0),
             color: zephyra_core::core::Color::rgba(1.0, 1.0, 1.0, 1.0),
             filter: zephyra_core::filter::FilterChain::none(),
             blend: zephyra_core::filter::BlendMode::default(),

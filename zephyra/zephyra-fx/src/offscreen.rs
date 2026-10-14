@@ -886,7 +886,8 @@ mod tests {
         };
         let cmd = Command::Text {
             atlas: zephyra_core::paint::TextureRef::new("a"),
-            glyphs: vec![g(0.0), g(100.0), g(50.0)],
+            glyphs: vec![g(0.0), g(100.0), g(50.0)].into(),
+        offset: Point::new(0.0, 0.0),
             color: Color::rgb(0.0, 0.0, 0.0),
             filter: blur(1.0),
             blend: BlendMode::default(),
@@ -907,7 +908,8 @@ mod tests {
     fn 空文本不产生离屏需求() {
         let cmd = Command::Text {
             atlas: zephyra_core::paint::TextureRef::new("a"),
-            glyphs: vec![],
+            glyphs: Vec::new().into(),
+        offset: Point::new(0.0, 0.0),
             color: Color::rgb(0.0, 0.0, 0.0),
             filter: blur(2.0),
             blend: BlendMode::default(),
