@@ -200,7 +200,11 @@ pub struct Swapchain {
     /// 不把整个 [`Gpu`] 存进来：那会让 `Swapchain` 持有它自己的创建者，drop
     /// 顺序立刻变成一道要论证的题。
     gpu_device: ID3D12Device,
-    /// 连续两次 `Present` 之后仍未收到新尺寸的次数。
+    /// 本链是**新建**的（`recreate` 刚跑过）⇒ 下一次 `present` 前要先等 GPU。
+    ///
+    /// 见 [`Swapchain::present`] 里那段 Chromium 依据。拖动期间这里会被反复置位
+    /// —— 那正是这个标志存在的理由。
+    first_present_flush: bool,    /// 连续两次 `Present` 之后仍未收到新尺寸的次数。
     ///
     /// `Present` 失败时最常见的两个码是 `DXGI_ERROR_DEVICE_REMOVED`（设备没了）与
     /// `DXGI_ERROR_DEVICE_RESET`（设备重建中，**可恢复**）。后者应当重试而不是
@@ -261,12 +265,15 @@ impl Swapchain {
             size,
             buffer_count,
             gpu_device: gpu.device.clone(),
+            first_present_flush: false,
             consecutive_present_errors: 0,
             was_recreated: false,
             device_dead: None,
         };
         me.rebuild_views(&gpu.device)?;
         me.rebuild_msaa(&gpu.device)?;
+        // 刚建出来的链对 DComp 也是「新链」，同样要走一次「等 GPU 再 present」。
+        me.first_present_flush = true;
         Ok(me)
     }
 
@@ -448,6 +455,23 @@ impl Swapchain {
     pub fn present(&mut self, sync_interval: u32) -> Result<(), SurfaceError> {
         // 走 `zephyra_dcomp::present_one` 而不是自己调 `Present1`：
         // `pPresentParameters` 必须**非空**，传 `nullptr` 直接 AV（硬约束 #3）。
+        // ⚠ 新交换链的**第一次** present 之前，先把 GPU 排空。
+        //
+        // 官方依据（Chromium `ui/gl/swap_chain_presenter.cc:1155`）：
+        // DirectComposition 会在「新交换链第 1~2 次 present 之间」显示黑屏，
+        // 并且要等 GPU 做完，否则呈现昂贵内容时仍然会黑闪。
+        //
+        // 本仓对应场景：拖动期间 `Swapchain::resize` 失败一次就 `recreate()`
+        // 整条链，也就是**拖动中会新建很多条交换链**；每一条在 DComp 眼里都是
+        // 「新链 + 首次 present」⇒ 每次都可能黑一帧。这与 commit `9963ba1`
+        // 修的「半死状态 / 尺寸不匹配」是**两套不同的闪**。
+        //
+        // 这里只抄「等 GPU」那一半。Chromium 还做了把每个后缓冲 `CopyResource`
+        // 塞满同样内容 —— 那是他们的**软件路径**（present 时不重画每个缓冲）；
+        // 我们每帧都画当前后缓冲，两个缓冲在两个帧内都会被写到，那半不必要。
+        // ⚠ 新交换链的**第一次** present，调用方**应当先等 GPU**
+        //（用 `take_first_present_flush()` 问它，宿主据此调 `Gpu::wait_gpu`）。
+        // 说明见 [`Self::take_first_present_flush`]。
         let r = unsafe { present_one(&self.chain1, sync_interval) };
         match r {
             Ok(()) => {
@@ -468,6 +492,33 @@ impl Swapchain {
                 Err(SurfaceError::new("Present", e))
             }
         }
+    }
+
+    /// 本链是不是「刚建出来、还没首次 present」。`true` 时调用方**应当先等 GPU**。
+    ///
+    /// # 官方依据
+    ///
+    /// Chromium `ui/gl/swap_chain_presenter.cc:1155`：DirectComposition 会在
+    /// 「新交换链第 1~2 次 present 之间」显示黑屏，并且要等 GPU 做完，
+    /// 否则呈现昂贵内容时仍然会黑闪。
+    ///
+    /// 本仓对应场景：拖动期间 `Swapchain::resize` 失败一次就 `recreate()` 整条
+    /// 链，也就是**拖动中会新建很多条交换链**；每一条在 DComp 眼里都是
+    /// 「新链 + 首次 present」⇒ 每次都可能黑一帧。这与 commit `9963ba1` 修的
+    /// 「半死状态 / 尺寸不匹配」是**两套不同的闪**。
+    ///
+    /// # 为什么不在这里面等 GPU
+    ///
+    /// 等 GPU 要的是栅栏与命令队列，而它们在宿主的 `Gpu` 里。在本结构里再存一份
+    /// `Gpu` 会让 `Swapchain` 持有它自己的创建者，drop 顺序立刻变成一道要论证的题。
+    /// 所以只把**标志**交出去，等的事由宿主做（`Gpu::wait_gpu`，`surface.rs`）。
+    ///
+    /// Chromium 还做了把每个后缓冲 `CopyResource` 塞满同样内容 —— 那是他们的
+    /// **软件路径**（present 时不重画每个缓冲）；我们每帧都画当前后缓冲，
+    /// 两个缓冲在两个帧内都会被写到，那半不必要。
+    pub fn take_first_present_flush(&mut self) -> bool {
+        // ool 没有 .take()（那是 Option 的方法）；用 mem::take 取出来并复位。
+        std::mem::take(&mut self.first_present_flush)
     }
 
     /// 连续 `Present` 失败的次数。
@@ -617,6 +668,8 @@ impl Swapchain {
                 })?;
                 *self = fresh;
                 self.was_recreated = true;
+                // 新链第一次 present 可能被 DComp 显示成黑帧，见 present 的说明。
+                self.first_present_flush = true;
                 Ok(())
             }
         }

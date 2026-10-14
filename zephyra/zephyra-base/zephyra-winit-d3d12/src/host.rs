@@ -839,6 +839,17 @@ impl<V: View> HostWindow<V> {
             self.report_device_dead_once();
             return;
         }
+        // 新交换链第一次 present 之前把 GPU 排空。
+        //
+        // 官方依据见 `Swapchain::take_first_present_flush`（Chromium
+        // `ui/gl/swap_chain_presenter.cc:1155`）：不这么做，DComp 会在新链
+        // 第 1~2 次 present 之间显示黑帧。拖动期间我们每次 `recreate()` 都会
+        // 走到这儿 —— 也就是说这正是「拖动时闪」的另一半成因。
+        if self.chain.take_first_present_flush() {
+            // 等不到也不阻断 present：这是消闪，不是正确性前提。真在这儿死等，
+            // 症状会变成「UI 静止不变」—— 比黑一闪难查得多。
+            let _ = self.gpu.wait_gpu();
+        }
         if let Err(e) = self.chain.present(1) {
             eprintln!("[zephyra-d3d12] present 失败: {e}");
             self.drain_debug();
