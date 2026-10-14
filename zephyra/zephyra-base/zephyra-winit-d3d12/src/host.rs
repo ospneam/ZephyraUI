@@ -990,7 +990,16 @@ impl<V: View> HostWindow<V> {
             return SwapState::Failed;
         }
         if self.chain.was_recreated() {
-            eprintln!("[zephyra-d3d12] 交换链已重建，重新挂进 DComp 视觉树");
+            // 自述型日志：尺寸 + 第几次重建。没有它就只剩「重建了」这一条，
+            // 回头看日志分不清「窗口真的在反复变」还是「同一次 resize 反复重建」。
+            eprintln!(
+                "[zephyra-d3d12] 交换链已重建（连续第 {} 次；链 {}×{} → {}×{}），重新挂进 DComp 视觉树",
+                self.chain.resize_strikes(),
+                before.0,
+                before.1,
+                self.chain.size().0,
+                self.chain.size().1
+            );
             if self.rebind_visual() {
                 // 必须**在 rebind 成功之后**才放旧链。rebind 就是
                 // SetContent(新链) + Commit()；在那之前 DComp 的 visual 上挂的

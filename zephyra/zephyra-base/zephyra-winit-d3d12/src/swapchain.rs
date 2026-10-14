@@ -85,7 +85,8 @@ pub const BUFFER_COUNT: u32 = 2;
 /// 而不是冒"也许某设备不支持"的风险换一个理论上更好的 8×。
 pub const MSAA_SAMPLES: u32 = 4;
 
-/// **运行期**的 MSAA 采样数：`ZEPHYRA_MSAA=0` 关掉多��采样，否则用 [`MSAA_SAMPLES`]。
+
+/// **运行期**的 MSAA 采样数：ZEPHYRA_MSAA=0 关掉多重采样，否则用 MSAA_SAMPLES。
 ///
 /// # 为什么要能关（这是给 GPU 挂掉时做二分用的开关，不是产品选项）
 ///
@@ -253,6 +254,11 @@ pub struct Swapchain {
     /// SetContent，拆除时 SetContent(nullptr) 显式丢掉引用，然后 Commit()。
     /// 本仓的顺序改为：先建新链 → SetContent(新) → Commit → 才放旧链。
     superseded: Option<IDXGISwapChain1>,
+    /// 连续重建整条交换链仍**没成功**过 ResizeBuffers 的次数。熔断用。
+    ///
+    /// 见 [Self::resize] 失败分支里那段说明：实测本机一帧接一帧重建了 140 次，
+    /// 把 GPU 拖进 TDR。ResizeBuffers 一旦成功就清零。
+    resize_strikes: u32,
     ///
     /// # 为什么必须有这个标志
     ///
@@ -272,6 +278,12 @@ pub struct Swapchain {
 }
 
 impl Swapchain {
+    /// 连续重建超过这么多次仍未成功 ResizeBuffers ⇒ **停止重建**。
+    ///
+    /// 为什么是 3：一次拖动里重建 3 次已经足够让画面跟上；再往上就是
+    /// churn 而非纠错了。实测 140 次直接把 GPU 拖进 TDR。
+    const RECREATE_STRIKE_LIMIT: u32 = 3;
+
     /// 建一个 composition swapchain。
     ///
     /// `gpu.queue` 提供 `IUnknown`（`CreateSwapChainForComposition` 要的就是它）。
@@ -309,6 +321,7 @@ impl Swapchain {
             superseded: None,
             consecutive_present_errors: 0,
             was_recreated: false,
+            resize_strikes: 0,
             device_dead: None,
         };
         me.rebuild_views(&gpu.device)?;
@@ -569,10 +582,17 @@ impl Swapchain {
     pub fn consecutive_present_errors(&self) -> u32 {
         self.consecutive_present_errors
     }
-
     /// 设备是否已不可用（`GetDeviceRemovedReason` 的结论）。
     pub fn device_dead(&self) -> bool {
         self.device_dead.is_some()
+    }
+
+    /// 连续重建整条交换链仍未成功 `ResizeBuffers` 的次数。
+    ///
+    /// 给宿主打**自述型日志**用：没有它，日志里只有「交换链已重建」这一条，
+    /// 分不清「窗口真的在反复变尺寸」与「同一次 resize 被反复重建」。
+    pub fn resize_strikes(&self) -> u32 {
+        self.resize_strikes
     }
 
     /// 设备不可用的原因码（`DXGI_ERROR_DEVICE_HUNG` 等）。`None` = 设备还活着。
@@ -674,6 +694,7 @@ impl Swapchain {
 
         match resized {
             Ok(()) => {
+                self.resize_strikes = 0;
                 self.size = size;
                 self.rebuild_views(&gpu.device)?;
                 // MSAA 纹理不是交换链的一部分，`ResizeBuffers` 不会碰它 —— 必须
@@ -701,12 +722,36 @@ impl Swapchain {
                 self.rebuild_views(&gpu.device)?;
                 // 常见原因是「还有引用」，而分配器重置这条路在本机不通 —— 只能整条重建。
                 // 旧的 `chain` / `heap` / `views` 在赋值时被 drop，那正是「放手」要做的事。
+                // 常见原因是「还有引用」，而分配器重置这条路在本机不通 —— 只能整条重建。
+                //
+                // ⚠⚠ 但绝不能每帧重建一次。
+                //
+                // 实测（本机，ZEPHYRA_MSAA=0 那轮）：ResizeBuffers 失败 → 重建 →
+                // 下一帧又失败 → 又重建，一口气 140 次，最后 GPU 直接 HUNG。
+                // 每一次重建都是：新交换链 + 新后缓冲 + 新 RTV 堆 + 一次 SetContent +
+                // 一次 DComp Commit。这个量级的 GPU 对象 churn 与合成器提交足以把设备
+                // 拖进 TDR —— 那才是 DEVICE_HUNG 的来源，而 ResizeBuffers 失败只是症状。
+                //
+                // Chromium 遇到同样的情况（software_output_device_win_swapchain.cc:96）
+                // 直接结束 GPU 进程。我们没有第二个进程，所以改成熔断：连续重建超过
+                // RECREATE_STRIKE_LIMIT 次就停下来，保留当前这条链、按旧尺寸继续画，
+                // 下一帧再试。
+                //
+                // 为什么不用 consecutive_present_errors 那个计数：它数的是 present
+                // 失败，而这里要数的是「重建了几次都没成功」—— 后者才是 GPU churn 的度量。
+                self.resize_strikes = self.resize_strikes.saturating_add(1);
+                if self.resize_strikes > Self::RECREATE_STRIKE_LIMIT {
+                    // 安静地跳过本帧的 resize：链停在旧尺寸、自洽、可画。
+                    // 用户看到的是「窗口改小后内容没跟着变」，而不是设备挂掉。
+                    return Ok(());
+                }
                 let count = self.buffer_count;
                 // 重建也失败时，**保留原始 HRESULT** 当 source —— 那是「为什么不能 resize」的答案，
                 // 而重建失败的原因只是次要信息。
                 let fresh = Self::recreate(gpu, size, count, self.samples).map_err(|e2| {
                     SurfaceError::new(format!("ResizeBuffers 失败且重建也失败：{e2}"), e)
                 })?;
+
                                 // 不能直接 *self = fresh：那会**当场**析构旧链，而 DComp 的 visual
                 // 上还挂着 SetContent(旧链)。那一瞬 DComp 持有一个已释放的交换链，
                 // 下一帧合成即 use-after-free，实测表现为紧接「交换链已重建」之后
@@ -718,7 +763,6 @@ impl Swapchain {
                 let old_chain = std::mem::replace(&mut self.chain1, fresh.chain1.clone());
                 *self = fresh;
                 self.superseded = Some(old_chain);
-                self.was_recreated = true;
                 self.was_recreated = true;
                 // 新链第一次 present 可能被 DComp 显示成黑帧，见 present 的说明。
                 self.first_present_flush = true;
