@@ -109,7 +109,65 @@ bool DisplayScheduler::ShouldDraw() const {
 
 ---
 
-## 2. 没抄，以及为什么
+## 2. 最重要的一条：**Chromium 从不用 D3D12 建 DComp 交换链**
+
+全仓 `CreateSwapChainForComposition` 只有三个调用点，**每一个传的都是 D3D11 设备**：
+
+| 位置 | 传入的设备 |
+|---|---|
+| `software_output_device_win_swapchain.cc:169` | `d3d11_device` |
+| `d3d_image_backing_factory.cc:550` | `d3d11_device_` |
+| `dxgi_swap_chain_image_backing.cc:92` | `d3d11_device` |
+
+Chromium 的 **D3D12** 那条路根本不用 DXGI swapchain，而是走 composition texture：
+
+`ui/gl/dc_layer_tree.cc:144`：
+
+```cpp
+  d3d12_command_queue_ = GetDirectCompositionD3D12CommandQueue();
+  if (d3d12_command_queue_) {
+    Microsoft::WRL::ComPtr<EXPERIMENTAL_IDCompositionDevice6> dcomp_device6;
+    HRESULT hr = dcomp_device_.As(&dcomp_device6);
+    dcomp_device_6_ = std::move(dcomp_device6);
+  }
+```
+
+`ui/gl/dc_layer_tree.cc:892`：
+
+```cpp
+    // First call `PresentCompositionTextures` to specify the queue that the
+    // next `Commit` call uses to actually present the composition textures.
+    IUnknown* command_queue_unk = dc_layer_tree_->d3d12_command_queue_.Get();
+    HRESULT hr = dc_layer_tree_->dcomp_device_6_->PresentCompositionTextures(
+        &command_queue_unk, 1);
+```
+
+而且它在 `ui/gl/direct_composition_support.cc:1249` 明确把 D3D12 挡在 feature 后面：
+
+```cpp
+  if (SUCCEEDED(d3d11_device.As(&d3d11on12_device)) &&
+      !base::FeatureList::IsEnabled(features::kDCompOnD3D12)) {
+    // IDCompositionTexture is not implemented on an 11on12 ... It is however
+    // implemented on D3D12, and if the feature is enabled,
+    // IDCompositionDevice6::PresentCompositionTextures will be used for D3D12
+    // backed composition textures.
+    return false;
+  }
+```
+
+**对我们的意义**：本仓 `zephyra-winit-d3d12` 走的是「D3D12 设备 + `CreateSwapChainForComposition`
++ DComp `Present1`」—— 正是 Chromium **不**走的那条。修好 use-after-free 之后如果还 TDR，
+下一步就是这个架构选择，而不是继续调参数。
+
+两个方向（都不是小改动，都要单独评估）：
+- **换 D3D11 后端跑 DComp 窗口**（与 Chromium 的 swapchain 路径完全一致）。本仓已有
+  `zephyra-winit` 的 D3D11 渲染层，但没有 `HostWindow`。
+- **实现 composition texture 路径**（`IDCompositionDevice6` + `IDCompositionTexture`
+  + `PresentCompositionTextures`）。
+
+---
+
+## 3. 没抄，以及为什么
 
 | 项 | 出处 | 不抄的理由 |
 |---|---|---|
@@ -121,7 +179,18 @@ bool DisplayScheduler::ShouldDraw() const {
 
 ## 3. 待办（有证据、没动手）
 
-### 3.1 DComp 新交换链首次 present 的黑闪 ⭐ 最可能剩下那个闪
+### 3.1 换视觉内容时 `Commit` + 旧内容活到 Commit 之后 ✅ 本轮做了
+
+`dc_layer_tree.cc:626`：
+
+```cpp
+  if (dcomp_visual_content_changed) {
+    hr = content_visual_->SetContent(dcomp_visual_content_.Get());
+    CHECK_EQ(hr, S_OK);            // "SetContent(nullptr)" is used on teardown to drop refs
+  }
+```
+
+**这条直接命中了本轮 TDR 的真凶**（见 §4）。
 
 `ui/gl/swap_chain_presenter.cc:1155`：
 
@@ -182,3 +251,50 @@ void ExternalBeginFrameSourceWin::OnNeedsBeginFrames(bool needs_begin_frames) {
 ```
 
 本仓 `about_to_wait` 已经有 `dirty` 门（静止时一帧不跑），等价目的。
+---
+
+## 4. 本轮 TDR 的真凶：`recreate` 时的 use-after-free
+
+用户报的日志串：
+
+```text
+[zephyra-d3d12] 交换链已重建，重新挂进 DComp 视觉树
+[zephyra-d3d12] present 失败: GPU 设备实例已经暂停 (0x887A0005)
+[zephyra-d3d12] 设备不可用：DXGI_ERROR_DEVICE_HUNG (0x887A0007)
+```
+
+`GetDeviceRemovedReason` 给的是 **`DEVICE_HUNG`**（真 TDR），不是 `DEVICE_REMOVED`。
+
+### 顺序错在哪
+
+`Swapchain::resize` 的重建分支**当场**析构旧链：
+
+```rust
+*self = fresh;          // ← 旧 IDXGISwapChain1 在这里 Release
+self.was_recreated = true;
+```
+
+而重新挂 DComp 是在**之后**（宿主 `sync_swapchain` 看到 `was_recreated` 才调
+`rebind_visual`）。也就是说存在一个窗口期：
+
+> DComp 的 visual 上还挂着 `SetContent(旧链)`，而旧链已经被 `Release` 了。
+
+下一帧合成 / `Present` 拿到的是**已释放**的交换链 ⇒ use-after-free ⇒ GPU hang。
+
+### 修法
+
+顺序改成：**建新链 → `SetContent(新)` → `Commit` → 才放旧链**。
+
+- `Swapchain::superseded: Option<IDXGISwapChain1>` 保住旧链；
+- `take_superseded()` 由宿主在 `rebind_visual()` **成功后**才调；
+- `rebind_visual()` 改成返回 `bool`：它就是**释放旧链的许可**。
+  `SetContent` 或 `Commit` 任一失败都返回 `false`，此时**绝不能**放旧链 ——
+  DComp 还在用它。
+
+### 为什么现在才暴露
+
+`live_resize` 之前，一次拖动只产生一个 `Resized` 事件 ⇒ 一次 resize ⇒
+最多一次重建。改成 `WM_SIZE` 里逐帧跟随之后，拖动中**重建次数暴增**，这个
+use-after-free 从「一年碰不到一次」变成「拖一下就中」。
+
+也就是说：这条不是我新写的 bug，但我的改动把它从冷门路径挪到了热路径。

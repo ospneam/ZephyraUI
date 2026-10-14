@@ -974,7 +974,21 @@ impl<V: View> HostWindow<V> {
         }
         if self.chain.was_recreated() {
             eprintln!("[zephyra-d3d12] 交换链已重建，重新挂进 DComp 视觉树");
-            self.rebind_visual();
+            if self.rebind_visual() {
+                // 必须**在 rebind 成功之后**才放旧链。rebind 就是
+                // SetContent(新链) + Commit()；在那之前 DComp 的 visual 上挂的
+                // 还是旧链，早一步释放就是把 use-after-free 送给 DComp。
+                //
+                // 官方纪律见 Chromium ui/gl/dc_layer_tree.cc:626（只在内容变了时
+                // SetContent，拆除时 SetContent(nullptr)，然后 Commit）。
+                // 顺序错了的症状：日志打「交换链已重建」→ Present 报
+                // DEVICE_REMOVED → GetDeviceRemovedReason 说 DEVICE_HUNG。
+                drop(self.chain.take_superseded());
+            } else {
+                // rebind 没成功 ⇒ DComp 还在用旧链 ⇒ **绝不能放**。
+                // 旧链留在 superseded 里，等下一次成功的 rebind 才放手。
+                eprintln!("[zephyra-d3d12] 重新挂载未生效，旧交换链继续保留（DComp 仍在用它）");
+            }
         }
         if trace_enabled() {
             // 这一行是 resize 类缺陷的**唯一**观测点：它同时给出物理尺寸、
@@ -993,17 +1007,33 @@ impl<V: View> HostWindow<V> {
     }
 
     /// 把（可能已被重建的）交换链重新挂到 visual 上并提交。
-    fn rebind_visual(&mut self) {
+    ///
+    /// # 返回 `true` = DComp 已经在用新链了，调用方**可以**释放旧链
+    ///
+    /// 这个返回值不是「成没成功」这么简单，它是**释放旧链的许可**。
+    /// 返回 `false` 时 visual 上挂的还是旧链 —— 那时把它释放就是把
+    /// use-after-free 送给 DComp。调用方必须留住旧链（见
+    /// [`Swapchain::take_superseded`]）。
+    ///
+    /// 两步都必须成功才算：`SetContent` 只是**记下**新内容，`Commit()` 才让它
+    /// 生效（官方：DComp 的所有改动都要 Commit 才落地，见
+    /// `ui/gl/dc_layer_tree.cc:626`）。Commit 失败 ⇒ 视觉树仍是旧内容。
+    fn rebind_visual(&mut self) -> bool {
         let (Some(comp), Some(vis)) = (self.compositor.as_ref(), self.visual.as_ref()) else {
-            return;
+            // 没有合成器/visual（窗口已销毁、或平台层说不支持）—— 无可挂，
+            // 但也**没有别人在用旧链**，所以旧链可以安全释放。
+            return true;
         };
         if let Err(e) = comp.set_content_swapchain(vis, self.chain.as_swap_chain1()) {
             eprintln!("[zephyra-d3d12] 重新挂 visual 失败: {e}");
-            return;
+            return false;
         }
         if let Err(e) = comp.commit() {
+            // ⚠ 这一步失败也算「DComp 还没切过去」—— 见方法文档。
             eprintln!("[zephyra-d3d12] DComp commit 失败: {e}");
+            return false;
         }
+        true
     }
 
     /// 把上一帧的顶点流按 `kind` 归类（0 矩形 / 1 字形 / 2 图像），逐个返回。

@@ -212,7 +212,22 @@ pub struct Swapchain {
     consecutive_present_errors: u32,
     /// 上一次 [`Self::resize`] 是否走了「重建整条链」这条路。见该方法文档。
     was_recreated: bool,
-    /// 设备是否已不可用。`Some(code)` 时**整条链都不要再碰**。
+    /// 被**新链替换下来**的旧链。必须活到「DComp 重新 `SetContent`」之后才释放。
+    ///
+    /// # 为什么不能当场析构
+    ///
+    /// DComp 的 visual 上挂着 SetContent(旧链)。直接 *self = fresh 会当场
+    /// 析构旧链，那一瞬 DComp 仍持着一个**已释放**的交换链，下一帧合成就是
+    /// use-after-free。
+    ///
+    /// 实测症状正是这个顺序：日志打「交换链已重建」→ 紧接着 Present 报
+    /// 「GPU 设备实例已经暂停」→ GetDeviceRemovedReason 给
+    /// DXGI_ERROR_DEVICE_HUNG。
+    ///
+    /// 官方纪律（Chromium ui/gl/dc_layer_tree.cc:626）：只在内容**变了**时
+    /// SetContent，拆除时 SetContent(nullptr) 显式丢掉引用，然后 Commit()。
+    /// 本仓的顺序改为：先建新链 → SetContent(新) → Commit → 才放旧链。
+    superseded: Option<IDXGISwapChain1>,
     ///
     /// # 为什么必须有这个标志
     ///
@@ -266,6 +281,7 @@ impl Swapchain {
             buffer_count,
             gpu_device: gpu.device.clone(),
             first_present_flush: false,
+            superseded: None,
             consecutive_present_errors: 0,
             was_recreated: false,
             device_dead: None,
@@ -666,7 +682,18 @@ impl Swapchain {
                 let fresh = Self::recreate(gpu, size, count, self.samples).map_err(|e2| {
                     SurfaceError::new(format!("ResizeBuffers 失败且重建也失败：{e2}"), e)
                 })?;
+                                // 不能直接 *self = fresh：那会**当场**析构旧链，而 DComp 的 visual
+                // 上还挂着 SetContent(旧链)。那一瞬 DComp 持有一个已释放的交换链，
+                // 下一帧合成即 use-after-free，实测表现为紧接「交换链已重建」之后
+                // Present 报 DEVICE_HUNG。
+                //
+                // 纪律照 Chromium ui/gl/dc_layer_tree.cc:626：只在内容变了时
+                // SetContent，拆除时 SetContent(nullptr) 丢引用，然后 Commit。
+                // 本仓把旧链搬进 superseded，宿主 rebind_visual() 之后才放手。
+                let old_chain = std::mem::replace(&mut self.chain1, fresh.chain1.clone());
                 *self = fresh;
+                self.superseded = Some(old_chain);
+                self.was_recreated = true;
                 self.was_recreated = true;
                 // 新链第一次 present 可能被 DComp 显示成黑帧，见 present 的说明。
                 self.first_present_flush = true;
@@ -698,6 +725,14 @@ impl Swapchain {
     /// 宿主据此决定要不要把 [`Self::as_swap_chain1`] 重新挂进 DComp 视觉树。
     pub fn was_recreated(&self) -> bool {
         self.was_recreated
+    }
+
+    /// 取走被替换下来的旧链（取到就释放）。
+    ///
+    /// 调用方必须在**已经把新链 `SetContent` 上并 `Commit` 过**之后才调这个 ——
+    /// 早一步释放就是让 DComp 持有一个已释放的交换链，实测会 TDR。
+    pub fn take_superseded(&mut self) -> Option<IDXGISwapChain1> {
+        self.superseded.take()
     }
 
     /// 后缓冲格式。

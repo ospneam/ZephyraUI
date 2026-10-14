@@ -238,6 +238,72 @@ fn resize_失败时会重建_并置位标记() {
     );
 }
 
+/// 重建后旧链**必须还活着**，直到宿主把新链挂进 DComp 并 Commit。
+///
+/// # 这条守住什么
+///
+/// 早先 `Swapchain::resize` 直接 `*self = fresh`，旧链当场析构 —— 而 DComp 的
+/// visual 上还挂着 `SetContent(旧链)`。下一帧合成就是拿一个**已释放**的交换链，
+/// use-after-free。
+///
+/// 实测症状串（用户报的原文）：
+///
+/// ```text
+/// [zephyra-d3d12] 交换链已重建，重新挂进 DComp 视觉树
+/// [zephyra-d3d12] present 失败: GPU 设备实例已经暂停 (0x887A0005)
+/// [zephyra-d3d12] 设备不可用：DXGI_ERROR_DEVICE_HUNG (0x887A0007)
+/// ```
+///
+/// 官方纪律（Chromium `ui/gl/dc_layer_tree.cc:626`）：只在内容变了时 `SetContent`，
+/// 拆除时 `SetContent(nullptr)` 丢引用，然后 `Commit()`。
+///
+/// # 为什么用 `#[ignore]`
+///
+/// 需要真的 D3D12 设备。本机起不来（见 `d3d12_draw.rs` 头部）。
+#[test]
+#[ignore = "需要 GPU 与 DComp 现场；本机起不来（--ignored --nocapture 跑）"]
+fn 重建后旧链在宿主重新挂载之前不能释放() {
+    let Ok(mut gpu) = Gpu::new() else {
+        panic!("建不出 D3D12 设备");
+    };
+    let mut chain = Swapchain::new(&gpu, (SIZE, SIZE), &swapchain_desc(), MSAA_SAMPLES).expect("建交换链");
+    let mut renderer = Renderer::new(&gpu.device, ATLAS_SIZE, chain.samples()).expect("建渲染器");
+    let textures = TextureTable::new();
+    let list = one_red_quad(SIZE);
+
+    // 先画一帧 —— 这是让 `ResizeBuffers` 失败、从而走重建的前提。
+    gpu.begin_frame().expect("开帧失败");
+    let sz = chain.size();
+    let _ = render_and_read(&mut gpu, &mut chain, &mut renderer, &textures, &list, sz);
+    chain.present(1).expect("present 失败");
+
+    chain.resize(&gpu, (SIZE * 2, SIZE * 2)).expect("resize 应当成功");
+    assert!(chain.was_recreated(), "本机画过之后必然走重建");
+
+    // 判据一：旧链还在。
+    assert!(
+        chain.take_superseded().is_some(),
+        "重建后旧链必须保留在 superseded 里，\
+         否则 DComp 的 visual 会持有一个已析构的交换链（实测 TDR）"
+    );
+
+    // 判据二：取走之后就没有了 —— 避免「永远留着、每次重建都泄漏一条」。
+    assert!(
+        chain.take_superseded().is_none(),
+        "旧链只该保留一次：宿主 rebind 成功后取走，不该有第二份"
+    );
+
+    // 判据三：重建之后这条链本身仍然可用。
+    gpu.begin_frame().expect("开帧失败");
+    let sz = chain.size();
+    let big = one_red_quad(sz.0);
+    let (_, pixels) = render_and_read(&mut gpu, &mut chain, &mut renderer, &textures, &big, sz);
+    assert!(
+        count_red(&pixels) as f64 >= expected_coverage(sz.0),
+        "重建之后画不出来，说明保旧链那套改坏了重建本身"
+    );
+}
+
 /// 零尺寸（最小化）必须被安静地忽略。
 ///
 /// DXGI 拒绝 `ResizeBuffers(0, 0, …)`，而 `CreateSwapChainForComposition` 建出来的
