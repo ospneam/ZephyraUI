@@ -48,8 +48,18 @@ const AA_SLACK: f64 = 0.03;
 /// 期望的「红色主导」像素数。**由几何算出**，不写死 —— 魔数与几何脱节时，
 /// 画得完全正确也会被判失败（DX12 那个测试就栽过一次）。
 fn expected_coverage(size: u32) -> f64 {
-    let side = (1.0 - 2.0 * INSET) * size as f64;
-    side * side * (1.0 - AA_SLACK)
+    expected_coverage_rect(size, size)
+}
+
+/// 矩形区域的期望覆盖像素数。
+///
+/// ⚠ 不能拿正方形那版去算长宽不等的内容 —— 后缓冲比窗口大（容量制）时，内容常常是
+/// 宽扁的，按 `size` 当边长算会把宽度套到高度上，期望值虚高近一倍，判据反而会
+/// 误报「没画够」。
+fn expected_coverage_rect(w: u32, h: u32) -> f64 {
+    let sw = (1.0 - 2.0 * INSET) * w as f64;
+    let sh = (1.0 - 2.0 * INSET) * h as f64;
+    sw * sh * (1.0 - AA_SLACK)
 }
 
 /// 交换链能建成、能取到 RTV、能呈现，并且**真的把像素画上了**。
@@ -212,9 +222,8 @@ fn resize_之后仍然能画() {
 /// 它们各自消掉了一条真实的引用来源，只是**都不足以**单独让 `ResizeBuffers` 成功。
 /// 留着的理由是：它们让「重建」这条兜底路径的引用更干净。
 ///
-/// 所以本仓的 resize 策略是 Chromium 同款：**尺寸变了就重建交换链**，并把
-/// 重建频率压到「一次拖动一次」—— 去抖见 `resize_settled` 与
-/// `tests/resize_debounce.rs`。
+/// 本仓的 resize **不依赖 `ResizeBuffers`**：链只保证「≥ 客户区」，装不下才重建。
+/// 见 `Swapchain::resize` 的文档（含本机实测矩阵与 Chromium 对照）。
 #[test]
 #[ignore = "需要真 GPU 与 DComp。手动跑：--ignored --nocapture"]
 fn resize_buffers_在画过之后失败_并按设计重建() {
@@ -226,126 +235,160 @@ fn resize_buffers_在画过之后失败_并按设计重建() {
     let textures = TextureTable::new();
     let list = one_red_quad(SIZE);
 
-    // 先画一帧 —— 这正是让 `ResizeBuffers` 失败的前提。
     gpu.begin_frame().expect("开帧失败");
-    let sz = chain.size();
+    let sz = chain.content_size();
     let _ = render_and_read(&mut gpu, &mut chain, &mut renderer, &textures, &list, sz);
     chain.present(1).expect("present 失败");
 
-    // 画过之后，尺寸变了必须**走重建**且仍然可用。
-    chain.resize(&mut gpu, (SIZE * 2, SIZE * 2)).expect("resize 不该报错");
-    assert_eq!(chain.size(), (SIZE * 2, SIZE * 2), "尺寸必须真的变了");
+    // 画过之后本机 `ResizeBuffers` 必然失败（实测 `0x887A0001`），所以本仓的 resize
+    // **不再依赖它**：链只保证「≥ 客户区」，装不下才重建。
+    // 装得下的尺寸 ⇒ 什么都不做，内容尺寸立刻跟上。
+    //
+    // ⚠ 尺寸必须**真的**比容量小：链建在 (128,128)，而 128 + 8 = 136 是**装不下**的
+    // —— 那个「小尺寸」会被当成超容而重建，判据就成了假通过。
+    let small = (SIZE - 16, SIZE - 16);
+    chain.resize(&gpu, small).expect("resize 不该报错");
+    assert!(!chain.was_recreated(), "装得下就不该重建");
+    assert_eq!(chain.content_size(), small, "内容尺寸应立刻跟上窗口");
+    assert_eq!(chain.size(), (SIZE, SIZE), "装得下时容量不变");
+
+    // 超出容量 ⇒ 重建，且容量带余量。
+    let big = (SIZE * 4, SIZE * 2);
+    chain.resize(&gpu, big).expect("resize 不该报错");
+    assert!(chain.was_recreated(), "超出容量必须重建（视口不能比后缓冲大）");
+    assert_eq!(chain.content_size(), big, "内容尺寸仍按窗口");
     assert!(
-        chain.was_recreated(),
-        "画过之后本机 `ResizeBuffers` 必然失败（实测 0x887A0001），所以这里必须重建 —— \
-         宿主据此重新把 swapchain 挂进 DComp 视觉树"
+        chain.size().0 >= big.0 && chain.size().1 >= big.1,
+        "新容量 {:?} 必须 ≥ 窗口 {big:?}",
+        chain.size()
     );
 
     // 重建之后还得能画 —— 否则只是「不报错」而不是「能用」。
-    //
-    // ⚠ quad 要按**新尺寸**重造：沿用旧的那份，它只占新目标的左上角一小块 ——
-    // 覆盖率判据立刻会抓到（这也是判据按几何算、不写死值的另一个理由）。
+    drop(chain.take_superseded());
     gpu.begin_frame().expect("开帧失败");
-    let sz = chain.size();
-    let big = one_red_quad(sz.0);
-    let (_, pixels) = render_and_read(&mut gpu, &mut chain, &mut renderer, &textures, &big, sz);
+    let sz = chain.content_size();
+    let big_quad = one_red_quad(sz.0);
+    let (_, pixels) = render_and_read(&mut gpu, &mut chain, &mut renderer, &textures, &big_quad, sz);
     let drawn = count_red(&pixels);
+    // 读回的是整块后缓冲（容量），quad 只画了内容那一块 ⇒ 按面积折算。
+    let (bw, bh) = chain.size();
+    let frac = (sz.0 as f64 * sz.1 as f64) / (bw as f64 * bh as f64);
+    let want = expected_coverage_rect(sz.0, sz.1) * frac;
     assert!(
-        drawn as f64 >= expected_coverage(sz.0),
-        "重建之后只画出了 {drawn} 个红像素（要求 ≥ {:.0}）",
-        expected_coverage(sz.0)
+        drawn as f64 >= want,
+        "重建之后只画出了 {drawn} 个红像素（几何要求 ≥ {want:.0}）"
     );
 }
-/// **成功 present 之后熔断计数必须清零**（否则熔断一旦触发就是永久的）。
+
+/// **窗口缩放不应该重建交换链** —— 链只保证「≥ 客户区」。
 ///
-/// # 这条守的是什么
+/// # 这条守的是「拖动窗口时逐帧跟随」的机制本身
 ///
-/// `resize_strikes` 原来只在 `ResizeBuffers` 成功时清零 —— 而实测那个分支**永远不会
-/// 到达**（本机后缓冲一被用过就调不成功）。于是熔断一旦触发就再也回不去：用户实测
-/// 日志里第 4 次之后就再也没重建过，窗口从此再也更新不了。
+/// 本机 `ResizeBuffers` 在后缓冲被用过之后就再也调不成功（实测矩阵见
+/// `Swapchain::resize` 文档）。所以链**不跟着窗口变**，而是永远比窗口大：窗口缩放
+/// 只改视口（内容尺寸），本帧照常按新尺寸排版并绘制 ⇒ 清晰、逐帧、无缩放。
 ///
-/// 清零点改成「成功 present」：它才真的说明新链能画能呈现。熔断要挡的是「重建了却
-/// 一次都没 present 出去」的 GPU churn，而现在每次重建之后至少 present 过一次 ⇒ 计数
-/// 自然回落。
-/// **成功 present 之后熔断计数必须清零**（否则熔断一旦触发就是永久的）。
+/// 「比窗口大」不会露馅：DComp 按内容**自然尺寸 1:1** 画在原点，窗口只显示左上角
+/// 那块，其余在窗口外不可见。
 ///
-/// # 这条守的是什么
-///
-/// `resize_strikes` 原来只在 `ResizeBuffers` 成功时清零 —— 而实测那个分支**永远不会
-/// 到达**（本机后缓冲一被用过就调不成功）。于是熔断一旦触发就再也回不去：用户实测
-/// 日志里第 4 次之后就再也没重建过，窗口从此再也更新不了。
-///
-/// 清零点改成「成功 present」：它才真的说明新链能画能呈现。熔断要挡的是「重建了却
-/// 一次都没 present 出去」的 GPU churn，而现在每次重建之后至少 present 过一次 ⇒ 计数
-/// 自然回落。
-///
-/// # 为什么这里只画一次、不走完整帧循环
-///
-/// 被测行为是「present 成功 ⇒ 计数清零」，所以只需要**画一帧**（让后缓冲被用过，
-/// 从而 `ResizeBuffers` 必然失败）与 **一次 present**。中间不再走第二个
-/// `begin_frame`：实测「重建后紧接着 `begin_frame` → 提交」会让命令列表 `Close` 回
-/// `0x80070057`，那是**另一个**缺陷（见 `docs/gpu-hang-bisect.md` 的已知问题段），
-/// 与本条要验的东西正交，混在一起会让这条门禁变成「修好一个坏两个」。
+/// 以前这条性质不存在 —— 每来一个 `WM_SIZE` 就重建一条链，实测一拖重建 140 次把
+/// GPU 拖进 `DEVICE_HUNG`。本条就是那个回归的门禁。
 #[test]
 #[ignore = "需要真 GPU 与 DComp。手动跑：--ignored --nocapture"]
-fn present_成功后熔断计数清零() {
-    let Ok(mut gpu) = Gpu::new() else {
+fn 缩放窗口_不重建交换链() {
+    let Ok(gpu) = Gpu::new() else {
         panic!("建不出 D3D12 设备");
     };
-    let mut chain = Swapchain::new(&gpu, (SIZE, SIZE), &swapchain_desc(), MSAA_SAMPLES).expect("建交换链");
-    let mut renderer = Renderer::new(&gpu.device, ATLAS_SIZE, chain.samples()).expect("建渲染器");
-    let textures = TextureTable::new();
+    let start_size = (SIZE * 2, SIZE * 2);
+    let mut chain = Swapchain::new(&gpu, start_size, &swapchain_desc(), MSAA_SAMPLES)
+        .expect("建交换链");
+    assert_eq!(chain.size(), start_size, "建链时容量应等于请求尺寸");
 
-    // 基线：画一帧 → present。计数应为 0。
-    gpu.begin_frame().expect("开帧失败");
-    let sz = chain.size();
-    let q = one_red_quad(sz.0);
-    let (_r, px) = render_and_read(&mut gpu, &mut chain, &mut renderer, &textures, &q, sz);
+    // 模拟一次拖动：40 个连续变化的尺寸，全部**应该**只改内容尺寸。
+    let mut rebuilt = Vec::new();
+    for step in 0..40u32 {
+        let want = (SIZE * 2 + step * 8, SIZE * 2 + step * 4);
+        chain.resize(&gpu, want).expect("resize 不该报错");
+        assert_eq!(
+            chain.content_size(),
+            want,
+            "第 {step} 步的内容尺寸应立刻跟上窗口"
+        );
+        if chain.was_recreated() {
+            rebuilt.push(want);
+        }
+        // 内容尺寸永远不得超过容量 —— 否则会画到窗口外。
+        assert!(
+            chain.content_size().0 <= chain.size().0
+                && chain.content_size().1 <= chain.size().1,
+            "第 {step} 步内容 {:?} 超出容量 {:?}",
+            chain.content_size(),
+            chain.size()
+        );
+    }
+
+    // 40 步里只有「装不下」那几次会重建。上界按容量翻倍次数估：容量每次 ×1.25，
+    // 所以从 256 长到 576（宽 2.25 倍）必然重建 4 次 —— 4 次是几何决定的，不是实现
+    // 拖沓。关键是这个数与**步数无关**：40 步 4 次，而不是 40 步 40 次。
     assert!(
-        count_red(&px) as f64 >= expected_coverage(sz.0),
-        "基线帧只画出了 {} 个红像素（几何要求 ≥ {:.0}）",
-        count_red(&px),
-        expected_coverage(sz.0)
+        rebuilt.len() <= 5,
+        "40 步拖动重建了 {:?} 次（容量每次 ×1.25 ⇒ 宽 2.25 倍需 4 次；绝不能是 40 次）",
+        rebuilt.len()
     );
-    chain.present(1).expect("present 失败");
-    assert_eq!(chain.resize_strikes(), 0, "刚 present 完不该有累计");
+    assert!(
+        rebuilt.len() < 10,
+        "重建次数必须远小于步数，否则又会回到「一拖就把 GPU 拖进 DEVICE_HUNG」"
+    );
+}
 
-    // 画过之后改尺寸 ⇒ `ResizeBuffers` 必然失败（实测 0x887A0001）⇒ 走重建，计数 +1。
-    chain.resize(&mut gpu, (SIZE * 2, SIZE * 2)).expect("resize 不该报错");
-    drop(chain.take_superseded());
+/// 装不下时容量要**涨到够大并留余量**，且内容尺寸仍按窗口。
+#[test]
+#[ignore = "需要真 GPU 与 DComp。手动跑：--ignored --nocapture"]
+fn 容量不足时_重建并留余量() {
+    let Ok(gpu) = Gpu::new() else {
+        panic!("建不出 D3D12 设备");
+    };
+    let mut chain = Swapchain::new(&gpu, (SIZE, SIZE), &swapchain_desc(), MSAA_SAMPLES)
+        .expect("建交换链");
+    assert!(!chain.was_recreated(), "刚建好不算重建");
+
+    // 窗口长到超出当前容量 ⇒ 必须重建，且容量比请求**大**（有余量）。
+    let want = (SIZE * 8, SIZE * 4);
+    chain.resize(&gpu, want).expect("resize 不该报错");
     assert!(
         chain.was_recreated(),
-        "画过之后 ResizeBuffers 必然失败（实测 0x887A0001），应走重建"
+        "窗口超出容量时必须重建（链不能装下比它大的视口）"
     );
-    assert_eq!(chain.resize_strikes(), 1, "重建后计数应为 1");
-
-    // 一次成功 present ⇒ 计数必须回落，否则熔断会永久锁死。
-    if chain.take_first_present_flush() {
-        gpu.wait_gpu().expect("新链首帧 present 前等 GPU");
-    }
-    chain.present(1).expect("重建后首次 present 失败");
-    assert_eq!(
-        chain.resize_strikes(),
-        0,
-        "成功 present 就是链健康的证据，熔断计数必须在这里清零 —— \
-         否则计数只增不减，熔断一旦触发窗口就永远不再更新"
-    );
-
-    // 再来一轮 —— 这里顺带钉住实测得到的那条规律。
-    //
-    // 刚重建出来的链，它的**后缓冲一次都没被用过**，于是 `ResizeBuffers` 又能成功
-    // （实测矩阵里「什么都不开帧 ⇒ 成功」那一格）。所以第二轮**不重建**、计数保持 0。
-    //
-    // 这也解释了为什么生产路径上「重建 → 画一帧 → 下次 resize 又失败」会稳定复现：
-    // 每条新链在第一次被画之前都还是「干净」的。
-    chain.resize(&mut gpu, (SIZE * 3, SIZE * 2)).expect("resize 不该报错");
-    drop(chain.take_superseded());
+    assert_eq!(chain.content_size(), want, "内容尺寸仍按窗口");
     assert!(
-        !chain.was_recreated(),
-        "新链的后缓冲还没被画过，ResizeBuffers 应当能成功（实测矩阵的「什么都不开帧」格）"
+        chain.size().0 >= want.0 && chain.size().1 >= want.1,
+        "新容量 {:?} 必须 ≥ 窗口 {want:?}",
+        chain.size()
     );
-    assert_eq!(chain.resize_strikes(), 0, "没走重建就不该累计计数");
-    assert_eq!(chain.size(), (SIZE * 3, SIZE * 2), "尺寸应真的变了");
+    // 余量按 25% + 对齐 8 计算（见 `Swapchain::grown_capacity`）。
+    let expect_w = ((want.0 as f64 * 1.25).ceil() as u32).next_multiple_of(8);
+    assert_eq!(chain.size().0, expect_w, "宽度余量应符合 25% + 对齐 8");
+
+    // 重建之后还能画 —— 否则只是「不报错」而不是「能用」。
+    drop(chain.take_superseded());
+    let mut gpu = gpu;
+    let mut renderer =
+        Renderer::new(&gpu.device, ATLAS_SIZE, chain.samples()).expect("建渲染器");
+    let textures = TextureTable::new();
+    gpu.begin_frame().expect("开帧失败");
+    let sz = chain.content_size();
+    let q = one_red_quad(sz.0);
+    let (_, px) = render_and_read(&mut gpu, &mut chain, &mut renderer, &textures, &q, sz);
+    let drawn = count_red(&px);
+    // ⚠ 读回的是**整块后缓冲**（= 容量），而 quad 只画了内容那一块。所以期望值要按
+    // 「内容面积 / 缓冲面积」折算 —— 直接拿 `expected_coverage(content)` 去比会误判。
+    let (bw, bh) = chain.size();
+    let frac = (sz.0 as f64 * sz.1 as f64) / (bw as f64 * bh as f64);
+    let want = expected_coverage_rect(sz.0, sz.1) * frac;
+    assert!(
+        drawn as f64 >= want,
+        "重建之后只画出了 {drawn} 个红像素（几何要求 ≥ {want:.0}）"
+    );
 }
 
 #[test]

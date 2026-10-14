@@ -97,12 +97,7 @@ pub struct HostWindow<V: View> {
     /// 所以这里**不再跟着每一次 `WM_SIZE` 重建**：尺寸还在变的时候只把已有画面
     /// 缩放铺满窗口（见 [`Self::stretch_visual_to_client`]），等它**稳下来**才真的
     /// 重建一次。于是一次拖动 = 1 次重建，而不是 140 次。
-    resize_pending_since: Option<std::time::Instant>,
-    /// `resize_pending_since` 那一刻的尺寸。变了就说明还在动，去抖重新计时。
-    resize_pending_size: (u32, u32),
-    /// visual 当前被缩放到多少（相对链尺寸）。`(0,0)` = 没在缩放。见
-    /// [`Self::stretch_visual_to_client`]。
-    stretched_to: (u32, u32),    /// 「设备已不可用」是否已经报过一次。见 [`Self::report_device_dead_once`]。
+    /// 「设备已不可用」是否已经报过一次。见 [`Self::report_device_dead_once`]。
     reported_device_dead: bool,
     /// 文本引擎。用 `RefCell` 是为了让 core 的 `Context` 保持 `Copy` —— 布局递归要求
     /// 这一点。
@@ -316,9 +311,7 @@ impl<V: View> HostWindow<V> {
             reported_device_dead: false,
             swap_state: SwapState::Same,
             resize_failures: 0,
-            resize_pending_since: None,
-            resize_pending_size: (0, 0),
-            stretched_to: (0, 0),
+
             engine: std::cell::RefCell::new(engine),
             atlas_revision_uploaded: 0,
             backdrop_active: false,
@@ -749,7 +742,7 @@ impl<V: View> HostWindow<V> {
             rtv,
             display_list: self.cache.list(),
             damage,
-            size: self.chain.size(),
+            size: self.client_size(),
             clear,
             textures: &self.textures,
             rt: rt.as_ref(),
@@ -976,135 +969,61 @@ impl<V: View> HostWindow<V> {
     /// DComp 会继续显示上一次成功 present 的内容，等下一次成功 resize 再更新。
     fn sync_swapchain(&mut self) -> SwapState {
         let (w, h) = self.client_size();
-        if (w, h) == self.chain.size() {
-            self.resize_pending_since = None;
-            self.resize_pending_size = (w, h);
-            return SwapState::Same;
-        }
+
         // ⚠ 零尺寸 = 窗口被最小化。此时**什么都不做、本帧跳过**。
         //
-        // `Swapchain::resize` 对 `(0,0)` 是早退 `Ok(())`（DXGI 拒绝
-        // `ResizeBuffers(0,0,…)`），所以链会**停在旧尺寸** —— 而我们照样会把一个
-        // 0×0 的视口排出来、画进旧后缓冲、再 present。恢复时那一帧就是一张
-        // 尺寸不对的内容。
-        //
-        // 官方对应做法是把「不可见」当成**不画**的理由：Chromium 的最小化一路
-        // 走到 `DisplayScheduler::ShouldDraw()` 返回 false
-        // （`components/viz/service/display/display_scheduler.cc:602` 的
-        // `needs_draw_ && !output_surface_lost_ && visible_ && …`），
-        // 由 `HWNDMessageHandler::OnSize` 的 `HandleWindowMinimizedOrRestored`
-        // 触发（`ui/views/win/hwnd_message_handler.cc:2968`）。
-        //
+        // 官方对应做法是把「不可见」当成**不画**的理由：Chromium 的最小化一路走到
+        // `DisplayScheduler::ShouldDraw()` 返回 false
+        // （`components/viz/service/display/display_scheduler.cc`）。
         // 这里复用 `Failed` 这条「本帧空过」的路径，不新增状态。
         if w == 0 || h == 0 {
             return SwapState::Failed;
         }
-        // ★ 拖动去抖：尺寸还在变的时候**不重建**，只把已有画面缩放铺满窗口。
-        //
-        // 理由见 `resize_pending_since` 的文档。对照实测：一帧一重建会把 GPU 拖进
-        // DEVICE_HUNG 并让窗口一直闪；稳下来才重建 ⇒ 一次拖动只重建一次。
-        //
-        // RESIZE_SETTLE 取 **120ms** 的依据：Windows 把鼠标移动节流到显示器刷新率
-        // （约 60Hz），所以拖动中相邻两次尺寸变化最快也差 ~16ms，而「拖完松手」之后
-        // 尺寸会一直不变。120ms 远大于一帧、又短到人察觉不出，比最小值多留了几帧余量。
-        const RESIZE_SETTLE: std::time::Duration = std::time::Duration::from_millis(120);
 
-        let now = std::time::Instant::now();
-        let settled = resize_settled(
-            self.resize_pending_size,
-            self.resize_pending_since,
-            now,
-            (w, h),
-            RESIZE_SETTLE,
-        );
-        if !settled {
-            if self.resize_pending_size != (w, h) {
-                self.resize_pending_size = (w, h);
-                self.resize_pending_since = Some(now);
-            }
-            // 缩放铺满 ⇒ 没有黑边。本帧空过（不按新尺寸排版、也不 present），
-            // DComp 会继续显示上一次成功 present 的内容。
-            self.stretch_visual_to_client(w, h);
-            return SwapState::Failed;
+        // 内容尺寸没变 ⇒ 链也不用动，直接画。
+        if (w, h) == self.chain.content_size() {
+            return SwapState::Same;
         }
-        // 真的要重建了：去抖计时器复位。
-        self.resize_pending_since = None;
 
-        let (ew, eh) = self.effective_size();
-        let scale = self.window.scale_factor();
+        // 链**不跟着窗口变**：它只保证「≥ 客户区」。绝大多数尺寸变化在这里什么都不做 ——
+        // 只是把视口改成新的客户区，本帧照常按新尺寸排版并绘制，于是**拖动时逐帧跟随**。
+        //
+        // 只有窗口大到装不下时才重建整条链，且一次给 25% 余量。详见
+        // [`Swapchain::resize`] 的文档（含为什么本机不能用 `ResizeBuffers`）。
         let before = self.chain.size();
-        if let Err(e) = self.chain.resize(&mut self.gpu, (w, h)) {
-            // 设备已死在 `frame()` 里已经先拦过一道；这里只可能是「暂时不能 resize」
-            // （典型原因：GPU 还攥着上一帧的后缓冲）。让本帧空过，下一帧再试。
-            // ⚠ 这里**不**再打 error：拖动期间它每秒会来几十次，而唯一有用的信息
-            // 是设备死没死 —— 那由 `report_device_dead_once` 负责，只打一次。
+        if let Err(e) = self.chain.resize(&self.gpu, (w, h)) {
             self.resize_failures = self.resize_failures.saturating_add(1);
-            if trace_enabled() {
-                eprintln!("[trace] resize 到 {w}×{h} 失败（第 {} 次连续失败）：{e}", self.resize_failures);
-            }
-            // 链停在旧尺寸 ⇒ 必须缩放铺满，否则多出来的区域就是黑边。
-            self.stretch_visual_to_client(w, h);
+            eprintln!("[zephyra-d3d12] 调整交换链容量到 {w}×{h} 失败（第 {} 次）：{e}", self.resize_failures);
             return SwapState::Failed;
         }
         if self.chain.was_recreated() {
-            // 自述型日志：尺寸 + 第几次重建。没有它就只剩「重建了」这一条，
-            // 回头看日志分不清「窗口真的在反复变」还是「同一次 resize 反复重建」。
+            // 自述型日志：容量从多少涨到多少。没有它就分不清「窗口还在拖」与
+            // 「同一次调整反复重建」。
             eprintln!(
-                "[zephyra-d3d12] 交换链已重建（连续第 {} 次；链 {}×{} → {}×{}），重新挂进 DComp 视觉树",
-                self.chain.resize_strikes(),
-                before.0,
-                before.1,
-                self.chain.size().0,
-                self.chain.size().1
+                "[zephyra-d3d12] 后缓冲容量 {before:?} → {:?}（客户区 {w}×{h}），重建交换链",
+                self.chain.size()
             );
             if self.rebind_visual() {
-                // 必须**在 rebind 成功之后**才放旧链。rebind 就是
-                // SetContent(新链) + Commit()；在那之前 DComp 的 visual 上挂的
-                // 还是旧链，早一步释放就是把 use-after-free 送给 DComp。
+                // 必须**在 rebind 成功之后**才放旧链 —— rebind 是
+                // SetContent(新链) + Commit()；在那之前 DComp 的 visual 上挂的还是
+                // 旧链，早一步释放就是把 use-after-free 送给 DComp。
                 //
                 // 官方纪律见 Chromium ui/gl/dc_layer_tree.cc:626（只在内容变了时
                 // SetContent，拆除时 SetContent(nullptr)，然后 Commit）。
-                // 顺序错了的症状：日志打「交换链已重建」→ Present 报
-                // DEVICE_REMOVED → GetDeviceRemovedReason 说 DEVICE_HUNG。
                 drop(self.chain.take_superseded());
             } else {
-                // rebind 没成功 ⇒ DComp 还在用旧链 ⇒ **绝不能放**。
-                // 旧链留在 superseded 里，等下一次成功的 rebind 才放手。
                 eprintln!("[zephyra-d3d12] 重新挂载未生效，旧交换链继续保留（DComp 仍在用它）");
             }
         }
         if trace_enabled() {
-            // 这一行是 resize 类缺陷的**唯一**观测点：它同时给出物理尺寸、
-            // 有效尺寸、缩放比与交换链是否重建。「拉窗口后右侧留白」这种症状，
-            // 看到这一行才能分清是「没重排」还是「排了新缓冲没被显示」—— 两者的
-            // 排查方向完全相反。
             eprintln!(
-                "[trace] resize：客户区 {before:?} → {}×{}；有效 {ew:.0}×{eh:.0}；\
-                 scale {scale:.2}；交换链重建 {}",
-                self.chain.size().0,
-                self.chain.size().1,
+                "[trace] 内容尺寸 → {w}×{h}；后缓冲容量 {:?}；重建 {}",
+                self.chain.size(),
                 self.chain.was_recreated(),
             );
         }
-
-        // ★ 兜底：**链最终仍与客户区对不上**（熔断跳过重建、或重建出的尺寸又对不上）时，
-        // 缩放铺满并让本帧空过。
-        //
-        // 这一条治的是用户报的「重建第三次以后会有黑边」：熔断让 `resize` 静默跳过，
-        // 链停在旧尺寸，而窗口已经是新尺寸。之前这条路径**既没缩放、也照样返回
-        // `Synced`** —— 于是按新窗口尺寸排的版被画进旧尺寸后缓冲再 present，黑边
-        // 与错位一起出现。
-        //
-        // 为什么不能继续 `Synced`：那会按客户区尺寸排版、却画进尺寸不同的后缓冲，
-        // 视口与后缓冲对不上 ⇒ 画面本身就是错的。空过更安全：flip model 下 DComp 会
-        // 继续显示上一次成功 present 的内容，缩放后正好铺满。
-        if self.chain.size() != (w, h) {
-            self.stretch_visual_to_client(w, h);
-            return SwapState::Failed;
-        }
         SwapState::Synced
     }
-
     /// 把（可能已被重建的）交换链重新挂到 visual 上并提交。
     ///
     /// # 返回 `true` = DComp 已经在用新链了，调用方**可以**释放旧链
@@ -1127,50 +1046,13 @@ impl<V: View> HostWindow<V> {
             eprintln!("[zephyra-d3d12] 重新挂 visual 失败: {e}");
             return false;
         }
-        // 新链尺寸已经和客户区一致 ⇒ 把缩放收回 1,1，否则内容会被多缩一次。
-        let (w, h) = self.client_size();
-        if let Err(e) = comp.set_scale(vis, 1.0, 1.0) {
-            eprintln!("[zephyra-d3d12] 复位 visual 缩放失败: {e}");
-            return false;
-        }
-        self.stretched_to = (w, h);
+
         if let Err(e) = comp.commit() {
             // ⚠ 这一步失败也算「DComp 还没切过去」—— 见方法文档。
             eprintln!("[zephyra-d3d12] DComp commit 失败: {e}");
             return false;
         }
         true
-    }
-
-    /// 把 visual 的内容缩放，铺满整个客户区 —— 「黑边」的对症解。
-    ///
-    /// 链的尺寸追不上窗口时，DComp 默认按内容自然尺寸画，多出来的区域就是黑的。
-    /// 缩放比 = 客户区尺寸 ÷ 链尺寸（两个方向独立算，宽高比不一致时各自变形）。
-    ///
-    /// 幂等：目标尺寸没变就什么都不做，所以每帧调也只花一次比较。
-    fn stretch_visual_to_client(&mut self, w: u32, h: u32) {
-        if (w, h) == self.stretched_to {
-            return;
-        }
-        let (cw, ch) = self.chain.size();
-        if cw == 0 || ch == 0 {
-            return;
-        }
-        let (Some(comp), Some(vis)) = (self.compositor.as_ref(), self.visual.as_ref()) else {
-            return;
-        };
-        let sx = w as f32 / cw as f32;
-        let sy = h as f32 / ch as f32;
-        match comp.set_scale(vis, sx, sy) {
-            Ok(()) => {
-                if let Err(e) = comp.commit() {
-                    eprintln!("[zephyra-d3d12] 缩放 visual 的 commit 失败: {e}");
-                    return;
-                }
-                self.stretched_to = (w, h);
-            }
-            Err(e) => eprintln!("[zephyra-d3d12] 设置 visual 缩放失败: {e}"),
-        }
     }
 
     /// 把上一帧的顶点流按 `kind` 归类（0 矩形 / 1 字形 / 2 图像），逐个返回。
@@ -1474,32 +1356,4 @@ pub fn run_with<V: View + 'static>(app: HostWindow<V>) -> Result<(), winit::erro
     let mut app = app;
     let el: EventLoop<()> = EventLoop::new()?;
     el.run_app(&mut app)
-}
-
-/// 拖动去抖的判定：现在**该不该**真的去重建交换链。
-///
-/// # 为什么需要它
-///
-/// 本机 `ResizeBuffers` 在后缓冲被用过之后就再也调不成功（实测矩阵见
-/// [`Swapchain::resize`]），所以尺寸一变就只能重建整条交换链。而拖边时 `WM_SIZE`
-/// 每秒来几十次 —— 一帧一重建实测能把 GPU 拖进 `DEVICE_HUNG` 并让窗口一直闪。
-/// 于是改成：尺寸还在变就只缩放铺满，等它稳下来才重建一次。
-///
-/// # 规则
-///
-/// `target` 与 `pending_size` 不同 ⇒ 尺寸还在变 ⇒ **不重建**。
-/// 相同且距 `pending_since` 已过 `settle` ⇒ 认定拖动结束 ⇒ **重建**。
-/// `pending_since` 是 `None`（还没开始计时）⇒ **不重建**。
-///
-/// 抽成纯函数是为了能在**没有窗口、没有 GPU** 的情况下测它 —— 门禁见
-/// `tests/resize_debounce.rs`。
-pub fn resize_settled(
-    pending_size: (u32, u32),
-    pending_since: Option<std::time::Instant>,
-    now: std::time::Instant,
-    target: (u32, u32),
-    settle: std::time::Duration,
-) -> bool {
-    pending_size == target
-        && pending_since.is_some_and(|t0| now.duration_since(t0) >= settle)
 }

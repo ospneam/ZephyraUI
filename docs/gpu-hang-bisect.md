@@ -40,28 +40,35 @@
 一个成因，每次都错；决定性证据只有两个 —— 回码本身（`0x887A0001`）与逐步拆开的
 对照表。**先让日志/回码说话。**
 
-### 现在的修法
+### 现在的修法：链只保证「≥ 客户区」，不跟着窗口变
 
-1. **拖动去抖**：尺寸还在变就不重建，只把已有画面缩放铺满窗口（治闪屏 + 治 GPU churn）。
-   判定抽成纯函数 [`resize_settled`]，零 GPU 门禁在 `tests/resize_debounce.rs`。
-2. **缩放铺满治黑边**：DComp 默认按内容自然尺寸画，多出来的区域就是黑的；用
-   `IDCompositionVisual2::SetTransform2` 缩放（`Compositor::set_scale`）。
-3. **熔断**（`RECREATE_STRIKE_LIMIT = 3`）保留，作为「重建也救不回来」的最后兜底。
+窗口缩放**不再重建交换链**。链的容量只保证不小于客户区，窗口变化只改**视口**
+（`Swapchain::content`），本帧照常按新尺寸排版并绘制 ⇒ **逐帧、清晰、无缩放**。
 
-### ⚠ 熔断的清零点必须换掉（用户实测发现）
+「比窗口大」不会露馅：DComp 按内容**自然尺寸 1:1** 画在原点，窗口只显示左上角
+那一块，其余在窗口外不可见。
 
-`resize_strikes` 原来**只在 `ResizeBuffers` 成功时**清零 —— 而上面已证明那个分支
-**永远不会到达**。于是熔断一旦触发就是**永久**的：用户实测日志里
+只有窗口大到装不下时才重建，且一次给 25% 余量（`Swapchain::CAPACITY_HEADROOM`）
+⇒ 重建次数随窗口增长**对数**递减：800 → 1000 → 1250 → 1563 → 1954 → 2443。
+从 800px 拖到 2000px 重建 **4 次**，而不是逐帧重建的 1200 次。
 
-```text
-[zephyra-d3d12] ResizeBuffers 失败 0x887A0001（目标 (1568, 800)，链原尺寸 (808, 800)，…）
-```
+门禁：`swapchain_draw.rs::缩放窗口_不重建交换链`（40 步连续尺寸 ⇒ 重建 ≤ 5 次）、
+`::容量不足时_重建并留余量`。
 
-之后窗口就再也不更新了（尺寸一直停在 808×800）。
+### 对照 Chromium
 
-清零点已改成 **成功 `present`**：那才是新链真的能画能呈现的证据。熔断要挡的是
-「重建了却一次都没 present 出去」的 GPU churn，而每次重建之后至少 present 过一次
-⇒ 计数自然回落。门禁：`swapchain_draw.rs::present_成功后熔断计数清零`。
+`components/viz/service/display_embedder/software_output_device_win_swapchain.cc`
+的 `ResizeDelegated`（:81）就是权威写法，值得逐条抄：
+
+| Chromium 怎么做 | 本仓为什么不能照抄 |
+|---|---|
+| `desc.Scaling = DXGI_SCALING_STRETCH`（:162） | 这条我们**照抄了**（同样是 flip sequential + 2 缓冲） |
+| 每次 resize 调 `ResizeBuffers(2, w, h, fmt, 0)`（:93） | 本机 `ResizeBuffers` 在后缓冲被用过之后必失败（上面矩阵） |
+| 失败就 `RestartGpuProcessForContextLoss`（:100） | 我们没有第二个进程，只能从结构上让 resize 不需要动链 |
+| 设备是 **`ID3D11Device`**（:115） | 本仓这条路径是 D3D12。`E:\chromium` 全仓 `ui/gl` **没有任何一处 `ResizeBuffers`** |
+
+最后一行是最关键的：**Chromium 的 DComp 呈现路径是 D3D11**，flip-model 交换链在
+D3D11 下 `ResizeBuffers` 是正常工作的；本仓走的是 D3D12，那条路 Chromium 自己没走。
 
 ## 已知问题（未修）
 

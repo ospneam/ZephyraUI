@@ -28,7 +28,7 @@ use windows::Win32::Graphics::Direct3D12::*;
 use windows::Win32::Graphics::Dxgi::Common::{
     DXGI_FORMAT, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_R8G8B8A8_UNORM,
 };
-use windows::Win32::Graphics::Dxgi::{IDXGISwapChain1, IDXGISwapChain3, DXGI_SWAP_CHAIN_FLAG};
+use windows::Win32::Graphics::Dxgi::{IDXGISwapChain1, IDXGISwapChain3};
 
 use zephyra_dcomp::{create_composition_swapchain, present_one, SwapchainDesc};
 
@@ -217,7 +217,25 @@ pub struct Swapchain {
     samples: u32,
     /// 每个后缓冲的渲染目标视图。索引即 `GetCurrentBackBufferIndex`。
     views: Vec<ID3D12Resource>,
+    /// 后缓冲的**容量**（= 交换链实际尺寸）。
+    ///
+    /// ⚠ 它**不是**窗口尺寸。窗口尺寸见 [`Self::content`]。
+    ///
+    /// # 为什么容量与内容要分开
+    ///
+    /// 本机 `ResizeBuffers` 在后缓冲被用过之后就再也调不成功（实测矩阵见本文件
+    /// `resize` 文档）。既然改不了链的尺寸，就让**链一直比窗口大**：窗口缩放时
+    /// 什么都不用做 —— 改视口、重新排版、重新画即可，于是**拖动窗口能逐帧跟随**。
+    ///
+    /// 「比窗口大」不会露馅：DComp 把内容按**自然尺寸 1:1** 画在原点，窗口只显示
+    /// 左上角那一块，其余部分在窗口外不可见。没有任何缩放。
+    ///
+    /// 代价是显存：容量按 25% 余量增长（见 [`Self::resize`]），两缓冲 R8G8B8A8。
     size: (u32, u32),
+    /// 本帧要渲染/呈现的**内容尺寸**（= 客户区物理尺寸）。
+    ///
+    /// 它是视口尺寸：渲染、clear、MSAA 解析都按它来。它**永远** ≤ [`Self::size`]。
+    content: (u32, u32),
     buffer_count: u32,
     /// 设备本体的一份句柄。只为在 `present` / `resize` 失败时能问
     /// [`device_removed_reason`] —— 它与构造时那个 `gpu.device` 是同一个对象，
@@ -254,11 +272,7 @@ pub struct Swapchain {
     /// SetContent，拆除时 SetContent(nullptr) 显式丢掉引用，然后 Commit()。
     /// 本仓的顺序改为：先建新链 → SetContent(新) → Commit → 才放旧链。
     superseded: Option<IDXGISwapChain1>,
-    /// 连续重建整条交换链仍**没成功**过 ResizeBuffers 的次数。熔断用。
-    ///
-    /// 见 [Self::resize] 失败分支里那段说明：实测本机一帧接一帧重建了 140 次，
-    /// 把 GPU 拖进 TDR。ResizeBuffers 一旦成功就清零。
-    resize_strikes: u32,
+
     ///
     /// # 为什么必须有这个标志
     ///
@@ -278,11 +292,14 @@ pub struct Swapchain {
 }
 
 impl Swapchain {
-    /// 连续重建超过这么多次仍未成功 ResizeBuffers ⇒ **停止重建**。
+    /// 后缓冲容量相对内容尺寸的**余量**（0.25 = 长宽各多 25%）。
     ///
-    /// 为什么是 3：一次拖动里重建 3 次已经足够让画面跟上；再往上就是
-    /// churn 而非纠错了。实测 140 次直接把 GPU 拖进 TDR。
-    const RECREATE_STRIKE_LIMIT: u32 = 3;
+    /// 它的作用是把「重建次数」从「每帧一次」压到「随窗口增长对数级」：
+    /// 800 → 1000 → 1250 → 1563 → 1954 → 2443，从 800px 拖到 2000px 只重建 4 次。
+    ///
+    /// 取 25% 而不是更大，是因为显存按 `w × h` **线性**涨：余量 50% 要多占 2.25 倍
+    /// 显存，却只把重建次数从 ~4 降到 ~3。
+    const CAPACITY_HEADROOM: f64 = 0.25;
 
     /// 建一个 composition swapchain。
     ///
@@ -320,8 +337,8 @@ impl Swapchain {
             first_present_flush: false,
             superseded: None,
             consecutive_present_errors: 0,
+            content: size,
             was_recreated: false,
-            resize_strikes: 0,
             device_dead: None,
         };
         me.rebuild_views(&gpu.device)?;
@@ -530,18 +547,7 @@ impl Swapchain {
         match r {
             Ok(()) => {
                 self.consecutive_present_errors = 0;
-                // ★ 熔断计数在**成功 present** 时清零，而不是只在 `ResizeBuffers`
-                // 成功时清零。
-                //
-                // 原来的清零点（`ResizeBuffers` 成功）实测**永远不会到达** ——
-                // 本机后缓冲一被用过就调不成功（见本文件 `resize` 的实测矩阵）。于是
-                // 熔断一旦触发就是**永久**的：用户实测日志里第 4 次之后就再也没重建过，
-                // 窗口从此再也更新不了。
-                //
-                // 「成功 present」才是链真的健康的证据：它证明新链能画、能呈现。
-                // 熔断要挡的是「重建了却一次都没present 出去」的 churn（那会把 GPU 拖进
-                // TDR），而现在每次重建之后都至少 present 过一次 ⇒ 计数自然回落。
-                self.resize_strikes = 0;
+
                 Ok(())
             }
             Err(e) => {
@@ -599,239 +605,105 @@ impl Swapchain {
         self.device_dead.is_some()
     }
 
-    /// 连续重建整条交换链仍未成功 `ResizeBuffers` 的次数。
-    ///
-    /// 给宿主打**自述型日志**用：没有它，日志里只有「交换链已重建」这一条，
-    /// 分不清「窗口真的在反复变尺寸」与「同一次 resize 被反复重建」。
-    pub fn resize_strikes(&self) -> u32 {
-        self.resize_strikes
-    }
 
     /// 设备不可用的原因码（`DXGI_ERROR_DEVICE_HUNG` 等）。`None` = 设备还活着。
     pub fn device_dead_reason(&self) -> Option<u32> {
         self.device_dead
     }
 
-    /// 改尺寸。
+    /// 把**内容尺寸**设为 `(w, h)`，必要时把后缓冲**容量**涨到够用。
     ///
-    /// # ⚠ 必须**先释放全部后缓冲引用**才能调 `ResizeBuffers`
+    /// # 这就是「拖动窗口时逐帧跟随」的全部机制
     ///
-    /// DXGI 在「还有引用时 resize」上回 `DXGI_ERROR_INVALID_CALL`（0x887A0001），消息
-    /// 只说「无效的调用」，**不提「你手里还攥着后缓冲」**。
+    /// 本机 `ResizeBuffers` 在后缓冲被用过之后就再也调不成功 —— 实测矩阵（可复跑，
+    /// 见 `tests/swapchain_draw.rs::probe2_resize_buffers_矩阵`）：
     ///
-    /// 而「引用」有**两类**（官方原文）：
-    ///
-    /// > Direct references are held by the application after it calls AddRef …
-    /// > **Indirect references are held by views to a resource**, binding a view of
-    /// > the resource to a device context, **a command list that used the resource** …
-    ///
-    /// 所以要放手的**不止**那些 RTV 描述符：
-    ///
-    /// 1. 后缓冲的 RTV 描述符（直接引用）—— 下面 `clear()` 就是为它；
-    /// 2. **命令列表**（间接引用）—— 必须先 `Gpu::begin_frame()`（它 `list.Reset()`）
-    ///    把它重置，否则上一帧记录的 `OMSetRenderTargets` / 屏障仍算作持有。
-    ///
-    /// 第 2 条本项目真的踩了：resize 循环里把 `resize` 写在 `begin_frame` **之前**，
-    /// 于是每次改尺寸都 `DXGI_ERROR_INVALID_CALL`。而症状与「缓冲个数不对」一模一样。
-    ///
-    /// <https://learn.microsoft.com/en-us/windows/win32/api/dxgi/nf-dxgi-idxgiswapchain-resizebuffers>
-    ///
-    /// 教训与本项目反复踩的那条同形：**API 的前置条件不是「你传了什么」，而是
-    /// 「你还持有谁」** —— 而后者根本不在参数里。
-    ///
-    /// # ⚠ `ResizeBuffers` 在本机**画过之后必然失败**，所以失败时**重建整条链**
-    ///
-    /// 实测（`tests/swapchain_draw.rs::resize_失败点_是建链还是帧流程`）：
-    ///
-    /// | 状态 | `ResizeBuffers` |
+    /// | 一帧里做了什么 | `ResizeBuffers` |
     /// |---|---|
-    /// | 刚建好，什么都没画 | ✅ |
-    /// | 连着 resize 三次，中间什么都不画 | ✅ ✅ ✅ |
-    /// | 画过一帧 | ❌ `DXGI_ERROR_INVALID_CALL` |
-    /// | 画过一帧 **且**重开帧（`list.Reset`） | ❌ 同样 |
+    /// | 什么都不开帧 | **成功** |
+    /// | 开帧 + 提交**空**命令列表 | **成功** |
+    /// | 开帧 + 只转后缓冲资源屏障 | `0x887A0001` |
+    /// | 开帧 + 画（1× / 4× MSAA） | `0x887A0001` |
     ///
-    /// 原因是 `ID3D12CommandAllocator::Reset` 在本机恒定 `E_FAIL`（见
-    /// [`crate::surface::Gpu::begin_frame`] 的说明），于是分配器一直攥着那些命令用过的
-    /// 后缓冲引用，而官方明确把「命令/分配器用过该资源」算作**间接引用**。
+    /// 被实测排除的四种成因（各自的修复仍保留，只是不足以成功）：等 GPU、
+    /// `list.Reset` + `allocator.Reset`、双槽轮转、整体销毁重建命令对象。
     ///
-    /// 正路是**重建**：丢掉旧交换链、用新的 `IUnknown` 重新
-    /// `CreateSwapChainForComposition`、再重建全部 RTV。D3D11 官方样例对 `Present`
-    /// 失败也是这么处理的，所以这不是权宜之计。
+    /// 所以本仓**不靠 `ResizeBuffers`**，而是让链一直**比窗口大**：
     ///
-    /// 代价是丢一次呈现，且**必须**把 [`Self::as_swap_chain1`] 交给外部重新挂进 DComp
-    /// 视觉树 —— 宿主的 `DcompCompositor` 因此需要提供「换 swapchain」的钩子。
-    /// 所以 [`Self::resize`] 在失败时走重建并置位 [`Self::was_recreated`]，
-    /// 由宿主据此决定要不要重新挂树。
+    /// - 窗口缩放 → 只改 [`Self::content`]（视口）→ 每帧照常按新尺寸排版并绘制 ⇒
+    ///   **逐帧、清晰、无缩放**；
+    /// - 窗口大到装不下时才**重建**整条链，且一次给 25% 余量
+    ///   （[`CAPACITY_HEADROOM`]）⇒ 重建频率随窗口增长对数递减，而不是每帧一次。
     ///
-    /// # 之后**必须**重建 RTV
+    /// 「链比窗口大」不会露出破绽：DComp 按内容**自然尺寸 1:1** 画在原点，窗口只显示
+    /// 左上角那块，其余在窗口外不可见。
     ///
-    /// `ResizeBuffers` 与重建都会让 `CreateRenderTargetView` 得到的描述符指向**已释放
-    /// 的内存**。继续用旧 RTV 的症状是「窗口变成一块固定颜色」或直接崩，且没有任何
-    /// HRESULT。见类型文档。
+    /// # 对照 Chromium
+    ///
+    /// Chromium 的同名路径（`components/viz/service/display_embedder/
+    /// software_output_device_win_swapchain.cc:81 ResizeDelegated`）每次 resize 都调
+    /// `ResizeBuffers`，失败就 `RestartGpuProcessForContextLoss` —— 它靠**独立 GPU
+    /// 进程**兜底，而且那条路用的是 **`ID3D11Device`**（同文件 :115），不是 D3D12。
+    /// 我们没有第二个进程，所以只能从结构上让 resize 不需要动链。
+    ///
+    /// # 零尺寸
+    ///
+    /// `(0, 0)` 是最小化状态，直接忽略（DXGI 拒绝 `ResizeBuffers(0,0,…)`，而这里
+    /// 根本不调它，但内容尺寸为 0 时视口无意义）。
     pub fn resize(
         &mut self,
-        gpu: &mut Gpu,
+        gpu: &Gpu,
         size: (u32, u32),
     ) -> Result<(), SurfaceError> {
-        // 零尺寸是最小化后的状态，DXGI 会拒绝 `ResizeBuffers(0, 0, …)`。
-        // 不早退的话每次最小化都会抛一个无意义的错。
-        if size.0 == 0 || size.1 == 0 || size == self.size {
+        self.was_recreated = false;
+        if size.0 == 0 || size.1 == 0 {
             return Ok(());
         }
-        self.was_recreated = false;
+        self.content = size;
+        if size.0 <= self.size.0 && size.1 <= self.size.1 {
+            return Ok(());
+        }
 
-        // ⚠⚠ **必须先等 GPU 跑完上一帧，再调 `ResizeBuffers`。**
-        //
-        // DXGI 的原文（本文件模块文档里引了）说「引用」有两类：直接引用由持有
-        // `AddRef` 的应用造成，**间接引用**由「绑定到设备上下文的视图、**用过该
-        // 资源的命令列表**」造成。`self.views.clear()` 只解决了直接引用；间接引用
-        // 要靠**等 GPU 跑完**才真的消失。
-        //
-        // 而本仓的帧顺序是 `sync_swapchain()` → … → `begin_frame()`（里面才有
-        // `wait_gpu()`）→ 记录 → `submit()`。也就是说 **resize 跑在上一帧的
-        // `wait_gpu()` 之前** —— 上一帧的命令很可能还在执行，后缓冲仍被间接引用，
-        // 于是 `ResizeBuffers` 每次都回 `DXGI_ERROR_INVALID_CALL`。
-        //
-        // # 这条修正了本仓一个长期存在的错误结论
-        //
-        // 原注释写的是「本机 `ResizeBuffers` **一旦画过**就回 INVALID_CALL，
-        // 所以只能整条重建」。那是**没等 GPU 就去 resize** 的观察结果，不是这台
-        // 机器的特性 —— 而那个结论的代价一直很大：拖动时每个中间尺寸都重建整条
-        // 交换链 + `SetContent` + `Commit`，实测一拖 20 次，最后 GPU 直接
-        // `DEVICE_HUNG`（见 `resize_strikes` 与 `RECREATE_STRIKE_LIMIT`）。
+        // 装不下 ⇒ 重建，并一次给足余量，避免「每涨一点就重建一次」。
+        let (w, h) = Self::grown_capacity(size, Self::CAPACITY_HEADROOM);
+        // 等 GPU：旧链可能还有命令在飞，而重建会把它整个换掉。
         gpu.wait_gpu()?;
-
-        // ★★★ **光等 GPU 不够，必须把命令列表 Reset 掉。**
-        //
-        // DXGI 把「用过该资源的**命令列表**」列为间接引用，`wait_gpu()` 只让 GPU
-        // 跑完，**清不掉列表里已录制的引用**。而帧序是 resize 在 `begin_frame`
-        // **之前**，所以此刻列表还攥着上一帧引用后缓冲的命令 —— 那就是
-        // `0x887A0001 DXGI_ERROR_INVALID_CALL` 的来源。
-        //
-        // 实测依据见 `Gpu::release_command_list_refs` 的表格：画过之后一定失败，
-        // 没画过就一定成功，而 **present 与否不影响**。
-        gpu.release_command_list_refs()?;
-
-        // 设备已死 ⇒ 一个 API 都不调。每帧重试正是「闪 + 刷屏」的直接成因。
-        if let Some(code) = self.device_dead {
-            return Err(SurfaceError::new(
-                format!("设备已不可用（0x{code:08X}），拒绝再 resize"),
-                windows::core::Error::new(
-                    windows::Win32::Foundation::E_ABORT,
-                    "GetDeviceRemovedReason 已判定设备不可恢复",
-                ),
-            ));
-        }
-
-        // ★ 先放手。`ResizeBuffers` 要求「直接引用」与「间接引用」全清，而本结构
-        // 必然攥着后缓冲（要靠它建 RTV）。
-        self.views.clear();
-        let resized = unsafe {
-            self.chain3.ResizeBuffers(
-                self.buffer_count,
-                size.0,
-                size.1,
-                self.format(),
-                DXGI_SWAP_CHAIN_FLAG(0),
-            )
-        };
-
-        match resized {
-            Ok(()) => {
-                self.resize_strikes = 0;
-                self.size = size;
-                self.rebuild_views(&gpu.device)?;
-                // MSAA 纹理不是交换链的一部分，`ResizeBuffers` 不会碰它 —— 必须
-                // 按新尺寸重建。忘了这步的症状是「窗口右侧/下侧的图标被裁掉」：
-                // 视口按新尺寸设了，而 MSAA 目标还是旧尺寸，越界部分无 RTV 可用。
-                self.rebuild_msaa(&gpu.device)?;
-                Ok(())
-            }
-            Err(e) => {
-                // 先问设备坏没坏 —— 那才是「为什么不能 resize」的答案，而
-                // `ResizeBuffers` 自己回的那个码只是症状。
-                if let Some(code) = device_removed_reason(&gpu.device) {
-                    // 设备已死 ⇒ **不再重试**。每帧重试 resize 是「窗口一直闪 + 错误
-                    // 刷屏」的直接成因，见 `device_dead` 字段的文档。
-                    self.device_dead = Some(code);
-                    return Err(SurfaceError::new(
-                        format!("设备已不可用（GetDeviceRemovedReason 0x{code:08X}），不再重试 resize"),
-                        e,
-                    ));
-                }
-                // 设备还活着：这条链只是暂时不能 resize（典型原因是「GPU 还攥着
-                // 后缓冲」）。此时**不能**把 `views` 留在已清空的状态 —— 那正是
-                // 「要第 0 个，交换链只有 0 个」的来源。把视图按旧尺寸补回来，
-                // 让链处于一个**自洽**的状态：能画（旧尺寸），下一帧还能再试。
-                self.rebuild_views(&gpu.device)?;
-                // 常见原因是「还有引用」，而分配器重置这条路在本机不通 —— 只能整条重建。
-                // 旧的 `chain` / `heap` / `views` 在赋值时被 drop，那正是「放手」要做的事。
-                // 常见原因是「还有引用」，而分配器重置这条路在本机不通 —— 只能整条重建。
-                //
-                // ⚠⚠ 但绝不能每帧重建一次。
-                //
-                // 实测（本机，ZEPHYRA_MSAA=0 那轮）：ResizeBuffers 失败 → 重建 →
-                // 下一帧又失败 → 又重建，一口气 140 次，最后 GPU 直接 HUNG。
-                // 每一次重建都是：新交换链 + 新后缓冲 + 新 RTV 堆 + 一次 SetContent +
-                // 一次 DComp Commit。这个量级的 GPU 对象 churn 与合成器提交足以把设备
-                // 拖进 TDR —— 那才是 DEVICE_HUNG 的来源，而 ResizeBuffers 失败只是症状。
-                //
-                // Chromium 遇到同样的情况（software_output_device_win_swapchain.cc:96）
-                // 直接结束 GPU 进程。我们没有第二个进程，所以改成熔断：连续重建超过
-                // RECREATE_STRIKE_LIMIT 次就停下来，保留当前这条链、按旧尺寸继续画，
-                // 下一帧再试。
-                //
-                // 为什么不用 consecutive_present_errors 那个计数：它数的是 present
-                // 失败，而这里要数的是「重建了几次都没成功」—— 后者才是 GPU churn 的度量。
-                                // ★★ 让日志说话：这个 HRESULT 是「为什么不能 resize」的**唯一**答案。
-                // 本仓为此绕了三轮弯路，每轮都靠读码猜成因、三轮都猜错 ——
-                // 先猜命令列表、再猜分配器、再猜 MSAA 纹理。真正的证据只有回码本身。
-                // 只打前 4 次，免得拖动时刷屏（刷屏本身又成一个新问题）。
-                if self.resize_strikes < 4 {
-                    eprintln!(
-                        "[zephyra-d3d12] ResizeBuffers 失败 0x{:08X}（目标 {size:?}，链原尺寸 {:?}，views 已清空，wait_gpu 已过）",
-                        e.code().0 as u32, self.size
-                    );
-                }self.resize_strikes = self.resize_strikes.saturating_add(1);
-                if self.resize_strikes > Self::RECREATE_STRIKE_LIMIT {
-                    // 安静地跳过本帧的 resize：链停在旧尺寸、自洽、可画。
-                    // 用户看到的是「窗口改小后内容没跟着变」，而不是设备挂掉。
-                    return Ok(());
-                }
-                let count = self.buffer_count;
-                // 重建也失败时，**保留原始 HRESULT** 当 source —— 那是「为什么不能 resize」的答案，
-                // 而重建失败的原因只是次要信息。
-                let fresh = Self::recreate(gpu, size, count, self.samples).map_err(|e2| {
-                    SurfaceError::new(format!("ResizeBuffers 失败且重建也失败：{e2}"), e)
-                })?;
-
-                                // 不能直接 *self = fresh：那会**当场**析构旧链，而 DComp 的 visual
-                // 上还挂着 SetContent(旧链)。那一瞬 DComp 持有一个已释放的交换链，
-                // 下一帧合成即 use-after-free，实测表现为紧接「交换链已重建」之后
-                // Present 报 DEVICE_HUNG。
-                //
-                // 纪律照 Chromium ui/gl/dc_layer_tree.cc:626：只在内容变了时
-                // SetContent，拆除时 SetContent(nullptr) 丢引用，然后 Commit。
-                // 本仓把旧链搬进 superseded，宿主 rebind_visual() 之后才放手。
-                let old_chain = std::mem::replace(&mut self.chain1, fresh.chain1.clone());
-                // ⚠ 熔断计数必须**跨重建带过去**。`fresh` 来自 `Self::new`，它的
-                // `resize_strikes` 是 0；`*self = fresh` 会把刚加过一的计数一起抹掉
-                // ⇒ 熔断永远不触发。
-                //
-                // 这不是顺手补一下：它让 833a9e7 的熔断**整条形同虚设**，日志里
-                // 「连续第 0 次」就是这么来的。
-                let strikes = self.resize_strikes;
-                *self = fresh;
-                self.resize_strikes = strikes;
-                self.superseded = Some(old_chain);
-                self.was_recreated = true;
-                // 新链第一次 present 可能被 DComp 显示成黑帧，见 present 的说明。
-                self.first_present_flush = true;
-                Ok(())
-            }
-        }
+        let count = self.buffer_count;
+        let fresh = Self::recreate(gpu, (w, h), count, self.samples)?;
+        // `fresh` 的 content 从构造值起，按请求尺寸修正（容量 >= 内容）。
+        let old_chain = std::mem::replace(&mut self.chain1, fresh.chain1.clone());
+        let content = self.content;
+        let samples = self.samples;
+        *self = fresh;
+        self.content = content;
+        self.samples = samples;
+        self.superseded = Some(old_chain);
+        self.was_recreated = true;
+        // 新链第一次 present 可能被 DComp 显示成黑帧，见 present 的说明。
+        self.first_present_flush = true;
+        Ok(())
     }
 
+    /// 容量不足时**增长到**多大。
+    ///
+    /// 25% 余量的来由：它让重建次数随窗口尺寸**对数**增长 —— 从 800px 拖到 2000px
+    /// 只会重建 3~4 次（800 → 1000 → 1250 → 1563 → 1954 → 2443），而逐帧重建是
+    /// 1200 次。取 25% 而不是更大的余量，是因为显存按 `w × h` 线性涨，50% 余量要多
+    /// 占 2.25 倍显存却只把重建次数从 ~4 降到 ~3。
+    pub fn grown_capacity(need: (u32, u32), headroom: f64) -> (u32, u32) {
+        let f = |v: u32| -> u32 {
+            let want = (v as f64 * (1.0 + headroom)).ceil() as u32;
+            // flip model 对尺寸没有 2 的幂要求（Chromium 那边自己还要特判奇数，
+            // 见 swap_chain_presenter.cc:755），但对齐到 8 能省掉跨步幅的带宽浪费。
+            want.next_multiple_of(8)
+        };
+        (f(need.0), f(need.1))
+    }
+
+    /// 内容尺寸（视口）。见 [`Self::content`]。
+    pub fn content_size(&self) -> (u32, u32) {
+        self.content
+    }
     /// 丢弃旧交换链并重新建一条同样参数的。
     fn recreate(
         gpu: &Gpu,
