@@ -668,6 +668,27 @@ impl Swapchain {
         }
         self.was_recreated = false;
 
+        // ⚠⚠ **必须先等 GPU 跑完上一帧，再调 `ResizeBuffers`。**
+        //
+        // DXGI 的原文（本文件模块文档里引了）说「引用」有两类：直接引用由持有
+        // `AddRef` 的应用造成，**间接引用**由「绑定到设备上下文的视图、**用过该
+        // 资源的命令列表**」造成。`self.views.clear()` 只解决了直接引用；间接引用
+        // 要靠**等 GPU 跑完**才真的消失。
+        //
+        // 而本仓的帧顺序是 `sync_swapchain()` → … → `begin_frame()`（里面才有
+        // `wait_gpu()`）→ 记录 → `submit()`。也就是说 **resize 跑在上一帧的
+        // `wait_gpu()` 之前** —— 上一帧的命令很可能还在执行，后缓冲仍被间接引用，
+        // 于是 `ResizeBuffers` 每次都回 `DXGI_ERROR_INVALID_CALL`。
+        //
+        // # 这条修正了本仓一个长期存在的错误结论
+        //
+        // 原注释写的是「本机 `ResizeBuffers` **一旦画过**就回 INVALID_CALL，
+        // 所以只能整条重建」。那是**没等 GPU 就去 resize** 的观察结果，不是这台
+        // 机器的特性 —— 而那个结论的代价一直很大：拖动时每个中间尺寸都重建整条
+        // 交换链 + `SetContent` + `Commit`，实测一拖 20 次，最后 GPU 直接
+        // `DEVICE_HUNG`（见 `resize_strikes` 与 `RECREATE_STRIKE_LIMIT`）。
+        gpu.wait_gpu()?;
+
         // 设备已死 ⇒ 一个 API 都不调。每帧重试正是「闪 + 刷屏」的直接成因。
         if let Some(code) = self.device_dead {
             return Err(SurfaceError::new(
@@ -761,7 +782,15 @@ impl Swapchain {
                 // SetContent，拆除时 SetContent(nullptr) 丢引用，然后 Commit。
                 // 本仓把旧链搬进 superseded，宿主 rebind_visual() 之后才放手。
                 let old_chain = std::mem::replace(&mut self.chain1, fresh.chain1.clone());
+                // ⚠ 熔断计数必须**跨重建带过去**。`fresh` 来自 `Self::new`，它的
+                // `resize_strikes` 是 0；`*self = fresh` 会把刚加过一的计数一起抹掉
+                // ⇒ 熔断永远不触发。
+                //
+                // 这不是顺手补一下：它让 833a9e7 的熔断**整条形同虚设**，日志里
+                // 「连续第 0 次」就是这么来的。
+                let strikes = self.resize_strikes;
                 *self = fresh;
+                self.resize_strikes = strikes;
                 self.superseded = Some(old_chain);
                 self.was_recreated = true;
                 // 新链第一次 present 可能被 DComp 显示成黑帧，见 present 的说明。
