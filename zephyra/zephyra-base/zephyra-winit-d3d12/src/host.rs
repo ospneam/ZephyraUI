@@ -929,6 +929,24 @@ impl<V: View> HostWindow<V> {
         if (w, h) == self.chain.size() {
             return SwapState::Same;
         }
+        // ⚠ 零尺寸 = 窗口被最小化。此时**什么都不做、本帧跳过**。
+        //
+        // `Swapchain::resize` 对 `(0,0)` 是早退 `Ok(())`（DXGI 拒绝
+        // `ResizeBuffers(0,0,…)`），所以链会**停在旧尺寸** —— 而我们照样会把一个
+        // 0×0 的视口排出来、画进旧后缓冲、再 present。恢复时那一帧就是一张
+        // 尺寸不对的内容。
+        //
+        // 官方对应做法是把「不可见」当成**不画**的理由：Chromium 的最小化一路
+        // 走到 `DisplayScheduler::ShouldDraw()` 返回 false
+        // （`components/viz/service/display/display_scheduler.cc:602` 的
+        // `needs_draw_ && !output_surface_lost_ && visible_ && …`），
+        // 由 `HWNDMessageHandler::OnSize` 的 `HandleWindowMinimizedOrRestored`
+        // 触发（`ui/views/win/hwnd_message_handler.cc:2968`）。
+        //
+        // 这里复用 `Failed` 这条「本帧空过」的路径，不新增状态。
+        if w == 0 || h == 0 {
+            return SwapState::Failed;
+        }
         let (ew, eh) = self.effective_size();
         let scale = self.window.scale_factor();
         let before = self.chain.size();

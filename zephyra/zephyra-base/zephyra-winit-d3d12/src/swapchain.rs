@@ -49,6 +49,11 @@ use crate::surface::{DescriptorHeap, Gpu, SurfaceError};
 ///
 /// 这里**只**把明确的设备类错误判成死，其余一律返回 `None`（活着）。
 fn device_removed_reason(device: &ID3D12Device) -> Option<u32> {
+    // 与 [`Gpu::removed_reason`] 是同一个问题、同一份实现。之所以不直接调那个方法：
+    // `present()` 只拿到 `&mut self`，而 `Gpu` 由宿主持有、不在 `Swapchain` 里
+    // （存整个 `Gpu` 会让 `Swapchain` 持有它自己的创建者，drop 顺序立刻变成一道
+    // 要论证的题）。所以这里只留一份 device 句柄。
+    //
     // `Ok(())` = 设备没被移除。`Err(code)` = 移除原因。
     match unsafe { device.GetDeviceRemovedReason() } {
         Ok(()) => None,
