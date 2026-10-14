@@ -62,6 +62,37 @@ pub struct Gpu {
     debug: Option<DebugInfo>,
 }
 
+/// `D3D12_CREATE_DEVICE_FLAGS` —— `windows` 0.62 **没有**导出这个类型。
+///
+/// 值按官方头文件 `d3d12.h` 抄，不自己拍：
+///
+/// ```c
+/// typedef enum D3D12_CREATE_DEVICE_FLAGS {
+///   D3D12_CREATE_DEVICE_DEBUG = 0x1,
+/// } D3D12_CREATE_DEVICE_FLAGS;
+/// ```
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct D3D12CreateDeviceFlags(u32);
+
+/// `D3D12_CREATE_DEVICE_DEBUG`（见上面 `D3D12CreateDeviceFlags` 的出处）。
+const D3D12_CREATE_DEVICE_DEBUG: D3D12CreateDeviceFlags = D3D12CreateDeviceFlags(0x1);
+
+extern "system" {
+    /// `D3D12CreateDevice` 的**五参数**原形。
+    ///
+    /// `windows` crate 的绑定把 `riid` 由泛型固定、且没有 `Flags` 参数，所以拿不到
+    /// `D3D12_CREATE_DEVICE_DEBUG`。见 [`Gpu::create_device_with_flag`] 的说明。
+    #[link_name = "D3D12CreateDevice"]
+    fn D3D12CreateDevice_raw(
+        padapter: *mut std::ffi::c_void,
+        minimumfeaturelevel: windows::Win32::Graphics::Direct3D::D3D_FEATURE_LEVEL,
+        riid: *const windows::core::GUID,
+        flags: D3D12CreateDeviceFlags,
+        ppdevice: *mut *mut std::ffi::c_void,
+    ) -> windows::core::HRESULT;
+}
+
 /// 开/关调试层。
 ///
 /// # 默认**关**，要显式 `ZEPHYRA_D3D12_DEBUG=1` 才开
@@ -81,6 +112,26 @@ pub struct Gpu {
 ///
 /// 需要查驱动为什么报错时：`$env:ZEPHYRA_D3D12_DEBUG=1`。
 pub fn debug_enabled() -> bool {
+    // ⚠ 默认**关**。这不是省事 —— 是被逼的：
+    //
+    // 把调试层开成默认，会让 zephyra-winit/tests/backend_parity.rs 直接
+    // STATUS_ACCESS_VIOLATION 崩掉（实测，stash 前后对照确认）。那条用例要同时
+    // 建 D3D11 与 D3D12 两个后端，本机在这条组合上开调试层不稳。
+    //
+    // 而本机恰恰只有开了调试层才问得到「哪个 API、哪个资源、哪个状态」—— 于是形成
+    // 一个死结：不开没证据，开了崩。死结的解法不是二选一，而是**把证据自动送到**
+    // 人眼前：见 HostWindow::report_device_dead_once（设备一判死就 drain 调试
+    // 队列，并在没有消息时提示怎么开）。
+    //
+    // 查 GPU 为什么挂时：$env:ZEPHYRA_D3D12_DEBUG=1
+    //
+    // # 开启方式已改成微软推荐的「事前」路径
+    //
+    // 早先是 ID3D12Debug::EnableDebugLayer()（**事后**开启），本注释原来记着
+    // 「事后开启会让设备刚建好就 HUNG」。现在调试层改由
+    // Gpu::create_device_with_flag 在 D3D12CreateDevice 的 Flags 里带
+    // D3D12_CREATE_DEVICE_DEBUG 开启（**事前**，微软推荐路径）。事后开启那条路
+    // 已经**不再使用**。事前开启是否也躲开了那个 HUNG，需要有 GPU 的机器确认。
     matches!(
         std::env::var("ZEPHYRA_D3D12_DEBUG").as_deref(),
         Ok("1") | Ok("true") | Ok("on")
@@ -220,6 +271,79 @@ impl DebugInfo {
 }
 
 impl Gpu {
+    /// 建设备，可选带 `D3D12_CREATE_DEVICE_DEBUG`。
+    ///
+    /// # 默认路径**逐字保持原样**，只为 debug 路径才手搓 ABI
+    ///
+    /// `windows` crate 的 `D3D12CreateDevice` 绑定把 `riid` 由泛型固定、且没有
+    /// `Flags` 参数，所以拿不到调试层 flag，只能自己链一次五参原形。
+    ///
+    /// 但**默认（不带调试层）那条路必须走 windows 的绑定**：先试过「两条路都用
+    /// 手搓的原形」，结果是 `hr = S_FALSE(1)` 且不给设备 —— 调用约定/符号解析
+    /// 与 windows 自己的 `link!` 声明对不上，于是 `backend_parity` 两条用例全崩。
+    ///
+    /// 现在只有 `debug = true` 才走 raw 调用；`false` 时与改动前**逐字节相同**。
+    /// 理由：拿不到 GPU 证据时，默认路径的**可验证性**比多一条能力重要。
+    ///
+    /// # 为什么调试层改成「事前」开启
+    ///
+    /// 早先这里是 `ID3D12Debug::EnableDebugLayer()`（**事后**开启），本仓注释记着
+    /// 「事后开启会让设备刚建好就 `DXGI_ERROR_DEVICE_HUNG`」。微软推荐的是在
+    /// `D3D12CreateDevice` 的 Flags 里带 `D3D12_CREATE_DEVICE_DEBUG`。
+    fn create_device_with_flag(
+        adapter: &windows::Win32::Graphics::Dxgi::IDXGIAdapter1,
+        debug: bool,
+    ) -> Result<ID3D12Device, SurfaceError> {
+        let mut device = None::<ID3D12Device>;
+        if !debug {
+            // SAFETY：`adapter` 是活着的适配器；`device` 是合法的输出槽。
+            unsafe {
+                D3D12CreateDevice(
+                    adapter,
+                    windows::Win32::Graphics::Direct3D::D3D_FEATURE_LEVEL_11_0,
+                    &mut device,
+                )
+            }
+            .map_err(|e| SurfaceError::new("D3D12CreateDevice", e))?;
+            return Ok(device.expect("D3D12CreateDevice 成功时必给设备"));
+        }
+        let flags = D3D12_CREATE_DEVICE_DEBUG;
+        // SAFETY：`d3d12.dll` 本进程已加载；指针参数都指向合法局部变量。
+        let hr = unsafe {
+            D3D12CreateDevice_raw(
+                windows::core::Interface::as_raw(adapter),
+                windows::Win32::Graphics::Direct3D::D3D_FEATURE_LEVEL_11_0,
+                &<ID3D12Device as windows::core::Interface>::IID,
+                flags,
+                &mut device as *mut Option<ID3D12Device> as *mut *mut std::ffi::c_void,
+            )
+        };
+        if hr.is_err() || device.is_none() {
+            return Err(SurfaceError::new(
+                "D3D12CreateDevice（带 DEBUG flag）",
+                windows::core::Error::from_hresult(hr),
+            ));
+        }
+        Ok(device.expect("上面已判过 is_none"))
+    }
+
+    /// 拿到调试层对象（**不**在这里开启它）。
+    ///
+    /// 调试层已经由 [`Self::create_device_with_flag`] 的 `Flags` 事前开启了；
+    /// 这里只是 QI 出那个 `ID3D12Debug` 实例，好让 [`DebugInfo`] 持有它不被释放
+    /// —— 层的生命周期由设备的 Debug 标志决定，不由这个引用决定。
+    fn enable_debug_layer() -> Option<ID3D12Debug> {
+        if !debug_enabled() {
+            return None;
+        }
+        let mut layer = None::<ID3D12Debug>;
+        // SAFETY：只查询接口，不调任何会改设备状态的方法。
+        unsafe {
+            D3D12GetDebugInterface(&mut layer).ok()?;
+        }
+        layer
+    }
+
     /// 用默认硬件适配器建 D3D12 设备。
     ///
     /// # 为什么显式枚举适配器而不是传 `None`
@@ -228,14 +352,6 @@ impl Gpu {
     /// 那块**（插着独显却选到核显）。显式枚举 0 号在单卡机器上等价，在多卡机器上
     /// 至少是确定行为。
     pub fn new() -> Result<Self, SurfaceError> {
-        // ★ 必须在 `D3D12CreateDevice` **之前**开调试层。见 [`DebugInfo::enable_layer`]
-        // 的说明：那两条注释解释的是「为什么以前问不到原因」。
-        let debug_layer = if debug_enabled() {
-            DebugInfo::enable_layer()
-        } else {
-            None
-        };
-
         let factory: windows::Win32::Graphics::Dxgi::IDXGIFactory4 =
             unsafe { CreateDXGIFactory1() }.map_err(SurfaceError::factory)?;
         let adapter = pick_adapter(&factory).map_err(|_| {
@@ -247,16 +363,18 @@ impl Gpu {
             )
         })?;
 
-        let mut device = None::<ID3D12Device>;
-        unsafe {
-            D3D12CreateDevice(
-                &adapter,
-                windows::Win32::Graphics::Direct3D::D3D_FEATURE_LEVEL_11_0,
-                &mut device,
-            )
-        }
-            .map_err(|e| SurfaceError::new("D3D12CreateDevice", e))?;
-        let device = device.expect("D3D12CreateDevice 成功时必给设备");
+        let device = match Self::create_device_with_flag(&adapter, debug_enabled()) {
+            Ok(d) => d,
+            Err(e) => {
+                // 调试层建不起来不能算应用失败 —— 退回不带 flag 的普通路径。
+                // 唯一代价是这一帧之后没有 D3D 侧证据。
+                eprintln!(
+                    "[zephyra-d3d12] 带 D3D12_CREATE_DEVICE_DEBUG 建设备失败（{e}），\
+                     退回普通路径；之后 GPU 报错将没有调试层消息可查"
+                );
+                Self::create_device_with_flag(&adapter, false)?
+            }
+        };
 
         let queue: ID3D12CommandQueue =
             unsafe { device.CreateCommandQueue(&D3D12_COMMAND_QUEUE_DESC::default()) }
@@ -283,9 +401,15 @@ impl Gpu {
         }
         .map_err(|e| SurfaceError::new("CreateEvent（栅栏事件）", e))?;
 
+        // ⚠ 必须**与原行为逐字一致**：调试层关时整个 `DebugInfo` 是 `None`，而不是
+        // 「layer 为 None 但队列挂着」。
+        //
+        // 后者会让 `drain_debug()` 在没有调试层时照样去 QI `ID3D12InfoQueue` 并
+        // 每帧 `ClearStoredMessages` —— 实测那会让
+        // `zephyra-winit/tests/backend_parity.rs` 直接 `STATUS_ACCESS_VIOLATION`。
         let debug = if debug_enabled() {
             // 队列取自**设备**，不是全局 layer。见 `attach` 的说明。
-            DebugInfo::attach(debug_layer, &device)
+            DebugInfo::attach(Self::enable_debug_layer(), &device)
         } else {
             None
         };
