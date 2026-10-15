@@ -205,64 +205,8 @@ pub fn write_bmp(path: &str, px: &PixelRead, encode_srgb: bool) -> std::io::Resu
 }
 
 #[cfg(test)]
-mod channel_order_tests {
-    use super::*;
-
-    /// RGBA 输入写出来的 BMP 必须是**原序**：红画素进 B 位、蓝画素进 R 位是全反的。
-    ///
-    /// 这条钉的是本次实测的故障：`write_bmp` 曾按死 BGRA 解，CPU 画布（RGBA）
-    ///  dump 出来的图 R/B 互换 —— 深色 UI 几乎全灰，肉眼看不出来，
-    /// 直到一面饱和色横幅（#16305c 变成棕色）才暴露。
-    #[test]
-    fn rgba_input_keeps_channels() {
-        let px = PixelRead {
-            data: vec![
-                255, 0, 0, 255, // 纯红
-                0, 0, 255, 255, // 纯蓝
-                0, 255, 0, 255, // 纯绿
-                255, 255, 255, 255,
-            ],
-            order: ChannelOrder::Rgba,
-            row_pitch: 16,
-            width: 4,
-            height: 1,
-            declared_width: 4,
-            declared_height: 1,
-        };
-        let dir = std::env::temp_dir().join("zephyra-bmp-test");
-        let _ = std::fs::create_dir_all(&dir);
-        let path = dir.join("rgba.bmp");
-        write_bmp(path.to_str().unwrap(), &px, false).unwrap();
-        let bytes = std::fs::read(&path).unwrap();
-        // 文件头 54 字节；BMP 自底向上，单行时顺序不变；24bpp 下 4 像素 = 12 字节。
-        let px_data = &bytes[54..];
-        // 第一像素 BGR：红 → (0,0,255)
-        assert_eq!(&px_data[0..3], &[0, 0, 255], "red must land in the B slot");
-        // 第二像素：蓝 → (255,0,0)
-        assert_eq!(&px_data[3..6], &[255, 0, 0], "blue must land in the R slot");
-    }
-
-    /// BGRA 输入（D3D 读回）必须走同一条规则，不能为了修 CPU 那条把 GPU 那条弄反。
-    #[test]
-    fn bgra_input_keeps_channels() {
-        let px = PixelRead {
-            // 同一个「纯红」在 BGRA 源里是 [0,0,255,255]。
-            data: vec![0, 0, 255, 255],
-            order: ChannelOrder::Bgra,
-            row_pitch: 4,
-            width: 1,
-            height: 1,
-            declared_width: 1,
-            declared_height: 1,
-        };
-        let dir = std::env::temp_dir().join("zephyra-bmp-test");
-        let _ = std::fs::create_dir_all(&dir);
-        let path = dir.join("bgra.bmp");
-        write_bmp(path.to_str().unwrap(), &px, false).unwrap();
-        let bytes = std::fs::read(&path).unwrap();
-        assert_eq!(&bytes[54..57], &[0, 0, 255], "red must land in the B slot");
-    }
-}
+#[path = "tests/pixels_channel_order_tests.rs"]
+mod channel_order_tests;
 
 /// 线性 [0,1] → sRGB [0,255]。
 fn enc(linear: u8) -> u8 {
@@ -281,70 +225,5 @@ pub fn srgb_bytes(c: zephyra_core::core::Color) -> [u8; 3] {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// 行距大于 `width * 4` 时必须按行距读，否则整张图斜着串行。
-    ///
-    /// 这条测试钉住的是**症状**：宽度 3、高 2、`row_pitch = 16`（64 对齐后的常见值）
-    /// 的一批像素。按 `width*4 = 12` 读会把第二行读成"第一行的后半 + 第二行的头"。
-    #[test]
-    fn 按行距读_不是按宽度乘四() {
-        // 每行 16 字节：前 12 字节 = 3 个像素（各 4 字节，用该行行号标记颜色，
-        // alpha 全 255），后 4 字节是行距填充。
-        const PITCH: usize = 16;
-        const W: u32 = 3;
-        const H: u32 = 3;
-        let mk = |row: u8| -> Vec<u8> {
-            let mut v = Vec::with_capacity(PITCH);
-            for _ in 0..(W as usize) {
-                v.extend_from_slice(&[row, row, row, 255]);
-            }
-            v.resize(PITCH, 0); // 行距填充必须真的存在，否则测不出「按 width*4 读」的后果
-            v
-        };
-        let mut data = vec![0u8; PITCH * H as usize];
-        for (y, mark) in [10u8, 20, 30].iter().enumerate() {
-            data[y * PITCH..(y + 1) * PITCH].copy_from_slice(&mk(*mark));
-        }
-        let px = PixelRead {
-            data,
-            order: ChannelOrder::Bgra,
-            row_pitch: PITCH as u32,
-            width: W,
-            height: H,
-            declared_width: W,
-            declared_height: H,
-        };
-        for (y, want) in [(0u32, 10u8), (1, 20), (2, 30)] {
-            let row = px.row(y);
-            assert_eq!(row.len(), 12, "第 {y} 行应裁到 width*4 = 12 字节");
-            for x in 0..W as usize {
-                assert_eq!(
-                    row[x * 4],
-                    want,
-                    "第 {y} 行第 {x} 个像素应是 {want} —— 不等说明按 width*4 当行距读了"
-                );
-            }
-        }
-        assert_eq!(px.to_tight().len(), (W * H * 4) as usize, "紧凑化后应是 w*h*4 字节");
-    }
-
-    /// 声明尺寸与真实尺寸不一致必须能查出来 —— 那意味着画面缺一条边且**不报错**。
-    #[test]
-    fn 尺寸不匹配_必须查得出来() {
-        let px = PixelRead {
-            data: vec![0; 600 * 600 * 4],
-            order: ChannelOrder::Bgra,
-            row_pitch: 600 * 4,
-            width: 600,
-            height: 600,
-            declared_width: 800,
-            declared_height: 600,
-        };
-        assert!(
-            !px.size_matches(),
-            "声明 800×600 而实际 600×600 —— 必须判为不匹配（症状是右侧 200 像素黑边）"
-        );
-    }
-}
+#[path = "tests/pixels_tests.rs"]
+mod tests;
