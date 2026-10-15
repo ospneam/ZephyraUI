@@ -1,6 +1,6 @@
 # 任务清单：让动画真正生效（core 不透明度 + 绘制时偏移 + `.enter-<n>` 接线）
 
-> 前置：[`docs/animation.md`](animation.md) §4 记的那笔账 —— 官方动作全是**不透明度**与**位置**，
+> 前置：[`docs/animation.md`](../developer/animation.md) §4 记的那笔账 —— 官方动作全是**不透明度**与**位置**，
 > 而 core 两者都不能动画。本轮把那笔账结掉。
 > 前一轮：[`docs/task-responsive.md`](task-responsive.md)。
 
@@ -17,7 +17,7 @@
 | `Color::with_alpha(factor)` 是**相乘**不是替换 | `core.rs:163` | 可以安全地叠在已有的半透明底色上 |
 | `glyph_quads(shaped, origin, style)` 纯函数、无缓存 | `text/mod.rs:379` | 传平移后的 `origin` 是**免费**的 |
 | `IconSet::cached_mesh(icon, rect)` **按 rect 缓存**，实测 50 µs/图标 | `paint.rs:745` | 每帧平移 rect 会让缓存次次落空 ⇒ 必须**先按未平移 rect 三角化，再平移顶点** |
-| `Command::Text` 的 `glyphs` 在 core 侧是空 Vec（字形整形是宿主的活） | `paint.rs:152` | 画面的文字差异只能在宿主的字形层看到（与 [`i18n.md`](i18n.md) §7 同一笔记） |
+| `Command::Text` 的 `glyphs` 在 core 侧是空 Vec（字形整形是宿主的活） | `paint.rs:152` | 画面的文字差异只能在宿主的字形层看到（与 [`i18n.md`](../developer/i18n.md) §7 同一笔记） |
 
 **由此定的实现口径**（与"源码零外观"不冲突）：
 
@@ -80,7 +80,7 @@
 | 不做 | 为什么 |
 |---|---|
 | 属性继承（`PropertyKey::inheritable` 接线） | 会牵动 `text_color` 等一整批属性，是独立一轮。本轮用绘制趟累加绕开，语义等价且不扩大影响面。 |
-| 退场动画 | 官方：直接退出「**始终结合淡出**」，且只有 167 ms；而本仓的路由是**换声明**不是换层，退场需要旧页面留在树上 —— 那要 core 支持"两个页面同时在场"。记账见 [`animation.md`](animation.md) §5。 |
+| 退场动画 | 官方：直接退出「**始终结合淡出**」，且只有 167 ms；而本仓的路由是**换声明**不是换层，退场需要旧页面留在树上 —— 那要 core 支持"两个页面同时在场"。记账见 [`animation.md`](../developer/animation.md) §5。 |
 | 弹性入（3 关键帧） | 需要**时间线**（多段时长拼接），而 `anim` 只有单段。记账同上。 |
 | 控件级微动效（hover 缩放等） | 同上：档位机制能用，但没有官方像素数字可用。 |
 

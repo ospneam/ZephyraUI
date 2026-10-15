@@ -111,7 +111,7 @@ Skia 从不把执行放core —— `Blur` 在 core 只是描述，真正跑 pass
 `zephyra/zephyra-base/` 回答窗口怎么开、事件怎么收、GPU 设备从哪来、最后怎么上屏。
 它**不**回答「画什么」。
 
-三条契约（详见 [`zephyra/zephyra-base/README.md`](../zephyra/zephyra-base/README.md)）：
+三条契约（详见 [`zephyra/zephyra-base/README.md`](../../zephyra/zephyra-base/README.md)）：
 
 1. **消费 `DisplayList`**，而不是产出它 —— 核心从不 import 任何宿主类型；
 2. **不得决定画什么** —— 换 base 实现后同一棵元素树必须产出逐字节相同的

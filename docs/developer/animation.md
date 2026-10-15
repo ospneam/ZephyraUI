@@ -73,7 +73,7 @@ hover 是 `.hovered`，动画是 `.enter-3`。
 
 两条能力由 `zephyra-core/tests/paint_transform_tests.rs`（15 条）钉住，
 接线由 `ZephyraUI/tests/anim_wiring_tests.rs`（7 条）钉住，
-过程与取舍见 [`task-anim-wire.md`](task-anim-wire.md)。
+过程与取舍见 [`task-anim-wire.md`](../dev-log/task-anim-wire.md)。
 
 ### 4.1 当时写的结论为什么是对的
 
