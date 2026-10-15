@@ -138,6 +138,10 @@ pub struct FrameCache {
     /// 而它可能要在运行期换样式表（热重载）。泛型会把「换样式表」变成
     /// 「换掉整个 cache 的类型」，那做不到。
     styler: Option<Box<dyn crate::styler::Styler>>,
+    /// diff 的跨帧复用缓冲。见 [`crate::diff::Scratch`] 的说明。
+    ///
+    /// 没有它时，子节点对账每个父节点每帧要开两个 `Vec`，且每个子节点被搬 3 次。
+    diff_scratch: crate::diff::Scratch,
 }
 
 impl FrameCache {
@@ -231,7 +235,7 @@ impl FrameCache {
                 self.node = Some(n);
                 s
             }
-            Some(node) => diff(node, element),
+            Some(node) => crate::diff::diff_with(node, element, &mut self.diff_scratch),
         };
 
         // ---- 1.5 应用样式 ----

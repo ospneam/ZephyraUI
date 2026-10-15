@@ -64,7 +64,51 @@ impl DiffStats {
 /// 统计里的 `needs_layout` 只计**本次 diff 造成**的重排需求，不计节点此前就
 /// 带着的脏标记——否则一个尚未布局的新节点会让每次 diff 都报"需要重排"，
 /// 稳态 no-op 的判据就废了。
+/// 跨帧复用的对账缓冲。
+///
+/// # 为什么需要它
+///
+/// 子节点对账这一段每个**父节点**每帧要开两个 `Vec`：
+///
+/// ```text
+/// let mut pool = node.children_mut().drain(..).map(Some).collect();   // Vec#1
+/// let mut out  = Vec::with_capacity(element.children().len());       // Vec#2
+/// … 逐个 push …
+/// node.children_mut().append(&mut out);
+/// ```
+///
+/// demo 的树约 150 节点、其中几十个有子节点，于是每帧几十次分配；更贵的是**搬运**：
+/// 每个子节点被 move 3 次（drain 进 pool、push 进 out、append 回 children），
+/// 而 `Node` 是一百多字节的结构（见 `Node` 类型文档）。
+///
+/// 做法：把两层缓冲做成**按递归深度取还的栈**。进入一层时 `pop` 一对、用完 `push`
+/// 回去，容量于是跨帧留存。递归时子层各自 pop/push，栈深自动等于当前递归深度。
+///
+/// 为什么是**栈**而不是两个平铺的 `Vec`：父层必须把自己的 `out` 一直握着
+/// （子节点要往里 push），而子层的 `out` 又不能是同一个 —— 平铺就得再开一层
+/// 间接寻址，而栈的 push/pop 正好就是那层间接。
+pub(crate) struct Scratch {
+    pool: Vec<Vec<Option<Node>>>,
+    out: Vec<Vec<Node>>,
+}
+
+impl Default for Scratch {
+    fn default() -> Self {
+        Self {
+            pool: Vec::new(),
+            out: Vec::new(),
+        }
+    }
+}
+
+/// 以新元素对账旧节点树（自建缓冲的一次性入口）。
 pub fn diff(node: &mut Node, element: &Element) -> DiffStats {
+    let mut s = Scratch::default();
+    diff_with(node, element, &mut s)
+}
+
+/// [`diff`] 的复用版：缓冲由调用方跨帧持有。
+pub(crate) fn diff_with(node: &mut Node, element: &Element, s: &mut Scratch) -> DiffStats {
     let mut stats = DiffStats::default();
 
     if node.tag() != element.tag() {
@@ -145,8 +189,12 @@ pub fn diff(node: &mut Node, element: &Element) -> DiffStats {
     //
     // key 不同 = 身份不同 = 不能复用，整棵替换。这是保留式布局唯一站得住的判据：
     // 组件实例的身份由 key 给出（同 key 同身份），于是「复用」永远是安全的。
-    let mut pool: Vec<Option<Node>> = node.children_mut().drain(..).map(Some).collect();
-    let mut out: Vec<Node> = Vec::with_capacity(element.children().len());
+    let mut pool = s.pool.pop().unwrap_or_default();
+    pool.clear();
+    pool.extend(node.children_mut().drain(..).map(Some));
+    let mut out = s.out.pop().unwrap_or_default();
+    out.clear();
+    out.reserve(element.children().len());
     let mut moved = 0usize;
     // 本层新插入 / 替换掉的子节点数（供下面"子树变了 ⇒ 本节点也要重排"用）。
     let mut inserted_here = 0usize;
@@ -176,7 +224,7 @@ pub fn diff(node: &mut Node, element: &Element) -> DiffStats {
                     moved += 1;
                 }
                 let child_before = child.dirty();
-                let child_stats = diff(&mut child, el);
+                let child_stats = diff_with(&mut child, el, s);
                 stats.reused += child_stats.reused;
                 stats.inserted += child_stats.inserted;
                 stats.removed += child_stats.removed;
@@ -214,6 +262,11 @@ pub fn diff(node: &mut Node, element: &Element) -> DiffStats {
         inserted_here += dropped;
     }
     node.children_mut().append(&mut out);
+    // 缓冲还回栈里，容量跨帧留存（见 `Scratch` 的说明）。
+    pool.clear();
+    s.pool.push(pool);
+    out.clear();
+    s.out.push(out);
     if dropped > 0 || moved > 0 {
         stats.moved += moved;
         // `merge_dirty` 而不是 `mark_dirty`：子节点已各自递归对账过了，这里只
