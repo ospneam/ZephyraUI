@@ -1,0 +1,4 @@
+# 没有自己的 target：workspace 成员共用根上那个。
+# 留着这条是为了防「哪天被当成独立工程 build 一次」之后把 target 带进 git。
+/target
+Cargo.lock

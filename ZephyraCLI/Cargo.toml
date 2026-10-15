@@ -1,0 +1,32 @@
+[package]
+name = "zephyra-cli"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "MIT"
+description = "Command line interface for ZephyraUI: scaffold projects, check stylesheets, build and run apps"
+publish = false
+
+# 两个可执行文件名，逻辑都在 lib 里（见 src/entry.rs）。
+#
+# ⚠ `cargo-zephyra` 这个名字**不能改**：cargo 靠「`cargo-` + 子命令名」去 PATH 上
+# 找子命令可执行文件。`cargo zephyra dev` ⇒ 找 `cargo-zephyra`，并把
+# `zephyra dev` 原样传给它。所以两个名字都要有，而入口里要剥掉那个 `zephyra`。
+[lib]
+name = "zephyra_cli"
+path = "src/lib.rs"
+
+# 零运行时依赖。
+#
+# 为什么不上 clap：ZephyraUI 整个 workspace 不含任何 CLI 框架，而 clap 的 derive
+# 宏会把「命令表」从代码变成**类型**——那对可预测的退出码与错误文案反而不友好，
+# 而且多一棵依赖树。命令表就十几行，手写解析器更好读也更好测。
+[dependencies]
+# 只有 `check` 子命令要真正读样式表。走路径依赖而不是 crates.io：CLI 要跟本地
+# 那一份 zstylec **永远一致**，发版不同步就会「CLI 说没错、编译器说有错」。
+#
+# 现在它是**同一个 workspace 的成员**（`../zstylec`），所以发版不同步在结构上
+# 就不可能发生 —— 而不只是「靠一条路径依赖约定」。
+zstylec = { path = "../zstylec" }
+
+[dev-dependencies]

@@ -16,6 +16,9 @@ members = [
     "zephyra/zephyra-fx",
     "zephyra/zephyra-style",
     "zstylec",
+    # 命令行前端。与 zstylec 同一个 workspace —— 而不只是路径依赖邻居 ——
+    # 所以「CLI 看到的属性表」与「编译器看到的属性表」不可能是两份。
+    "ZephyraCLI",
     "zephyra/zephyra-base/zephyra-winit",
     "zephyra/zephyra-base/zephyra-winit-d3d12",
     "zephyra/zephyra-base/zephyra-camera",

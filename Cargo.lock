@@ -2170,6 +2170,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "zephyra-cli"
+version = "0.1.0"
+dependencies = [
+ "zstylec",
+]
+
+[[package]]
 name = "zephyra-core"
 version = "0.1.0"
 
