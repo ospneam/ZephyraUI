@@ -113,9 +113,13 @@ pub fn diff(node: &mut Node, element: &Element) -> DiffStats {
     // 「这帧有、上帧没有」是常态。只追加不删除的话，去掉一个分类名后它
     // **永远留在节点上**——症状是「样式表改了不生效」，而这正是本轨道
     // 立规之前最担心的一类 bug。
-    let want: Vec<&'static str> = element.style_names().to_vec();
-    if node.style_names() != want.as_slice() {
-        node.styles = want;
+    // ⚠ 这里**先比后建**：原写法是 `let want = element.style_names().to_vec();`
+    // 然后拿它比 —— 于是**每个节点每帧都分配一次 `Vec`**，只为了一次相等比较。
+    // demo 的树约 150 节点，这就是每帧约 150 次分配。
+    //
+    // 两边都是 `&[&'static str]`，直接比切片即可；只有真的变了才 `to_vec()` 建新表。
+    if node.style_names() != element.style_names() {
+        node.styles = element.style_names().to_vec();
         // 分类名变不变都可能改变外观，但不影响布局（外观在 Styled 层）。
         // 标 Paint：下一帧 apply 会把新分类的样式写进来，然后按值的
         // `affects_layout` 决定要不要升级成 Layout。
