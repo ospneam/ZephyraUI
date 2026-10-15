@@ -3,7 +3,7 @@
 //! # 这一组测的是什么
 //!
 //! 官方动效表里每个动作作用的都是**不透明度**与**位置**
-//! （`docs/animation.md` §1）。本组钉住这两件事在 core 侧的语义：
+//! （`docs/developer/animation.md` §1）。本组钉住这两件事在 core 侧的语义：
 //!
 //! 1. **不透明度落到每一种绘制**：背景、描边、文字、图像、图标；
 //! 2. **opacity_multiplies_along_parent_chain**（不是"取最近一个"）；

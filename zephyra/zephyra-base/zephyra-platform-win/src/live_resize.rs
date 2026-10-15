@@ -70,7 +70,7 @@ pub type RenderHook = std::sync::Arc<dyn Fn() -> bool + Send + Sync + 'static>;
 /// 具体是哪个窗口无关（我们只挂一个窗口）。
 ///
 /// 真要支持多窗口，得改成 `HashMap<isize, ...>` —— 记账在
-/// `docs/task-live-resize.md`。
+/// `docs/dev-log/task-live-resize.md`。
 static HOOK: Mutex<Option<RenderHook>> = Mutex::new(None);
 /// `WM_SIZE` 被处理的次数。只给 trace 与门禁用。
 static WM_SIZE_SEEN: AtomicU64 = AtomicU64::new(0);

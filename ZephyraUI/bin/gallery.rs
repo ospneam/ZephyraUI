@@ -442,7 +442,7 @@ fn dump_cpu(light: bool) {
     // 为什么需要它：dump 路不读系统语言（Gallery::default 的 prefs 是空的，
     // 于是走回落分支），所以中日文只能这样才看得到。而中日文能不能真正出图，
     // 正是 i18n 唯一无法用纯 CPU 断言覆盖的部分 —— 字形在宿主的字形图集里
-    // （见 docs/i18n.md §7）。给一个开关，比让下一个人以为"中日文没接"要好。
+    // （见 docs/developer/i18n.md §7）。给一个开关，比让下一个人以为"中日文没接"要好。
     if let Some(tag) = flag_value(&args, "--lang") {
         match SUPPORTED.iter().position(|s| *s == tag) {
             Some(idx) => view.lang = idx,
@@ -620,7 +620,7 @@ impl winit::application::ApplicationHandler for Bootstrap {
         // Mica：材质画在**窗口背后**，而我们自绘整窗（`Container.window` 有
         // 不透明背景）——所以必须同时让根背景半透明（`gallery.zstyle` 的
         // `Container.window.backdrop-on` 分类名，由 Gallery 的状态决定）才透得出
-        // 材质。两者缺一不可，见 `docs/win/02-mica.md` §3。
+        // 材质。两者缺一不可，见 `docs/developer/win/02-mica.md` §3。
         let _ = app.apply_window_chrome(zephyra_platform::WindowChrome {
             dark: true,
             corner: zephyra_platform::CornerPreference::Round,

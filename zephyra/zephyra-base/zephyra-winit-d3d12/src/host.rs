@@ -125,7 +125,7 @@ pub struct HostWindow<V: View> {
     ///
     /// 存在的理由与 `FrameCache::viewport` 不同：那条是 core 的**判据**，决定要不要
     /// 重排；这一份纯粹是「resize 之后到底发生了什么」的观测点。
-    /// 两者的值应当一致 —— 不一致本身就是缺陷（见 `docs/task-responsive.md` B2）。
+    /// 两者的值应当一致 —— 不一致本身就是缺陷（见 `docs/dev-log/task-responsive.md` B2）。
     traced_viewport: Option<(f32, f32)>,
     /// 图像纹理表：`Command::Image` 的句柄 → SRV 描述符位置。
     textures: TextureTable,
@@ -429,7 +429,7 @@ impl<V: View> HostWindow<V> {
     /// 两者用途不同，混在一起会一次改两件事：
     /// - `client_size()`（物理）是**布局视口**，改它会让全部视觉尺寸一起变
     ///   （1.25 缩放下整体小 25%）—— 那是独立的一轮，见
-    ///   `docs/responsive-and-touch.md` §5 的记账；
+    ///   `docs/developer/responsive-and-touch.md` §5 的记账；
     /// - 本方法（有效）只服务**断点判定**。官方口径写得很清楚：
     ///   `AdaptiveTrigger.MinWindowWidth` = "the minimum window width
     ///   (**in effective pixels**)"。本机 scale 1.25 下，1400 物理 = 1120 有效，

@@ -102,7 +102,7 @@ fn touch_target_converts_scale_to_layout_units() {
 
 /// 官方数字本身要钉住，防止被"顺手调参"改掉。
 ///
-/// 判据直接抄原文。改这些数字必须同时改 `docs/responsive-and-touch.md`
+/// 判据直接抄原文。改这些数字必须同时改 `docs/developer/responsive-and-touch.md`
 /// 里的引用，否则这条会红。
 #[test]
 fn official_numbers_match_documentation() {

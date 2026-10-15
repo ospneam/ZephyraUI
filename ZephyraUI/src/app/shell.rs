@@ -37,7 +37,7 @@ pub const TITLEBAR_H: f32 = 48.0;
 pub const NAV_W: f32 = 240.0;
 /// **紧凑档**的导航栏宽：只留图标列（WinUI NavigationView 的 `LeftCompact`）。
 ///
-/// 出处见 `docs/responsive-and-touch.md` §6 引 `responsive-design` 页。取 56
+/// 出处见 `docs/developer/responsive-and-touch.md` §6 引 `responsive-design` 页。取 56
 /// 而不是更小：图标列本身是 32 宽（**4 的倍数**，官方要求基单位为 4 epx），
 /// 加两侧 padding 后不能把图标压到 32 以下。
 pub const NAV_W_COMPACT: f32 = 56.0;
@@ -67,7 +67,7 @@ fn titlebar(g: &Gallery) -> Element {
         // 「我想要 Mica 外观」是**应用层**的表达；「平台能不能开」由平台层回答。
         // 所以这里无条件发 `.mica`：平台不支持时，半透明标题栏叠在不透明 clear
         // 上仍是可读的半透明色 —— 降级不崩、且不引入 `cfg`。
-        // （见 docs/win/02-mica.md §3）
+        // （见 docs/developer/win/02-mica.md §3）
         .styles(g.mica.then_some("mica"))
         .with_children([
             text_label("app-title", "ZephyraUI Gallery", "text-body-strong"),
@@ -135,7 +135,7 @@ fn caption_buttons(g: &Gallery) -> Element {
 /// core 没有 flex-grow（垂直 StackPanel 的第二个子项不占满剩余高），所以
 /// `body` 的高度只能由**内容**决定：`max(导航内容高, 内容卡高)`。要真正跟随
 /// 窗口高，缺的是 core 的主轴 fill 语义 —— 已记账在
-/// `docs/responsive-and-touch.md` §8，不与本轮混做。
+/// `docs/developer/responsive-and-touch.md` §8，不与本轮混做。
 ///
 /// 这里只加 `cross-align: stretch`（合法地让宽度铺满，前者是交叉轴）。
 fn body(g: &Gallery) -> Element {
@@ -149,7 +149,7 @@ fn body(g: &Gallery) -> Element {
 ///
 /// # 紧凑档
 ///
-/// 官方的「自适应布局」示例正是这一处（`docs/responsive-and-touch.md` §6）：
+/// 官方的「自适应布局」示例正是这一处（`docs/developer/responsive-and-touch.md` §6）：
 /// 导航窗格的**精简版**适用于较小屏幕。这里把导航收成图标列（文字用
 /// `COLLAPSED` 折叠、宽度交给样式表的 `.nav-pane.compact`），内容区随即
 /// 拿到全宽 —— 而不是把 240 单位的侧栏浪费在窄窗口里。
@@ -203,7 +203,7 @@ fn nav_pane(g: &Gallery) -> Element {
 /// 高度仍是 zstyle 的 752 —— 那会让 page 内容超出时被裁，而这是**已知边界**：
 /// core 既无 flex-grow 也无滚动，固定高度是唯一的取舍（`MIGRATION.md` §7.4
 /// 已经为"Home 只能放 10 条"记过同一笔）。本轮记账见
-/// `docs/responsive-and-touch.md` §8。
+/// `docs/developer/responsive-and-touch.md` §8。
 fn content_card(g: &Gallery) -> Element {
     Element::new(NodeTag::Container)
         .with_key("content")

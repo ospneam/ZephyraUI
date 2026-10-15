@@ -378,7 +378,7 @@ fn group_page(g: &Gallery, route: &'static str) -> Element {
 ///
 /// # `columns` 是断点的直接产物（官方的「重新排列」）
 ///
-/// `docs/responsive-and-touch.md` §6 引官方 `responsive-design` 页：当改用更大的
+/// `docs/developer/responsive-and-touch.md` §6 引官方 `responsive-design` 页：当改用更大的
 /// 屏幕时可以添加列。core 没有 Grid 也没有 flex-wrap，所以列数只能在视图层按
 /// 可用宽度算 —— 这正是 [`Gallery::card_columns`] 的理由：
 ///

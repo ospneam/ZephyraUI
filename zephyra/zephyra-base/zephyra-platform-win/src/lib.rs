@@ -52,7 +52,7 @@ impl Platform for Windows {
 
     fn capabilities(&self) -> Capabilities {
         let build = build_number();
-        // 门槛全部来自文档（docs/win/01）：
+        // 门槛全部来自文档（docs/developer/win/01）：
         //   dark mode  / corner  → Windows 11 Build 22000
         //   backdrop（ Mica/Acrylic）→ Windows 11 Build 22621
         //   caption/border color   → 文档未在本页标版本，按 22000 保守处理
@@ -240,7 +240,7 @@ enum DwmAttr {
 
 /// [`BackdropKind`] → DWM 材质枚举。
 ///
-/// 取值来自 `DWM_SYSTEMBACKDROP_TYPE`（`docs/win/02-mica.md` §1），用
+/// 取值来自 `DWM_SYSTEMBACKDROP_TYPE`（`docs/developer/win/02-mica.md` §1），用
 /// `windows` crate 的**强类型常量**，不写裸数字。
 #[cfg(windows)]
 fn dwm_backdrop(
@@ -366,7 +366,7 @@ struct ColorRef(u32);
 /// - 门禁只要求"键存在时返回值与注册表一致"，不存在时不失败。
 ///
 /// 批 3 若要接变更通知（`WM_SETTINGCHANGE`），需先补一篇文档；见
-/// `docs/win/04-sys-theme.md`。
+/// `docs/developer/win/04-sys-theme.md`。
 fn sys_theme() -> Option<ThemePreference> {
     #[cfg(windows)]
     {

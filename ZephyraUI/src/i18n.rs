@@ -15,7 +15,7 @@
 //!   the list that matches a locale supported** by `Intl` is used」
 //! - BCP 47 标签结构：<https://developer.mozilla.org/en-US/docs/Glossary/BCP_47_language_tag>
 //!
-//! 完整引用与设计见 `docs/i18n.md`。
+//! 完整引用与设计见 `docs/developer/i18n.md`。
 //!
 //! # 本模块照抄浏览器的那四条
 //!
@@ -33,7 +33,7 @@
 //!   这个**槽位**，规则数据不进来 —— 硬编码"英文式 one/other"会静默给错中文与
 //!   俄文，而无声的错误比没有更糟。
 //! - **日期/数字格式化**：官方例子用的是 `Intl.DateTimeFormat`，那是 ICU。
-//!   同样只留槽位不实现，记账在 `docs/i18n.md` §4。
+//!   同样只留槽位不实现，记账在 `docs/developer/i18n.md` §4。
 //! - **运行时加载 / 按需分块**：浏览器按 `Accept-Language` 取对应资源，
 //!   而本仓的消息表是编译期常量（`view()` 每帧重建，泄漏不起）。
 
@@ -312,7 +312,7 @@ pub fn negotiate(prefs: &Preferences, available: &[Tag]) -> Option<Tag> {
 /// 翻译文案在编译期就定好了 —— 它不是运行期数据，把它做成常量既避开分配，
 /// 也能直接喂给 `PropertyValue::static_str`（属性系统为此专门有一个变体，
 /// 见 `property.rs`）。运行期加载的目录是另一套设计，本仓不做（记账在
-/// `docs/i18n.md` §4）。
+/// `docs/developer/i18n.md` §4）。
 #[derive(Debug, Clone, Default)]
 pub struct Messages {
     /// `(locale, key) → 文案`。

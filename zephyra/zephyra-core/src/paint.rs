@@ -161,7 +161,7 @@ pub enum Command {
         /// 若四边形里烘焙了绝对坐标，那么 resize 的每一帧都要重新算一遍 239 个
         /// 字形、每帧分配 239 个 `Vec`。
         ///
-        /// 实测（`docs/task-resize.md` §批 C · C1b）：`Vec<GlyphQuad>` 每帧
+        /// 实测（`docs/dev-log/task-resize.md` §批 C · C1b）：`Vec<GlyphQuad>` 每帧
         /// **136 KB**（239 × 1024 B），占 resize 帧分配量的 **40%**。
         ///
         /// 改成 `Arc<[GlyphQuad]>` + 独立的 `offset` 后，缓存挂在节点上，
@@ -534,7 +534,7 @@ pub fn render(node: &Node, ctx: Context<'_>, out: &mut DisplayList) {
 ///
 /// ⚠️ 这也意味着 `opacity()` 作为公开 API 的语义是"**本节点**的不透明度"，
 /// 与 [`crate::property::PropertyKey::inheritable`] 的名字不一致。记账见
-/// `docs/task-anim-wire.md` §0。
+/// `docs/dev-log/task-anim-wire.md` §0。
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct PaintState {
     /// 祖先链的不透明度之积。

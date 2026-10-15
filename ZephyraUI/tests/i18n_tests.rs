@@ -134,7 +134,7 @@ fn system_preference_maps_to_correct_locale() {
         // 这**不是** bug，是真实的产品取舍：本 demo 只发布了简体。
         // 对照组是"两个都写了 script"——那时 Hans/Hant 不许互相回退
         // （见 `i18n.rs` 的 `fallback_distance_follows_official_order`）。繁体缺口记在
-        // `docs/i18n.md` §6。
+        // `docs/developer/i18n.md` §6。
         (&["zh-TW"], "zh-Hans"),
         (&["en-GB", "fr"], "en"),
         (&["ja-JP"], "ja"),
@@ -428,7 +428,7 @@ fn frame_once<'a>(
 ///
 /// 1. 保留树上的 `TEXT` 属性（本文件其它几条测的就是它）；
 /// 2. 宿主的字形层 —— 真机上可见，但本机 D3D12 资源创建不可用（`tests/d3d12_draw.rs`
-///    头部有证据），所以门禁只能走到第 1 层。记账见 `docs/i18n.md` §7。
+///    头部有证据），所以门禁只能走到第 1 层。记账见 `docs/developer/i18n.md` §7。
 #[test]
 fn locale_switch_repaints_whole_frame() {
     let sheet = std::sync::Arc::new(sheet());

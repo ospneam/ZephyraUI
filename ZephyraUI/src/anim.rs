@@ -3,13 +3,13 @@
 //! # 出处
 //!
 //! `https://learn.microsoft.com/zh-cn/windows/apps/design/motion/` 的「动画属性」表。
-//! 每个常量都在 `docs/animation.md` §1 有逐字抄录，改之前先回查原文。
+//! 每个常量都在 `docs/developer/animation.md` §1 有逐字抄录，改之前先回查原文。
 //!
 //! # 为什么本模块只有纯函数
 //!
 //! 动画 = **缓动后的进度**，而进度要映射到外观值。本仓的规矩是源码零外观，
 //! 所以进度在这里算完就停，量化成档位（`step`）交给 zstyle 给值。
-//! 见 `docs/animation.md` §3。
+//! 见 `docs/developer/animation.md` §3。
 //!
 //! 纯函数还带来一件实质好处：不依赖 GPU、不依赖窗口，
 //! 于是「缓动算得对不对」可以在 CI 里逐点断言，而不是只能靠肉眼。
@@ -42,7 +42,7 @@ pub const BOUNCE_MS: f32 = MS_167 + MS_167 + MS_333;
 /// 同时动不透明度与位置（官方页面刷新 = 「向上滑动 + 淡入」），位置那一类动作
 /// 在表里对应的是 167 / 250 / **333** 三档，取最长档是因为内容区的位移距离小、
 /// 时长短会让"闪一下就没了"，而时长长不会让人觉得卡（位移只有 8 px，见
-/// `docs/task-anim-wire.md`）。
+/// `docs/dev-log/task-anim-wire.md`）。
 ///
 /// ⚠️ 这 333 ms 与 [`MS_333`] 是同一个数字但**不同的用途**：`MS_333` 是表里的
 /// 原始档位，而 `ENTER_MS` 是"本仓选了哪一档"的决定。分开命名是为了让
@@ -65,7 +65,7 @@ pub const ENTER_START_ALPHA: f32 = 0.0;
 /// 所以取值是本仓的决定，理由是：位移越大越容易在不重排（`TRANSLATE_*` 是
 /// 纯绘制属性）之外的地方露出破绽，而 8 DIP 在 1159 宽的内容区上是看不出来的
 /// 量级 —— 动画要的是"有响应"，不是"看得见的位移"。
-/// `docs/task-anim-wire.md` 记了同一笔账。
+/// `docs/dev-log/task-anim-wire.md` 记了同一笔账。
 pub const ENTER_START_RISE: f32 = 8.0;
 
 /// 档位数。8 档 × 83ms 时每档约 10.4ms，仍在官方"至少 60 fps"内。

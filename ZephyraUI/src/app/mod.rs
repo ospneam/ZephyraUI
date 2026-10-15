@@ -78,7 +78,7 @@ pub const LANG_SELFS: &[&str] = &["English", "中文", "日本語"];
 ///
 /// 两种都能取到值，但平表让「门禁枚举漏翻」变成一行 `CATALOG.iter()`
 /// —— 而漏翻是 i18n 唯一真正危险的东西（其余问题最多是显示难看）。
-/// 分语言分文件是**将来**运行期加载时才需要的形态，见 `docs/i18n.md` §4。
+/// 分语言分文件是**将来**运行期加载时才需要的形态，见 `docs/developer/i18n.md` §4。
 ///
 /// # 覆盖范围与未覆盖范围（不要误读这张表）
 ///
@@ -86,7 +86,7 @@ pub const LANG_SELFS: &[&str] = &["English", "中文", "日本語"];
 /// 设置页七条。**未接**：控件展台 44 张卡与各页正文 —— 那些仍是源码里的
 /// 中文硬编码。这是**记账的债**，不是"已支持"：门禁
 /// `i18n_tests::no_locale_is_missing_keys` 覆盖的是本表列出的键，
-/// `i18n_tests::未接入的硬编码文案已记账` 钉住剩下的数量，见 `docs/i18n.md` §5。
+/// `i18n_tests::未接入的硬编码文案已记账` 钉住剩下的数量，见 `docs/developer/i18n.md` §5。
 const CATALOG: &[(&str, &str, &str)] = &[
     // ---- en（默认语言）----
     ("en", "app.title", "ZephyraUI Gallery"),
@@ -387,7 +387,7 @@ pub struct Gallery {
     ///
     /// # 为什么按**路由**归零
     ///
-    /// 换路由 = 换内容 = 重放入场，这正是官方页面刷新的定义（`docs/animation.md` §1）。
+    /// 换路由 = 换内容 = 重放入场，这正是官方页面刷新的定义（`docs/developer/animation.md` §1）。
     /// 自己额外记一个"上一页 id"就要多一个字段与一次比较，而那样还会漏掉
     /// "同一路由内内容变了"（测试页的状态更新就不该重放入场）。
     pub enter_ms: f32,
@@ -404,7 +404,7 @@ impl Gallery {
     /// 有效像素宽度（官方断点的口径）。
     ///
     /// 宿主给的视口是物理像素，这里除 scale。判据见
-    /// `docs/responsive-and-touch.md` §2 与 [`crate::responsive::WidthClass`]。
+    /// `docs/developer/responsive-and-touch.md` §2 与 [`crate::responsive::WidthClass`]。
     pub fn width_epx(&self) -> f32 {
         let scale = if self.scale.is_finite() && self.scale > 0.0 {
             self.scale
@@ -423,7 +423,7 @@ impl Gallery {
     ///
     /// 这一条是**结构**判据，不是外观判据：折叠不折叠、几列、显不显示某块，
     /// 都是树拓扑，属于视图职责；外观值仍在 zstyle（见
-    /// `docs/responsive-and-touch.md` §7）。
+    /// `docs/developer/responsive-and-touch.md` §7）。
     pub fn is_compact(&self) -> bool {
         self.width_class().is_compact()
     }
@@ -573,7 +573,7 @@ impl Gallery {
     /// 触控目标边长换算成**布局单位**（= 视觉上的 epx × scale）。
     ///
     /// 只在触控路径上用：鼠标路径的目标尺寸不变（本仓基准未动，见
-    /// `docs/responsive-and-touch.md` §5）。
+    /// `docs/developer/responsive-and-touch.md` §5）。
     pub fn touch_target(&self, epx: f32) -> f32 {
         crate::responsive::touch_px(epx, self.scale)
     }

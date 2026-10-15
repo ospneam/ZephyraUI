@@ -6,7 +6,7 @@
 //!
 //! - [`Stub::version`] 读 `uname` / `kernel.osrelease`（要不要给由调用方定）；
 //! - [`Stub::system_theme`] 查 `org.freedesktop.appearance color-scheme`
-//!   （portal 规范，见 `docs/portability.md`）；
+//!   （portal 规范，见 `docs/developer/portability.md`）；
 //! - [`Stub::apply_window_chrome`] 按 compositor 能力设圆角（Wayland 通常交给
 //!   合成器，X11 用 `_GTK_FRAME_EXTENTS` 一类的私有约定）。
 //!

@@ -100,7 +100,7 @@ impl ThemePreference {
 /// 窗口圆角偏好。
 ///
 /// 取值与 Windows 的 `DWM_WINDOW_CORNER_PREFERENCE` **一一对应**
-/// （0..3），见 `docs/win/01-window-attributes.md`。
+/// （0..3），见 `docs/developer/win/01-window-attributes.md`。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum CornerPreference {
     /// 由系统决定（0）。**默认值**：应用不表态，行为随系统与版本变化。
@@ -305,7 +305,7 @@ pub trait Platform {
     /// `GetUserPreferredUILanguages(MUI_LANGUAGE_NAME, …)`（`winnls.h`）——
     /// 返回线程的首选 UI 语言名列表，正是「有序、语言名标签」这一形状。
     /// 它与 `GetSystemDefaultUILanguage` 的区别：后者只有一项且是系统安装语言，
-    /// 不是**用户偏好**。文档：`docs/i18n.md` §3。
+    /// 不是**用户偏好**。文档：`docs/developer/i18n.md` §3。
     fn system_languages(&self) -> Vec<String>;
 
     /// 对窗口施加外观。

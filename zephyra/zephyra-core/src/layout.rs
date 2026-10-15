@@ -578,7 +578,7 @@ pub fn measure(node: &mut Node, constraints: Constraints, ctx: Context<'_>) -> S
 ///
 /// 尺寸取自测量缓存。缓存缺失时填 `0` **占位**而不是 `filter_map` 掉 ——
 /// 掉一个会让后面所有下标整体前移，那是 `paint` 侧一个真实踩过的坑
-/// （见 `docs/task-resize.md` §完成情况）。
+/// （见 `docs/dev-log/task-resize.md` §完成情况）。
 pub fn arrange(node: &mut Node, bounds: Rect, ctx: Context<'_>) {
     node.set_rect(bounds);
     let padding = node.padding(ctx);

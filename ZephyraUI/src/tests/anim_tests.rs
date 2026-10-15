@@ -35,7 +35,7 @@ fn easing_closes_at_both_ends_and_total_duration() {
     }
 }
 
-/// 官方曲线要钉住控制点与实际形状：改曲线必须先改 `docs/animation.md` §1。
+/// 官方曲线要钉住控制点与实际形状：改曲线必须先改 `docs/developer/animation.md` §1。
 ///
 /// ⚠️ 形状**全部实测**过，不按"点到点听起来该居中"猜。三条曲线的 y 控制点
 /// 都在高位，所以中段都 > 0.5（先快后慢）：

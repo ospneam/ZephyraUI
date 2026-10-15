@@ -51,7 +51,7 @@ fn capability_bits_match_documented_thresholds() {
 fn mica_request_with_null_handle_does_nothing() {
     // 判据用**空句柄**：这是不碰 DWM 的最短路径，于是"没生效"唯一可能的
     // 原因就是"压根没调"。真窗口上的 Mica 是否真透出来，由截图门禁在
-    // 像素层核对（docs/win/02 §4）——API 返回成功**不能**证明材质可见。
+    // 像素层核对（docs/developer/win/02 §4）——API 返回成功**不能**证明材质可见。
     let out = Windows.apply_window_chrome(
         WindowHandle::from_raw(0),
         WindowChrome {
@@ -65,7 +65,7 @@ fn mica_request_with_null_handle_does_nothing() {
 #[test]
 #[cfg(windows)]
 fn every_material_has_a_matching_dwm_enum() {
-    // 文档表（docs/win/02 §1）：Mica=MAINWINDOW(2)、Acrylic=TRANSIENT(3)、
+    // 文档表（docs/developer/win/02 §1）：Mica=MAINWINDOW(2)、Acrylic=TRANSIENT(3)、
     // MicaAlt=TABBED(4)、None=NONE(1)。
     //
     // 判据只查"映射存在且合法"，不查具体数值 —— 数值由 `windows` crate 的
@@ -82,7 +82,7 @@ fn every_material_has_a_matching_dwm_enum() {
 
 #[test]
 fn system_theme_query_matches_registry_or_is_unreadable() {
-    // ⚠️ 这两个注册表值**没有官方文档**（见 docs/win/04 §2），所以判据不能是
+    // ⚠️ 这两个注册表值**没有官方文档**（见 docs/developer/win/04 §2），所以判据不能是
     // "必须等于深色"—— 那会在浅色系统上无故红。
     //
     // 真正要钉住的是**方向**：查得到就必须与 `AppsUseLightTheme` 一致；

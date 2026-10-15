@@ -24,14 +24,14 @@
 //! 交互走保留式的 hover/press/click，布局用 core 的单趟 flex。
 //! 对照表在 `README.md`。
 
-/// 动画地基 —— 缓动曲线、时钟、档位。数字全部取自官方动效规范，见 `docs/animation.md`。
+/// 动画地基 —— 缓动曲线、时钟、档位。数字全部取自官方动效规范，见 `docs/developer/animation.md`。
 pub mod anim;
 pub mod app;
 pub mod controls;
-/// i18n —— BCP 47 标签、偏好协商、回退链。模型照抄浏览器，见 `docs/i18n.md`。
+/// i18n —— BCP 47 标签、偏好协商、回退链。模型照抄浏览器，见 `docs/developer/i18n.md`。
 pub mod i18n;
 /// 响应式与触控判据 —— 断点、触摸目标、列数。数字全部带出处，
-/// 见 `docs/responsive-and-touch.md`。
+/// 见 `docs/developer/responsive-and-touch.md`。
 pub mod responsive;
 pub mod tokens;
 

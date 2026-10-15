@@ -17,7 +17,7 @@ use super::{state, with_classes};
 /// # `compact`
 ///
 /// 紧凑档（官方断点的「小」）只留图标、隐藏文字 —— 这正是 WinUI NavigationView
-/// 的 `LeftCompact` 窗格模式，出处见 `docs/responsive-and-touch.md` §6 引
+/// 的 `LeftCompact` 窗格模式，出处见 `docs/developer/responsive-and-touch.md` §6 引
 /// `responsive-design` 页：「瞬态 UI（导航窗格及其精简版）适用于较小的屏幕，
 /// 但在较大屏幕上，最好选择使用选项卡」。
 ///

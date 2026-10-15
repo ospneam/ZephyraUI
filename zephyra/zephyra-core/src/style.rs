@@ -204,7 +204,7 @@ impl Node {
     /// 一律收到 `None`（见本文件 `value()`），所以这里取到的是**本节点**的值。
     /// 绘制趟自己沿树累乘（见 `paint.rs::PaintState::descend`），
     /// 于是**画面上的行为**是对的；不对的只有这个 getter 的名字。
-    /// 记账见 `docs/task-anim-wire.md` §0。
+    /// 记账见 `docs/dev-log/task-anim-wire.md` §0。
     pub fn opacity(&self, ctx: Context<'_>) -> f32 {
         self.number_or(&crate::props::OPACITY, 1.0, ctx)
     }

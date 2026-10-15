@@ -5,7 +5,7 @@ use super::*;
 
 #[test]
 fn corner_values_map_one_to_one_onto_doc_enum() {
-    // 数值必须与 DWM_WINDOW_CORNER_PREFERENCE 一致（docs/win/01）。
+    // 数值必须与 DWM_WINDOW_CORNER_PREFERENCE 一致（docs/developer/win/01）。
     assert_eq!(CornerPreference::Default.raw(), 0);
     assert_eq!(CornerPreference::DoNotRound.raw(), 1);
     assert_eq!(CornerPreference::Round.raw(), 2);
