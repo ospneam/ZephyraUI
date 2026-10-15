@@ -19,8 +19,8 @@
 //! 而"没画"必然是 0。
 #![cfg(windows)]
 
-use zephyra_core::frame::Damage;
 use zephyra_core::core::{Color, CornerRadius, Rect};
+use zephyra_core::frame::Damage;
 use zephyra_core::paint::{Command, DisplayList, Layer, SortKey};
 
 use zephyra_winit::renderer::{RenderCtx, Renderer};
@@ -81,7 +81,10 @@ fn rectangle_reaches_pixels() {
     let drawn = non_background(&pixels);
     let total = (SIZE * SIZE) as f64;
     eprintln!("[t] 渲染报告 {report:?}");
-    eprintln!("[t] 覆盖 {drawn}/{total} 像素，颜色分布 {:?}", color_hist(&pixels));
+    eprintln!(
+        "[t] 覆盖 {drawn}/{total} 像素，颜色分布 {:?}",
+        color_hist(&pixels)
+    );
 
     // ---- 视口读回（**输入 count 给 16**）----
     //
@@ -96,12 +99,14 @@ fn rectangle_reaches_pixels() {
         let mut n = 16u32;
         let mut buf = [D3D11_VIEWPORT::default(); 16];
         gpu.context.RSGetViewports(&mut n, Some(buf.as_mut_ptr()));
-        eprintln!("[t] 视口读回：个数={n} 宽={} 高={}", buf[0].Width, buf[0].Height);
+        eprintln!(
+            "[t] 视口读回：个数={n} 宽={} 高={}",
+            buf[0].Width, buf[0].Height
+        );
     }
-    eprintln!(
-        "[t] 设备移除原因 = {:?}",
-        unsafe { gpu.device.GetDeviceRemovedReason() }
-    );
+    eprintln!("[t] 设备移除原因 = {:?}", unsafe {
+        gpu.device.GetDeviceRemovedReason()
+    });
     // ---- 那几个像素**在哪** ----
     //
     // 此前一直假设它们在原点，而那只是「退化三角形」的推测。位置本身就是证据：
@@ -110,10 +115,18 @@ fn rectangle_reaches_pixels() {
         let mut at = Vec::new();
         for (i, p) in pixels.chunks_exact(4).enumerate() {
             if p[0] != 0 || p[1] != 0 || p[2] != 0 {
-                at.push((i % SIZE as usize, i / SIZE as usize, [p[0], p[1], p[2], p[3]]));
+                at.push((
+                    i % SIZE as usize,
+                    i / SIZE as usize,
+                    [p[0], p[1], p[2], p[3]],
+                ));
             }
         }
-        eprintln!("[t] 非黑像素共 {} 个，位置 = {:?}", at.len(), &at[..at.len().min(8)]);
+        eprintln!(
+            "[t] 非黑像素共 {} 个，位置 = {:?}",
+            at.len(),
+            &at[..at.len().min(8)]
+        );
     }
 
     assert!(
@@ -207,7 +220,10 @@ fn bare_d3d11_draws_a_full_screen_triangle() {
             let mut c = 16u32;
             let mut buf = [D3D11_VIEWPORT::default(); 16];
             gpu.context.RSGetViewports(&mut c, Some(buf.as_mut_ptr()));
-            eprintln!("[t] 具名数组：个数={c} 宽={} 高={}", buf[0].Width, buf[0].Height);
+            eprintln!(
+                "[t] 具名数组：个数={c} 宽={} 高={}",
+                buf[0].Width, buf[0].Height
+            );
         }
         gpu.context
             .ClearRenderTargetView(&rtv, &[CLEAR.r, CLEAR.g, CLEAR.b, CLEAR.a]);
@@ -223,8 +239,7 @@ fn bare_d3d11_draws_a_full_screen_triangle() {
             Some(&stride),
             Some(&off),
         );
-        gpu.context
-            .IASetIndexBuffer(&ib, DXGI_FORMAT_R16_UINT, 0);
+        gpu.context.IASetIndexBuffer(&ib, DXGI_FORMAT_R16_UINT, 0);
         // ⚠⚠ 这一行是**真凶**，而且本测试自己以前也漏了它，所以它一直是「坏掉的
         // 对照组」—— 拿它当参照物去判断渲染器，结论必然是错的。
         //
@@ -232,7 +247,8 @@ fn bare_d3d11_draws_a_full_screen_triangle() {
         // 拿它当参数**不报错**：`RenderReport` 正常、设备未移除、画面上却只剩两个
         // 退化像素。官方把这一步列为绑完输入缓冲后的硬性要求，见 `renderer.rs`
         // 里 `IASetPrimitiveTopology` 处的引用。
-        gpu.context.IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        gpu.context
+            .IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         map_write(&gpu.context, &vb, &verts);
         map_write(&gpu.context, &ib, &indices);
         // ---- 顶点缓冲绑定读回 ----
@@ -377,7 +393,10 @@ fn in_frame_scissor_only_affects_damage() {
     // 判据也刻意**不判具体颜色**，只判「变没变」：离屏格式是 `B8G8R8A8` 而 `Color`
     // 是 RGBA，通道顺序相反；按直觉写判据会把红判成蓝（第一版的第二个坑）。
     // 与基线逐字节比就不依赖任何通道约定。
-    unsafe { gpu.context.ClearRenderTargetView(&rtv, &[1.0, 0.0, 0.0, 1.0]) };
+    unsafe {
+        gpu.context
+            .ClearRenderTargetView(&rtv, &[1.0, 0.0, 0.0, 1.0])
+    };
     let baseline = read_back(&gpu, &tex);
     assert!(
         baseline.iter().any(|&b| b != 0),
@@ -496,7 +515,10 @@ fn image_corner_radius_cuts_the_corners() {
     textures.insert("img", tsrv, ttex);
 
     // ---- 2. 底色铺红 ----
-    unsafe { gpu.context.ClearRenderTargetView(&rtv, &[1.0, 0.0, 0.0, 1.0]) };
+    unsafe {
+        gpu.context
+            .ClearRenderTargetView(&rtv, &[1.0, 0.0, 0.0, 1.0])
+    };
     let baseline = read_back(&gpu, &tex);
     assert!(baseline.iter().any(|&b| b != 0), "基线全 0，判据失效");
 
@@ -538,7 +560,23 @@ fn image_corner_radius_cuts_the_corners() {
     let px = read_back(&gpu, &tex);
     let at = |x: u32, y: u32| &px[(y as usize * SIZE as usize + x as usize) * 4..][..4];
 
-    { let mut out=String::new(); for y in 0..16u32 { for x in 0..16u32 { let p=at(x*4,y*4); out.push_str(if p[0]>200&&p[1]>200&&p[2]>200 {"W"} else if p[0]>150&&p[1]<80 {"R"} else {"."}); } out.push('\n'); } eprintln!("[t] 16x16 (W=白 R=红 .=其它):\n{out}"); }
+    {
+        let mut out = String::new();
+        for y in 0..16u32 {
+            for x in 0..16u32 {
+                let p = at(x * 4, y * 4);
+                out.push_str(if p[0] > 200 && p[1] > 200 && p[2] > 200 {
+                    "W"
+                } else if p[0] > 150 && p[1] < 80 {
+                    "R"
+                } else {
+                    "."
+                });
+            }
+            out.push('\n');
+        }
+        eprintln!("[t] 16x16 (W=白 R=红 .=其它):\n{out}");
+    }
     // 中心：被纯白纹理覆盖 ⇒ 三个通道都接近 255。
     let c = at(SIZE / 2, SIZE / 2);
     assert!(
@@ -548,7 +586,23 @@ fn image_corner_radius_cuts_the_corners() {
 
     // 四角：圆角 16 而矩形 4..60，所以紧贴矩形角的像素在形状之外 ⇒ 仍是红底。
     // 只断言「不是白的」，与通道顺序无关。
-    { let mut out=String::new(); for y in 0..16u32 { for x in 0..16u32 { let p=at(x*4,y*4); out.push(if p[0]>200&&p[1]>200&&p[2]>200 {'W'} else if p[0]>150 {'R'} else {'.'}); } out.push('\n'); } eprintln!("[t] 16x16 缩略图:\n{out}"); }
+    {
+        let mut out = String::new();
+        for y in 0..16u32 {
+            for x in 0..16u32 {
+                let p = at(x * 4, y * 4);
+                out.push(if p[0] > 200 && p[1] > 200 && p[2] > 200 {
+                    'W'
+                } else if p[0] > 150 {
+                    'R'
+                } else {
+                    '.'
+                });
+            }
+            out.push('\n');
+        }
+        eprintln!("[t] 16x16 缩略图:\n{out}");
+    }
     let mut white_corners = 0;
     for (x, y) in [(5u32, 5u32), (58, 5), (5, 58), (58, 58)] {
         let p = at(x, y);
@@ -717,9 +771,9 @@ fn translucent_quad_composites_in_premultiplied_space() {
 
     let px = read_back(&gpu, &tex);
     let at = |x: u32, y: u32| -> [u8; 4] {
-    // ⚠ 离屏 RT 是 `B8G8R8A8`，而 `Color` 是 RGBA —— **通道顺序是反的**。
-    // 按 RGB 去读会把红蓝对调，于是「期望 128 的那个通道」实际读的是另一个通道，
-    // 断言看起来在管颜色、其实管错了通道。
+        // ⚠ 离屏 RT 是 `B8G8R8A8`，而 `Color` 是 RGBA —— **通道顺序是反的**。
+        // 按 RGB 去读会把红蓝对调，于是「期望 128 的那个通道」实际读的是另一个通道，
+        // 断言看起来在管颜色、其实管错了通道。
 
         let i = (y as usize * SIZE as usize + x as usize) * 4;
         [px[i + 2], px[i + 1], px[i], px[i + 3]] // 重排成 (r, g, b, a)
@@ -795,7 +849,10 @@ fn shader_assets_are_in_sync() {
         "两份 zephyra.hlsl 长度不同 —— 有一份被改过而另一份没跟上"
     );
     for (i, (x, y)) in a.iter().zip(b.iter()).enumerate() {
-        assert_eq!(x, y, "两份 zephyra.hlsl 在第 {i} 个字节处分叉（第 4 行的 Viewstage 引用之类）");
+        assert_eq!(
+            x, y,
+            "两份 zephyra.hlsl 在第 {i} 个字节处分叉（第 4 行的 Viewstage 引用之类）"
+        );
     }
 
     // PS 有 18 个变体 + 1 个 VS，每一个都要比过 —— 只查一个的话，其余 17 个
@@ -822,7 +879,6 @@ fn shader_assets_are_in_sync() {
         );
     }
 }
-
 
 /// 纯色背景 + 带指定混合模式的纯色前景。
 ///
@@ -1002,11 +1058,7 @@ fn adjacent_runs_with_different_blends_all_apply_in_order() {
                     blend: zephyra_core::filter::BlendMode,
                     layer: zephyra_core::paint::Layer| {
         list.push(
-            SortKey {
-                layer,
-                z: 0,
-                order,
-            },
+            SortKey { layer, z: 0, order },
             Command::Quad {
                 rect: Rect::new(0.0, 0.0, s, s),
                 radius: CornerRadius { radius: 0.0 },
@@ -1018,9 +1070,24 @@ fn adjacent_runs_with_different_blends_all_apply_in_order() {
         );
     };
     // 灰底 → Modulate 红 ⇒ (0.5,0,0) → Plus 绿 ⇒ (0.5,1,0) ⇒ (128,255,0)
-    push(0, Color::rgb(0.5, 0.5, 0.5), zephyra_core::filter::BlendMode::default(), zephyra_core::paint::Layer::Background);
-    push(1, Color::rgb(1.0, 0.0, 0.0), zephyra_core::filter::BlendMode::Modulate, zephyra_core::paint::Layer::Content);
-    push(2, Color::rgb(0.0, 1.0, 0.0), zephyra_core::filter::BlendMode::Plus, zephyra_core::paint::Layer::Overlay);
+    push(
+        0,
+        Color::rgb(0.5, 0.5, 0.5),
+        zephyra_core::filter::BlendMode::default(),
+        zephyra_core::paint::Layer::Background,
+    );
+    push(
+        1,
+        Color::rgb(1.0, 0.0, 0.0),
+        zephyra_core::filter::BlendMode::Modulate,
+        zephyra_core::paint::Layer::Content,
+    );
+    push(
+        2,
+        Color::rgb(0.0, 1.0, 0.0),
+        zephyra_core::filter::BlendMode::Plus,
+        zephyra_core::paint::Layer::Overlay,
+    );
     list.sort();
 
     let px = render_probe(&list);
@@ -1114,9 +1181,24 @@ fn per_run_ps_switching_uses_the_updated_destination() {
             },
         );
     };
-    push(0, Color::rgb(0.5, 0.5, 0.5), BlendMode::default(), Layer::Background);
-    push(1, Color::rgb(1.0, 0.0, 0.0), BlendMode::Darken, Layer::Content);
-    push(2, Color::rgb(0.0, 0.0, 1.0), BlendMode::Screen, Layer::Overlay);
+    push(
+        0,
+        Color::rgb(0.5, 0.5, 0.5),
+        BlendMode::default(),
+        Layer::Background,
+    );
+    push(
+        1,
+        Color::rgb(1.0, 0.0, 0.0),
+        BlendMode::Darken,
+        Layer::Content,
+    );
+    push(
+        2,
+        Color::rgb(0.0, 0.0, 1.0),
+        BlendMode::Screen,
+        Layer::Overlay,
+    );
     list.sort();
 
     let px = render_probe(&list);
@@ -1305,7 +1387,11 @@ fn every_blend_mode_has_an_implementation_path() {
         BlendMode::Color,
         BlendMode::Luminosity,
     ];
-    assert_eq!(all.len(), BlendMode::COUNT, "BlendMode::COUNT 与枚举项数不符");
+    assert_eq!(
+        all.len(),
+        BlendMode::COUNT,
+        "BlendMode::COUNT 与枚举项数不符"
+    );
     for m in all {
         let has_ps = match zephyra_winit::shader::ps_for_blend_mode(m as usize) {
             None => false,
@@ -1487,56 +1573,56 @@ fn path_geometry_is_rendered() {
 }
 
 /// 半透明 clear 色必须**预乘**后写进目标。
-    ///
-    /// # 为什么这条能抓不到回归，而 SrcOver 抓不到
-    ///
-    /// 预乘与非预乘两种管线在 `SrcOver` 下**结果完全相同**（非预乘那一版靠
-    /// D3D 的 `SRC_ALPHA` 因子补上那一次乘法），所以任何画一个矩形的像素测试都
-    /// 分辨不出这次转换。clear 是唯一一处**没有混合方程兜底**的地方 ——
-    /// 它直接写进 RT，于是预乘与否立刻可见。
-    ///
-    /// 这也解释了为什么本次转换后 23 个 GPU 测试与 demo 基线**全部不变**：变化
-    /// 只在"非 SrcOver 的混合模式"与"半透明 clear"上可见，而前者要等 E4.1。
-    #[test]
-    fn clear_color_is_premultiplied() {
-        let Ok(gpu) = Gpu::new() else {
-            eprintln!("跳过：建不出 D3D11 设备");
-            return;
-        };
-        let (rtv, tex) = offscreen_target(&gpu);
-        let mut renderer = Renderer::new(&gpu.device).expect("渲染器应当能建出来");
-        let textures = TextureTable::new();
+///
+/// # 为什么这条能抓不到回归，而 SrcOver 抓不到
+///
+/// 预乘与非预乘两种管线在 `SrcOver` 下**结果完全相同**（非预乘那一版靠
+/// D3D 的 `SRC_ALPHA` 因子补上那一次乘法），所以任何画一个矩形的像素测试都
+/// 分辨不出这次转换。clear 是唯一一处**没有混合方程兜底**的地方 ——
+/// 它直接写进 RT，于是预乘与否立刻可见。
+///
+/// 这也解释了为什么本次转换后 23 个 GPU 测试与 demo 基线**全部不变**：变化
+/// 只在"非 SrcOver 的混合模式"与"半透明 clear"上可见，而前者要等 E4.1。
+#[test]
+fn clear_color_is_premultiplied() {
+    let Ok(gpu) = Gpu::new() else {
+        eprintln!("跳过：建不出 D3D11 设备");
+        return;
+    };
+    let (rtv, tex) = offscreen_target(&gpu);
+    let mut renderer = Renderer::new(&gpu.device).expect("渲染器应当能建出来");
+    let textures = TextureTable::new();
 
-        // 一条空列表：什么都不画，只剩 clear。
-        let list = DisplayList::new();
-        renderer.render(RenderCtx {
-            context: &gpu.context,
-            device: &gpu.device,
-            rtv: &rtv,
-            list: &list,
-            size: (SIZE, SIZE),
-            clear: Color::rgba(1.0, 1.0, 1.0, 0.5),
-            textures: &textures,
-            damage: zephyra_core::frame::Damage::Full,
-        });
+    // 一条空列表：什么都不画，只剩 clear。
+    let list = DisplayList::new();
+    renderer.render(RenderCtx {
+        context: &gpu.context,
+        device: &gpu.device,
+        rtv: &rtv,
+        list: &list,
+        size: (SIZE, SIZE),
+        clear: Color::rgba(1.0, 1.0, 1.0, 0.5),
+        textures: &textures,
+        damage: zephyra_core::frame::Damage::Full,
+    });
 
-        let px = read_back(&gpu, &tex);
-        let at = |x: u32, y: u32| -> [u8; 4] {
-            let i = (y as usize * SIZE as usize + x as usize) * 4;
-            [px[i], px[i + 1], px[i + 2], px[i + 3]]
-        };
-        for (x, y) in [(0u32, 0u32), (SIZE / 2, SIZE / 2), (SIZE - 1, SIZE - 1)] {
-            let p = at(x, y);
-            assert!(
-                (p[0] as i32 - 128).abs() <= 2 && (p[1] as i32 - 128).abs() <= 2,
-                "clear(1,1,1,0.5) 预乘后 rgb 约为 128（未预乘会是 255），实得 {p:?} @({x},{y})"
-            );
-            assert!(
-                (p[3] as i32 - 128).abs() <= 2,
-                "alpha 应仍是 128，实得 {p:?} @({x},{y})"
-            );
-        }
+    let px = read_back(&gpu, &tex);
+    let at = |x: u32, y: u32| -> [u8; 4] {
+        let i = (y as usize * SIZE as usize + x as usize) * 4;
+        [px[i], px[i + 1], px[i + 2], px[i + 3]]
+    };
+    for (x, y) in [(0u32, 0u32), (SIZE / 2, SIZE / 2), (SIZE - 1, SIZE - 1)] {
+        let p = at(x, y);
+        assert!(
+            (p[0] as i32 - 128).abs() <= 2 && (p[1] as i32 - 128).abs() <= 2,
+            "clear(1,1,1,0.5) 预乘后 rgb 约为 128（未预乘会是 255），实得 {p:?} @({x},{y})"
+        );
+        assert!(
+            (p[3] as i32 - 128).abs() <= 2,
+            "alpha 应仍是 128，实得 {p:?} @({x},{y})"
+        );
     }
+}
 
 /// 建一张**内容确定**的纯白纹理，供图像圆角那两条测试用。
 ///
@@ -1561,7 +1647,10 @@ fn white_texture(gpu: &Gpu, w: u32, h: u32) -> ID3D11Texture2D {
         MipLevels: 1,
         ArraySize: 1,
         Format: DXGI_FORMAT_R8G8B8A8_UNORM,
-        SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+        SampleDesc: DXGI_SAMPLE_DESC {
+            Count: 1,
+            Quality: 0,
+        },
         Usage: D3D11_USAGE_IMMUTABLE,
         BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
         CPUAccessFlags: 0,
@@ -1582,9 +1671,7 @@ fn white_texture(gpu: &Gpu, w: u32, h: u32) -> ID3D11Texture2D {
 }
 
 /// 建一张离屏渲染目标。
-fn offscreen_target(
-    gpu: &Gpu,
-) -> (ID3D11RenderTargetView, ID3D11Texture2D) {
+fn offscreen_target(gpu: &Gpu) -> (ID3D11RenderTargetView, ID3D11Texture2D) {
     use windows::Win32::Graphics::Direct3D11::*;
     use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC};
     let desc = D3D11_TEXTURE2D_DESC {
@@ -1593,19 +1680,28 @@ fn offscreen_target(
         MipLevels: 1,
         ArraySize: 1,
         Format: DXGI_FORMAT_B8G8R8A8_UNORM,
-        SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+        SampleDesc: DXGI_SAMPLE_DESC {
+            Count: 1,
+            Quality: 0,
+        },
         Usage: D3D11_USAGE_DEFAULT,
         BindFlags: D3D11_BIND_RENDER_TARGET.0 as u32,
         CPUAccessFlags: 0,
         MiscFlags: 0,
     };
     let mut tex = None;
-    unsafe { gpu.device.CreateTexture2D(&desc, None, Some(&mut tex as *mut _)) }
-        .expect("应当能建离屏纹理");
+    unsafe {
+        gpu.device
+            .CreateTexture2D(&desc, None, Some(&mut tex as *mut _))
+    }
+    .expect("应当能建离屏纹理");
     let tex = tex.expect("CreateTexture2D 成功时必给纹理");
     let mut rtv = None;
-    unsafe { gpu.device.CreateRenderTargetView(&tex, None, Some(&mut rtv as *mut _)) }
-        .expect("应当能给离屏纹理建 RTV");
+    unsafe {
+        gpu.device
+            .CreateRenderTargetView(&tex, None, Some(&mut rtv as *mut _))
+    }
+    .expect("应当能给离屏纹理建 RTV");
     (rtv.expect("CreateRenderTargetView 成功时必给视图"), tex)
 }
 
@@ -1629,8 +1725,11 @@ fn read_back(gpu: &Gpu, tex: &ID3D11Texture2D) -> Vec<u8> {
         MiscFlags: 0,
     };
     let mut stg = None;
-    unsafe { gpu.device.CreateTexture2D(&desc, None, Some(&mut stg as *mut _)) }
-        .expect("应当能建 STAGING 纹理");
+    unsafe {
+        gpu.device
+            .CreateTexture2D(&desc, None, Some(&mut stg as *mut _))
+    }
+    .expect("应当能建 STAGING 纹理");
     let stg = stg.expect("CreateTexture2D 成功时必给纹理");
     unsafe {
         gpu.context.CopyResource(&stg, tex);
@@ -1672,7 +1771,11 @@ fn color_hist(pixels: &[u8]) -> std::collections::BTreeMap<[u8; 4], usize> {
 /// 建 `DYNAMIC` + `CPU_ACCESS_WRITE` 缓冲，**只给容量**（内容稍后 `Map` 写）。
 ///
 /// 容量故意开得比数据大，与渲染器完全一致 —— 否则测的就不是渲染器实际在跑的那条路。
-fn dynamic_buffer_sized(device: &ID3D11Device, bind: D3D11_BIND_FLAG, capacity: u32) -> ID3D11Buffer {
+fn dynamic_buffer_sized(
+    device: &ID3D11Device,
+    bind: D3D11_BIND_FLAG,
+    capacity: u32,
+) -> ID3D11Buffer {
     use windows::Win32::Graphics::Direct3D11::*;
     let desc = D3D11_BUFFER_DESC {
         ByteWidth: capacity,
@@ -1694,7 +1797,13 @@ fn map_write(context: &ID3D11DeviceContext, buffer: &ID3D11Buffer, bytes: &[u8])
     let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
     unsafe {
         context
-            .Map(buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, Some(&mut mapped as *mut _))
+            .Map(
+                buffer,
+                0,
+                D3D11_MAP_WRITE_DISCARD,
+                0,
+                Some(&mut mapped as *mut _),
+            )
             .expect("动态缓冲应当能 Map");
         std::ptr::copy_nonoverlapping(bytes.as_ptr(), mapped.pData.cast::<u8>(), bytes.len());
         context.Unmap(buffer, 0);
@@ -1702,9 +1811,9 @@ fn map_write(context: &ID3D11DeviceContext, buffer: &ID3D11Buffer, bytes: &[u8])
 }
 
 use windows::Win32::Graphics::Direct3D11::{
-    D3D11_BIND_FLAG, D3D11_BIND_INDEX_BUFFER, D3D11_BIND_VERTEX_BUFFER, D3D11_VIEWPORT,
     ID3D11Buffer, ID3D11DepthStencilView, ID3D11Device, ID3D11DeviceContext,
-    ID3D11RenderTargetView, ID3D11Texture2D,
+    ID3D11RenderTargetView, ID3D11Texture2D, D3D11_BIND_FLAG, D3D11_BIND_INDEX_BUFFER,
+    D3D11_BIND_VERTEX_BUFFER, D3D11_VIEWPORT,
 };
 // ⚠ 拓扑常量住在 `Direct3D`（D3D9 起共用的枚举），**不在** `Direct3D11` 下。
 use windows::Win32::Graphics::Direct3D::D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
@@ -1814,10 +1923,18 @@ use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_R16_UINT;
 // 于是判据是"某个具体位置的灰度落在某个具体区间"，而不是"和上一帧不同"。
 
 /// 只含一条命令的 `DisplayList`（离屏测试用）。
-fn one(filter: zephyra_core::filter::FilterChain, fill: Color, rect: zephyra_core::core::Rect) -> DisplayList {
+fn one(
+    filter: zephyra_core::filter::FilterChain,
+    fill: Color,
+    rect: zephyra_core::core::Rect,
+) -> DisplayList {
     let mut l = DisplayList::new();
     l.push(
-        SortKey { layer: Layer::Background, z: 0, order: 0 },
+        SortKey {
+            layer: Layer::Background,
+            z: 0,
+            order: 0,
+        },
         Command::Quad {
             rect,
             radius: zephyra_core::core::CornerRadius { radius: 0.0 },
@@ -1919,7 +2036,10 @@ fn horizontal_blur_leaves_vertical_edges_hard() {
         }
         levels.iter().filter(|b| **b).count()
     };
-    assert!(row_kinds >= 5, "水平模糊应在行内产生过渡带，实得 {row_kinds} 种");
+    assert!(
+        row_kinds >= 5,
+        "水平模糊应在行内产生过渡带，实得 {row_kinds} 种"
+    );
     assert!(
         col_kinds <= 2,
         "只开 σx 时纵向必须保持硬边，实得 {col_kinds} 种 —— σy 显然也被应用了"
@@ -1946,7 +2066,11 @@ fn composite_lands_only_on_the_offscreen_bounds() {
     let mut l = DisplayList::new();
     // 先铺满一张**纯蓝**底，让"被误画"与"没被画"可分辨。
     l.push(
-        SortKey { layer: Layer::Background, z: 0, order: 0 },
+        SortKey {
+            layer: Layer::Background,
+            z: 0,
+            order: 0,
+        },
         Command::Quad {
             rect: zephyra_core::core::Rect::new(0.0, 0.0, SIZE as f32, SIZE as f32),
             radius: zephyra_core::core::CornerRadius { radius: 0.0 },
@@ -1958,15 +2082,20 @@ fn composite_lands_only_on_the_offscreen_bounds() {
     );
     // 再叠一条离屏模糊的白色四边形。
     l.push(
-        SortKey { layer: Layer::Content, z: 0, order: 1 },
+        SortKey {
+            layer: Layer::Content,
+            z: 0,
+            order: 1,
+        },
         Command::Quad {
             rect: split_rect(0.0),
             radius: zephyra_core::core::CornerRadius { radius: 0.0 },
             fill: Color::rgb(1.0, 1.0, 1.0),
             stroke: None,
-            filter: zephyra_core::filter::FilterChain::single(
-                zephyra_core::filter::Filter::Blur { sigma_x: 2.0, sigma_y: 2.0 },
-            ),
+            filter: zephyra_core::filter::FilterChain::single(zephyra_core::filter::Filter::Blur {
+                sigma_x: 2.0,
+                sigma_y: 2.0,
+            }),
             blend: zephyra_core::filter::BlendMode::default(),
         },
     );
@@ -2004,21 +2133,30 @@ fn offscreen_result_is_ordered_above_lower_primitives() {
     let mut l = DisplayList::new();
     // order 1：离屏模糊的白条（"上层"）。
     l.push(
-        SortKey { layer: Layer::Content, z: 0, order: 1 },
+        SortKey {
+            layer: Layer::Content,
+            z: 0,
+            order: 1,
+        },
         Command::Quad {
             rect: zephyra_core::core::Rect::new(8.0, 8.0, SIZE as f32 - 16.0, SIZE as f32 - 16.0),
             radius: zephyra_core::core::CornerRadius { radius: 0.0 },
             fill: Color::rgb(1.0, 1.0, 1.0),
             stroke: None,
-            filter: zephyra_core::filter::FilterChain::single(
-                zephyra_core::filter::Filter::Blur { sigma_x: 1.0, sigma_y: 1.0 },
-            ),
+            filter: zephyra_core::filter::FilterChain::single(zephyra_core::filter::Filter::Blur {
+                sigma_x: 1.0,
+                sigma_y: 1.0,
+            }),
             blend: zephyra_core::filter::BlendMode::default(),
         },
     );
     // order 2：全屏纯蓝（"更上层"）—— 若顺序被搞反，它会盖住离屏结果。
     l.push(
-        SortKey { layer: Layer::Popup, z: 0, order: 2 },
+        SortKey {
+            layer: Layer::Popup,
+            z: 0,
+            order: 2,
+        },
         Command::Quad {
             rect: zephyra_core::core::Rect::new(0.0, 0.0, SIZE as f32, SIZE as f32),
             radius: zephyra_core::core::CornerRadius { radius: 0.0 },
@@ -2055,7 +2193,11 @@ fn drop_shadow_tints_offsets_and_keeps_the_original_on_top() {
     let mut l = DisplayList::new();
     let content = zephyra_core::core::Rect::new(24.0, 24.0, 16.0, 16.0);
     l.push(
-        SortKey { layer: Layer::Content, z: 0, order: 0 },
+        SortKey {
+            layer: Layer::Content,
+            z: 0,
+            order: 0,
+        },
         Command::Quad {
             rect: content,
             radius: zephyra_core::core::CornerRadius { radius: 0.0 },
@@ -2151,9 +2293,18 @@ fn a_longer_filter_chain_blurs_more_than_a_single_blur() {
     );
     let chained = one(
         zephyra_core::filter::FilterChain::new([
-            zephyra_core::filter::Filter::Blur { sigma_x: 2.0, sigma_y: 0.0 },
-            zephyra_core::filter::Filter::Blur { sigma_x: 2.0, sigma_y: 0.0 },
-            zephyra_core::filter::Filter::Blur { sigma_x: 2.0, sigma_y: 0.0 },
+            zephyra_core::filter::Filter::Blur {
+                sigma_x: 2.0,
+                sigma_y: 0.0,
+            },
+            zephyra_core::filter::Filter::Blur {
+                sigma_x: 2.0,
+                sigma_y: 0.0,
+            },
+            zephyra_core::filter::Filter::Blur {
+                sigma_x: 2.0,
+                sigma_y: 0.0,
+            },
         ]),
         Color::rgb(1.0, 1.0, 1.0),
         split_rect(0.0),
@@ -2227,9 +2378,18 @@ fn a_longer_filter_chain_blurs_more_than_a_single_blur() {
 #[test]
 fn blur_passes_do_not_accumulate_brightness() {
     let chain = zephyra_core::filter::FilterChain::new([
-        zephyra_core::filter::Filter::Blur { sigma_x: 2.0, sigma_y: 0.0 },
-        zephyra_core::filter::Filter::Blur { sigma_x: 2.0, sigma_y: 0.0 },
-        zephyra_core::filter::Filter::Blur { sigma_x: 2.0, sigma_y: 0.0 },
+        zephyra_core::filter::Filter::Blur {
+            sigma_x: 2.0,
+            sigma_y: 0.0,
+        },
+        zephyra_core::filter::Filter::Blur {
+            sigma_x: 2.0,
+            sigma_y: 0.0,
+        },
+        zephyra_core::filter::Filter::Blur {
+            sigma_x: 2.0,
+            sigma_y: 0.0,
+        },
     ]);
     // 50% alpha 的 50% 灰：不透明就会让判据失效（见上面的说明）。
     let px = render_probe(&one(
@@ -2273,7 +2433,11 @@ fn composite_blends_over_the_destination() {
     let mut l = DisplayList::new();
     // 纯蓝底：合成要与它混合，所以蓝通道必须能"透过来"。
     l.push(
-        SortKey { layer: Layer::Background, z: 0, order: 0 },
+        SortKey {
+            layer: Layer::Background,
+            z: 0,
+            order: 0,
+        },
         Command::Quad {
             rect: zephyra_core::core::Rect::new(0.0, 0.0, SIZE as f32, SIZE as f32),
             radius: zephyra_core::core::CornerRadius { radius: 0.0 },
@@ -2285,15 +2449,20 @@ fn composite_blends_over_the_destination() {
     );
     // 25% alpha 的白，σy=2（链非恒等 ⇒ 真的走离屏）。
     l.push(
-        SortKey { layer: Layer::Content, z: 0, order: 1 },
+        SortKey {
+            layer: Layer::Content,
+            z: 0,
+            order: 1,
+        },
         Command::Quad {
             rect: zephyra_core::core::Rect::new(8.0, 8.0, 24.0, 24.0),
             radius: zephyra_core::core::CornerRadius { radius: 0.0 },
             fill: Color::rgba(1.0, 1.0, 1.0, 0.25),
             stroke: None,
-            filter: zephyra_core::filter::FilterChain::single(
-                zephyra_core::filter::Filter::Blur { sigma_x: 0.0, sigma_y: 2.0 },
-            ),
+            filter: zephyra_core::filter::FilterChain::single(zephyra_core::filter::Filter::Blur {
+                sigma_x: 0.0,
+                sigma_y: 2.0,
+            }),
             blend: zephyra_core::filter::BlendMode::default(),
         },
     );
@@ -2346,7 +2515,11 @@ fn composite_blends_over_the_destination() {
 fn drop_shadow_is_actually_offset() {
     let mut l = DisplayList::new();
     l.push(
-        SortKey { layer: Layer::Background, z: 0, order: 0 },
+        SortKey {
+            layer: Layer::Background,
+            z: 0,
+            order: 0,
+        },
         Command::Quad {
             rect: zephyra_core::core::Rect::new(0.0, 0.0, SIZE as f32, SIZE as f32),
             radius: zephyra_core::core::CornerRadius { radius: 0.0 },
@@ -2357,7 +2530,11 @@ fn drop_shadow_is_actually_offset() {
         },
     );
     l.push(
-        SortKey { layer: Layer::Content, z: 0, order: 1 },
+        SortKey {
+            layer: Layer::Content,
+            z: 0,
+            order: 1,
+        },
         Command::Quad {
             rect: zephyra_core::core::Rect::new(28.0, 28.0, 8.0, 8.0),
             radius: zephyra_core::core::CornerRadius { radius: 0.0 },
@@ -2423,7 +2600,11 @@ fn drop_shadow_alpha_is_blurred_too() {
     let mut l = DisplayList::new();
     // 纯蓝底：影子是半透明黑，压上去会按覆盖率把蓝通道按比例拉下来。
     l.push(
-        SortKey { layer: Layer::Background, z: 0, order: 0 },
+        SortKey {
+            layer: Layer::Background,
+            z: 0,
+            order: 0,
+        },
         Command::Quad {
             rect: zephyra_core::core::Rect::new(0.0, 0.0, SIZE as f32, SIZE as f32),
             radius: zephyra_core::core::CornerRadius { radius: 0.0 },
@@ -2434,7 +2615,11 @@ fn drop_shadow_alpha_is_blurred_too() {
         },
     );
     l.push(
-        SortKey { layer: Layer::Content, z: 0, order: 1 },
+        SortKey {
+            layer: Layer::Content,
+            z: 0,
+            order: 1,
+        },
         Command::Quad {
             rect: zephyra_core::core::Rect::new(12.0, 12.0, 16.0, 16.0),
             radius: zephyra_core::core::CornerRadius { radius: 0.0 },
@@ -2488,21 +2673,30 @@ fn partial_damage_survives_an_offscreen_pass() {
     let mut l = DisplayList::new();
     // 离屏模糊的蓝块 —— 它的 pass 会把 scissor 换成"全离屏 RT"。
     l.push(
-        SortKey { layer: Layer::Background, z: 0, order: 0 },
+        SortKey {
+            layer: Layer::Background,
+            z: 0,
+            order: 0,
+        },
         Command::Quad {
             rect: zephyra_core::core::Rect::new(8.0, 8.0, 20.0, 20.0),
             radius: zephyra_core::core::CornerRadius { radius: 0.0 },
             fill: Color::rgb(0.0, 0.0, 1.0),
             stroke: None,
-            filter: zephyra_core::filter::FilterChain::single(
-                zephyra_core::filter::Filter::Blur { sigma_x: 1.0, sigma_y: 1.0 },
-            ),
+            filter: zephyra_core::filter::FilterChain::single(zephyra_core::filter::Filter::Blur {
+                sigma_x: 1.0,
+                sigma_y: 1.0,
+            }),
             blend: zephyra_core::filter::BlendMode::default(),
         },
     );
     // 全屏纯红 —— 画在离屏 pass **之后**，所以它的 scissor 必须是自己重设的。
     l.push(
-        SortKey { layer: Layer::Content, z: 0, order: 1 },
+        SortKey {
+            layer: Layer::Content,
+            z: 0,
+            order: 1,
+        },
         Command::Quad {
             rect: zephyra_core::core::Rect::new(0.0, 0.0, SIZE as f32, SIZE as f32),
             radius: zephyra_core::core::CornerRadius { radius: 0.0 },
@@ -2530,7 +2724,10 @@ fn partial_damage_survives_an_offscreen_pass() {
         textures: &textures,
         // 脏区只覆盖左半屏。
         damage: zephyra_core::frame::Damage::Rect(zephyra_core::core::Rect::new(
-            0.0, 0.0, 32.0, SIZE as f32,
+            0.0,
+            0.0,
+            32.0,
+            SIZE as f32,
         )),
     });
     let px = read_back(&gpu, &tex);

@@ -71,20 +71,76 @@ pub struct Group {
 /// 另有原则：**不新增图标**。分组图标只在 14 处用到，为它扩充图标集不划算；
 /// 与其加 14 个新图标，不如复用已有的 8 个（下面已注明哪几个是"借用"）。
 pub const GROUPS: &[Group] = &[
-    Group { id: "basic-input",     title: "Basic input",       icon: "check" },
-    Group { id: "collections",     title: "Collections",       icon: "grid" },
-    Group { id: "date-time",       title: "Date & time",       icon: "calendar" },
-    Group { id: "dialogs-flyouts", title: "Dialogs & flyouts", icon: "doc" },   // 借用
-    Group { id: "layout",          title: "Layout",            icon: "grid" },   // 借用
-    Group { id: "media",           title: "Media",             icon: "image" },
-    Group { id: "menus-toolbars",  title: "Menus & toolbars",  icon: "menu" },
-    Group { id: "navigation",      title: "Navigation",        icon: "move" },   // 借用
-    Group { id: "scrolling",       title: "Scrolling",         icon: "sliders" }, // 借用
-    Group { id: "status-info",     title: "Status & info",     icon: "bell" },
-    Group { id: "styles",          title: "Styles",            icon: "star" },   // 借用
-    Group { id: "text",            title: "Text",              icon: "doc" },
-    Group { id: "design",          title: "Design",            icon: "pen" },    // 借用
-    Group { id: "windowing",       title: "Windowing",         icon: "gear" },   // 借用
+    Group {
+        id: "basic-input",
+        title: "Basic input",
+        icon: "check",
+    },
+    Group {
+        id: "collections",
+        title: "Collections",
+        icon: "grid",
+    },
+    Group {
+        id: "date-time",
+        title: "Date & time",
+        icon: "calendar",
+    },
+    Group {
+        id: "dialogs-flyouts",
+        title: "Dialogs & flyouts",
+        icon: "doc",
+    }, // 借用
+    Group {
+        id: "layout",
+        title: "Layout",
+        icon: "grid",
+    }, // 借用
+    Group {
+        id: "media",
+        title: "Media",
+        icon: "image",
+    },
+    Group {
+        id: "menus-toolbars",
+        title: "Menus & toolbars",
+        icon: "menu",
+    },
+    Group {
+        id: "navigation",
+        title: "Navigation",
+        icon: "move",
+    }, // 借用
+    Group {
+        id: "scrolling",
+        title: "Scrolling",
+        icon: "sliders",
+    }, // 借用
+    Group {
+        id: "status-info",
+        title: "Status & info",
+        icon: "bell",
+    },
+    Group {
+        id: "styles",
+        title: "Styles",
+        icon: "star",
+    }, // 借用
+    Group {
+        id: "text",
+        title: "Text",
+        icon: "doc",
+    },
+    Group {
+        id: "design",
+        title: "Design",
+        icon: "pen",
+    }, // 借用
+    Group {
+        id: "windowing",
+        title: "Windowing",
+        icon: "gear",
+    }, // 借用
 ];
 
 /// 全部 44 条（顺序与 `ItemData.qml` 的 `allControls` 一致）。
@@ -274,7 +330,13 @@ pub fn icon_for(e: &DemoEntry) -> &'static str {
 /// catalog 卡片：图标 + 标题 + 描述。
 ///
 /// 交互态从 `Gallery` 取（hover / pressed），key 是 `page` —— 点击路由到该控件页。
-pub fn clip_card(page: &'static str, title: &'static str, desc: &'static str, icon: &'static str, g: &super::Gallery) -> zephyra_core::element::Element {
+pub fn clip_card(
+    page: &'static str,
+    title: &'static str,
+    desc: &'static str,
+    icon: &'static str,
+    g: &super::Gallery,
+) -> zephyra_core::element::Element {
     use zephyra_core::element::Element;
     use zephyra_core::id::NodeTag;
     use zephyra_core::property::PropertyValue;

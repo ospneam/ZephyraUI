@@ -25,10 +25,10 @@
 use windows::Win32::Foundation::HMODULE;
 use windows::Win32::Graphics::Direct3D::{D3D_DRIVER_TYPE_HARDWARE, D3D_FEATURE_LEVEL_11_0};
 use windows::Win32::Graphics::Direct3D11::{
-    D3D11_BIND_FLAG, D3D11_BIND_INDEX_BUFFER, D3D11_BIND_VERTEX_BUFFER, D3D11_BUFFER_DESC,
-    D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_CPU_ACCESS_WRITE, D3D11_SDK_VERSION,
-    D3D11_SUBRESOURCE_DATA, D3D11_USAGE, D3D11_USAGE_DEFAULT, D3D11_USAGE_DYNAMIC, ID3D11Buffer,
-    ID3D11Device, ID3D11DeviceContext,
+    ID3D11Buffer, ID3D11Device, ID3D11DeviceContext, D3D11_BIND_FLAG, D3D11_BIND_INDEX_BUFFER,
+    D3D11_BIND_VERTEX_BUFFER, D3D11_BUFFER_DESC, D3D11_CPU_ACCESS_WRITE,
+    D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_SDK_VERSION, D3D11_SUBRESOURCE_DATA, D3D11_USAGE,
+    D3D11_USAGE_DEFAULT, D3D11_USAGE_DYNAMIC,
 };
 use windows::Win32::Graphics::Dxgi::IDXGIAdapter;
 
@@ -138,7 +138,11 @@ fn update_subresource_单次探测() {
 
     eprintln!(
         "  → UpdateSubresource: bytes={bytes} usage={} bind={} 源首字节={first}",
-        if usage.0 == D3D11_USAGE_DYNAMIC.0 { "DYNAMIC" } else { "DEFAULT" },
+        if usage.0 == D3D11_USAGE_DYNAMIC.0 {
+            "DYNAMIC"
+        } else {
+            "DEFAULT"
+        },
         bind.0,
     );
     unsafe {
@@ -157,8 +161,7 @@ fn update_subresource_单次探测() {
     //
     // 只有 `DYNAMIC` 资源 CPU 可寻址，所以 `DEFAULT` 那一档必然被 `Map` 拒 ——
     // 那正是「`Map` 需要 `DYNAMIC`」这条约束的来源，也是当初驱动报的原话。
-    let mut mapped =
-        windows::Win32::Graphics::Direct3D11::D3D11_MAPPED_SUBRESOURCE::default();
+    let mut mapped = windows::Win32::Graphics::Direct3D11::D3D11_MAPPED_SUBRESOURCE::default();
     eprintln!("  → Map(WRITE_DISCARD) 对照");
     match unsafe {
         ctx.Map(
@@ -187,11 +190,7 @@ fn update_subresource_单次探测() {
             unsafe { ctx.Unmap(&buf, 0) };
             eprintln!("    ✅ Unmap 完成");
         }
-        Err(e) => eprintln!(
-            "    ❌ Map 失败 {:#X} {}",
-            e.code().0 as u32,
-            e.message()
-        ),
+        Err(e) => eprintln!("    ❌ Map 失败 {:#X} {}", e.code().0 as u32, e.message()),
     }
 }
 
@@ -260,8 +259,7 @@ fn update_subresource_扫尺寸() {
 
         // 只走 `Map`。`UpdateSubresource` 那条路在本机会**随机**打死进程，
         // 逐档结论得靠 `update_subresource_单次探测` 配合外部环境变量跑。
-        let mut mapped =
-            windows::Win32::Graphics::Direct3D11::D3D11_MAPPED_SUBRESOURCE::default();
+        let mut mapped = windows::Win32::Graphics::Direct3D11::D3D11_MAPPED_SUBRESOURCE::default();
         match unsafe {
             ctx.Map(
                 &buf,
@@ -279,7 +277,11 @@ fn update_subresource_扫尺寸() {
                     "缓冲的 RowPitch 应当等于 ByteWidth（只有一行，无行间填充）"
                 );
                 unsafe {
-                    std::ptr::copy_nonoverlapping(src.as_ptr(), mapped.pData.cast::<u8>(), src.len());
+                    std::ptr::copy_nonoverlapping(
+                        src.as_ptr(),
+                        mapped.pData.cast::<u8>(),
+                        src.len(),
+                    );
                 }
                 map_ok.push(bytes);
                 unsafe { ctx.Unmap(&buf, 0) };

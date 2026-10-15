@@ -151,9 +151,15 @@ pub fn stroke_outline(points: &[Point], closed: bool, style: &StrokeStyle) -> Ve
         let d1 = last_dir(&path);
         let a = path2[0];
         let b = path2[path2.len() - 1];
-        path2[0] = Point { x: a.x - d0.x * hw, y: a.y - d0.y * hw };
+        path2[0] = Point {
+            x: a.x - d0.x * hw,
+            y: a.y - d0.y * hw,
+        };
         let n = path2.len();
-        path2[n - 1] = Point { x: b.x + d1.x * hw, y: b.y + d1.y * hw };
+        path2[n - 1] = Point {
+            x: b.x + d1.x * hw,
+            y: b.y + d1.y * hw,
+        };
         let front = offset_side(&path2, hw, style, true, false);
         let mut back = offset_side(&path2, hw, style, false, false);
         back.reverse();
@@ -218,9 +224,7 @@ fn offset_side(
     // 顶点 `i` 在**第 `i` 段**偏移线上的起点。
     let line_start = |i: usize| -> Point { shifted(i, i) };
     // 顶点 `i` 在**第 `i-1` 段**偏移线上的终点。
-    let line_end_at = |i: usize| -> Point {
-        shifted(i, if i == 0 { n - 1 } else { i - 1 })
-    };
+    let line_end_at = |i: usize| -> Point { shifted(i, if i == 0 { n - 1 } else { i - 1 }) };
 
     let mut out: Vec<Point> = Vec::with_capacity(n + 8);
 
@@ -364,11 +368,20 @@ fn append_cap(out: &mut Vec<Point>, at: Point, dir: Point, hw: f32, cap: LineCap
             }
         }
         LineCap::Round => {
-            let n = Point { x: -dir.y * hw, y: dir.x * hw };
+            let n = Point {
+                x: -dir.y * hw,
+                y: dir.x * hw,
+            };
             for p in arc_between(
-                Point { x: at.x + n.x, y: at.y + n.y },
+                Point {
+                    x: at.x + n.x,
+                    y: at.y + n.y,
+                },
                 at,
-                Point { x: at.x - n.x, y: at.y - n.y },
+                Point {
+                    x: at.x - n.x,
+                    y: at.y - n.y,
+                },
                 hw,
                 arc_segments(hw),
             ) {
@@ -413,7 +426,10 @@ fn unit_dir(a: Point, b: Point) -> Point {
     if len <= super::POINT_EPS {
         Point { x: 1.0, y: 0.0 }
     } else {
-        Point { x: dx / len, y: dy / len }
+        Point {
+            x: dx / len,
+            y: dy / len,
+        }
     }
 }
 

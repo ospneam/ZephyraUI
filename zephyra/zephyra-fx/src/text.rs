@@ -181,8 +181,7 @@ pub fn from_font_file(path: &str) -> (TextStack<AbGlyphSource>, String) {
             }
             Err(e) => (
                 TextStack::disabled(AbGlyphSource {
-                    font: FontVec::try_from_vec(minimal_sfnt())
-                        .expect("最小 sfnt 头应可解析"),
+                    font: FontVec::try_from_vec(minimal_sfnt()).expect("最小 sfnt 头应可解析"),
                     font_id: u32::MAX,
                 }),
                 format!("字体 {path} 解析失败（{e}），已退回无文本模式"),
@@ -220,24 +219,22 @@ pub fn from_system_font() -> (TextStack<AbGlyphSource>, String) {
     let mut tried = Vec::new();
     for (i, path) in FONT_CANDIDATES.iter().enumerate() {
         match std::fs::read(path) {
-            Ok(bytes) if !bytes.is_empty() => {
-                match AbGlyphSource::from_bytes(i as u32, &bytes) {
-                    Ok(src) => {
-                        let stack = TextStack::new(src);
-                        return (
-                            stack,
-                            format!(
-                                "字体 {}（{} 字节，图集 {}×{}）",
-                                path,
-                                bytes.len(),
-                                zephyra_core::text::atlas::ATLAS_SIZE,
-                                zephyra_core::text::atlas::ATLAS_SIZE
-                            ),
-                        );
-                    }
-                    Err(e) => tried.push(format!("{path}（{e}）")),
+            Ok(bytes) if !bytes.is_empty() => match AbGlyphSource::from_bytes(i as u32, &bytes) {
+                Ok(src) => {
+                    let stack = TextStack::new(src);
+                    return (
+                        stack,
+                        format!(
+                            "字体 {}（{} 字节，图集 {}×{}）",
+                            path,
+                            bytes.len(),
+                            zephyra_core::text::atlas::ATLAS_SIZE,
+                            zephyra_core::text::atlas::ATLAS_SIZE
+                        ),
+                    );
                 }
-            }
+                Err(e) => tried.push(format!("{path}（{e}）")),
+            },
             Ok(_) => tried.push(format!("{path}（空文件）")),
             Err(_) => tried.push(path.to_string()),
         }
@@ -245,11 +242,13 @@ pub fn from_system_font() -> (TextStack<AbGlyphSource>, String) {
     (
         TextStack::disabled(AbGlyphSource {
             // 占位字体：`font_id` 任意，因为 disabled 模式不产出任何字形。
-            font: FontVec::try_from_vec(minimal_sfnt())
-                .expect("最小 sfnt 头应可解析"),
+            font: FontVec::try_from_vec(minimal_sfnt()).expect("最小 sfnt 头应可解析"),
             font_id: u32::MAX,
         }),
-        format!("未找到可用系统字体（试过 {} 个路径），已退回无文本模式", tried.len()),
+        format!(
+            "未找到可用系统字体（试过 {} 个路径），已退回无文本模式",
+            tried.len()
+        ),
     )
 }
 
@@ -260,7 +259,7 @@ pub fn from_system_font() -> (TextStack<AbGlyphSource>, String) {
 fn minimal_sfnt() -> Vec<u8> {
     let mut v = vec![0u8; 12 + 16];
     v[0..4].copy_from_slice(&0x0001_0000u32.to_be_bytes()); // sfnt version 1.0
-    // numTables = searchRange = entrySelector = rangeShift 全为 0
+                                                            // numTables = searchRange = entrySelector = rangeShift 全为 0
     v
 }
 

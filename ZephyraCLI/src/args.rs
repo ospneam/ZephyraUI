@@ -89,9 +89,7 @@ pub fn parse<I: IntoIterator<Item = String>>(argv: I) -> ParseOutcome {
                         match it.next() {
                             Some(v) => out.options.push((rest.to_string(), v)),
                             None => {
-                                return ParseOutcome::Usage(format!(
-                                    "`--{rest}` needs an argument"
-                                ))
+                                return ParseOutcome::Usage(format!("`--{rest}` needs an argument"))
                             }
                         }
                         continue;

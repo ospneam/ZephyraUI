@@ -133,4 +133,3 @@ pub fn reset_histogram() {
         c.store(0, Ordering::Relaxed);
     }
 }
-

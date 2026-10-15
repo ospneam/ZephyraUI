@@ -25,11 +25,11 @@
 //! 若干次分配——在一个每秒移动上百次的路径上，这种"看起来无所谓"的写法正是
 //! 帧时间尖峰的来源。
 
-use crate::core::{Point, Rect};
-use crate::paint::Layer;
 use crate::context::Context;
+use crate::core::{Point, Rect};
 use crate::id::ElementKey;
 use crate::node::Node;
+use crate::paint::Layer;
 
 /// 事件路径的最大深度。
 ///

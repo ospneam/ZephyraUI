@@ -263,10 +263,7 @@ fn damage_is_union_of_multiple_dirty_nodes() {
     /// 水平一行两块。根不加背景色 —— 否则它会被标脏、并把整窗并进来。
     fn row(a: Color, b: Color) -> Element {
         Element::new(NodeTag::Container)
-            .with(
-                &props::DIRECTION,
-                PropertyValue::static_str("horizontal"),
-            )
+            .with(&props::DIRECTION, PropertyValue::static_str("horizontal"))
             .with_children([chip(a), chip(b)])
     }
 
@@ -275,7 +272,11 @@ fn damage_is_union_of_multiple_dirty_nodes() {
     let theme = Theme::dark();
     let ctx = Context::new(&theme);
 
-    cache.frame(&row(Color::rgb(0.9, 0.2, 0.2), Color::rgb(0.2, 0.2, 0.9)), ctx, bounds);
+    cache.frame(
+        &row(Color::rgb(0.9, 0.2, 0.2), Color::rgb(0.2, 0.2, 0.9)),
+        ctx,
+        bounds,
+    );
 
     let recolored = row(Color::rgb(0.1, 0.9, 0.1), Color::rgb(0.9, 0.1, 0.1));
     let Damage::Rect(r) = damage_of(&mut cache, &recolored, bounds) else {
@@ -317,14 +318,14 @@ fn collapsed_node_repaints_and_falls_back_to_full_damage() {
     assert!(before > 0, "前置：chip 有背景色，应当产出命令");
 
     let folded = Element::new(NodeTag::Container).with_children([
-        chip(Color::rgb(0.9, 0.2, 0.2)).with(&props::COLLAPSED, PropertyValue::bool(true)),
+        chip(Color::rgb(0.9, 0.2, 0.2)).with(&props::COLLAPSED, PropertyValue::bool(true))
     ]);
     let (changed, after) = step(&mut cache, &folded, bounds);
-    assert!(changed, "折叠却不重绘 —— 上一帧的命令会留在 DisplayList 里被反复画");
-    assert_eq!(
-        after, 0,
-        "折叠后不该再有该节点的命令，实际仍有 {after} 条"
+    assert!(
+        changed,
+        "折叠却不重绘 —— 上一帧的命令会留在 DisplayList 里被反复画"
     );
+    assert_eq!(after, 0, "折叠后不该再有该节点的命令，实际仍有 {after} 条");
 
     // 再来一帧：折叠状态稳定，必须回到 Unchanged（否则折叠会导致每帧重算）。
     let (changed, _) = step(&mut cache, &folded, bounds);

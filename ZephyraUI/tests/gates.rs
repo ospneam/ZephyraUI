@@ -301,11 +301,18 @@ fn every_token_the_stylesheet_uses_exists_in_theme() {
                 .take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
                 .collect();
             if !word.is_empty() {
-                used.push(format!("{}:{}", path.file_name().unwrap().to_string_lossy(), word));
+                used.push(format!(
+                    "{}:{}",
+                    path.file_name().unwrap().to_string_lossy(),
+                    word
+                ));
             }
         }
     }
-    assert!(!used.is_empty(), "一个 @令牌 都没用到 —— 这条测试有恒真的风险");
+    assert!(
+        !used.is_empty(),
+        "一个 @令牌 都没用到 —— 这条测试有恒真的风险"
+    );
     let theme = Theme::builtin(ThemeVariant::Dark);
     let light = Theme::builtin(ThemeVariant::Light);
     let mut missing: Vec<String> = Vec::new();
@@ -360,10 +367,22 @@ fn shell_metrics_match_stylesheet() {
     let css = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("gallery.zstyle"))
         .unwrap();
     let want = [
-        ("Container.titlebar", "height", zephyra_ui::app::shell::TITLEBAR_H),
+        (
+            "Container.titlebar",
+            "height",
+            zephyra_ui::app::shell::TITLEBAR_H,
+        ),
         ("Container.nav-pane", "width", zephyra_ui::app::shell::NAV_W),
-        ("Container.nav-pane", "height", zephyra_ui::app::shell::NAV_H),
-        ("Container.nav-spacer", "height", zephyra_ui::app::shell::NAV_SPACER),
+        (
+            "Container.nav-pane",
+            "height",
+            zephyra_ui::app::shell::NAV_H,
+        ),
+        (
+            "Container.nav-spacer",
+            "height",
+            zephyra_ui::app::shell::NAV_SPACER,
+        ),
         (
             "Container.content-card",
             "width",
@@ -422,7 +441,9 @@ fn root_container_writes_no_fixed_size() {
     let block = &start[..start.find('}').unwrap_or(start.len())];
     for prop in ["width", "height"] {
         assert!(
-            !block.lines().any(|l| l.trim().starts_with(&format!("{prop}:"))),
+            !block
+                .lines()
+                .any(|l| l.trim().starts_with(&format!("{prop}:"))),
             "Container.window 写了 {prop} —— 根容器必须由 arrange 按 bounds 铺满，\
              写死尺寸会让整个响应式失效（窗口变化时内容仍按旧尺寸排）"
         );
@@ -470,7 +491,11 @@ fn shell_layout_geometry() {
         "标题栏应铺满画布宽（1400），实测 {:.1}",
         r.width
     );
-    assert!((r.height - 48.0).abs() < 1.0, "标题栏高应是 48，实测 {:.1}", r.height);
+    assert!(
+        (r.height - 48.0).abs() < 1.0,
+        "标题栏高应是 48，实测 {:.1}",
+        r.height
+    );
 
     let content = find_by_key(&root, "content").expect("content card");
     let rc = content.rect();
@@ -605,7 +630,11 @@ fn every_icon_name_the_tree_emits_is_registered() {
         });
     }
     // 十个路由里有 30+ 个图标位；少于 20 说明遍历没走完，这条可能恒真。
-    assert!(used.len() >= 20, "只用到 {} 个图标名 —— 遍历可能没走完", used.len());
+    assert!(
+        used.len() >= 20,
+        "只用到 {} 个图标名 —— 遍历可能没走完",
+        used.len()
+    );
     assert!(
         bad.is_empty(),
         "这些图标名不在内置表里（画面上会是空白图标位）：\n  {}",
@@ -660,14 +689,15 @@ fn hit_test_agrees_with_the_painted_rects() {
     let mut wrong: Vec<String> = Vec::new();
     for (key, rect) in &targets {
         // 1px 的框在中心可能恰好落在边界外，取中心即可（矩形高宽都 >= 1）。
-        let point = zephyra_core::core::Point::new(
-            rect.x + rect.width * 0.5,
-            rect.y + rect.height * 0.5,
-        );
+        let point =
+            zephyra_core::core::Point::new(rect.x + rect.width * 0.5, rect.y + rect.height * 0.5);
         let mut hit = zephyra_core::hit::HitResult::default();
         if !zephyra_core::hit::hit_test(
             &root,
-            zephyra_core::hit::HitTestRequest { point, ignore_above: None },
+            zephyra_core::hit::HitTestRequest {
+                point,
+                ignore_above: None,
+            },
             ctx,
             &mut hit,
         ) {
@@ -855,7 +885,7 @@ fn compare_trees(warm: &Node, cold: &Node, path: &mut String) -> Vec<String> {
 /// 3. 每条的 `page` 唯一且非空 —— 重复 page 会让路由覆盖，静默少一个页面。
 #[test]
 fn catalog_matches_the_rinui_original() {
-    use zephyra_ui::app::catalog::{ENTRIES, GROUPS, count_in, entry};
+    use zephyra_ui::app::catalog::{count_in, entry, ENTRIES, GROUPS};
 
     assert_eq!(
         ENTRIES.len(),
@@ -891,7 +921,11 @@ fn catalog_matches_the_rinui_original() {
         .filter(|(g, n)| count_in(g) != *n)
         .map(|(g, n)| format!("{g}: 期望 {n} 条，实际 {}", count_in(g)))
         .collect();
-    assert!(wrong.is_empty(), "分组计数对不上：\n  {}", wrong.join("\n  "));
+    assert!(
+        wrong.is_empty(),
+        "分组计数对不上：\n  {}",
+        wrong.join("\n  ")
+    );
 
     let mut seen: Vec<&str> = ENTRIES.iter().map(|e| e.page).collect();
     seen.sort_unstable();
@@ -915,7 +949,7 @@ fn catalog_matches_the_rinui_original() {
 /// 只判"搜 Button 能搜到"的话，一个永远返回全部的实现也能过。
 #[test]
 fn catalog_search_filters_and_empty_query_returns_all() {
-    use zephyra_ui::app::catalog::{ENTRIES, SearchHits, hits, search};
+    use zephyra_ui::app::catalog::{hits, search, SearchHits, ENTRIES};
 
     assert_eq!(
         search(""),
@@ -1116,7 +1150,10 @@ fn every_catalog_entry_has_a_non_empty_showcase_page() {
         let mut nodes = 0usize;
         walk(&root, &mut |_: &Node| nodes += 1);
         if nodes < 6 {
-            bad.push(format!("{}: 展台页只有 {nodes} 个节点（太薄，像空壳）", e.title));
+            bad.push(format!(
+                "{}: 展台页只有 {nodes} 个节点（太薄，像空壳）",
+                e.title
+            ));
             continue;
         }
         // 「有内容」= 至少一个带 **TEXT 或 ICON_NAME** 的叶子（文本/图标）。
@@ -1213,7 +1250,11 @@ fn column_count_tracks_width_and_baseline_is_five() {
     // 基准：有效 1120 epx ⇒ 大档，5 列。这一条把「参考图」钉住。
     let (cls, cols) = at(BASE_VIEWPORT.0, BASE_VIEWPORT.1, 1.0);
     assert_eq!(cls, WidthClass::Large, "基准应落在官方的大档");
-    assert_eq!(cols, zephyra_ui::app::pages::BASE_COLUMNS, "基准画布下必须仍 5 列");
+    assert_eq!(
+        cols,
+        zephyra_ui::app::pages::BASE_COLUMNS,
+        "基准画布下必须仍 5 列"
+    );
 
     // 窄：有效宽度 ≤ 640 ⇒ 小档，且列数必须严格少于基准。
     //
@@ -1226,7 +1267,10 @@ fn column_count_tracks_width_and_baseline_is_five() {
         cols < zephyra_ui::app::pages::BASE_COLUMNS,
         "窄窗口下仍排 {cols} 列 —— 内容会溢出被裁"
     );
-    assert!(gallery_at(700, 600, 1.25).is_compact(), "小档必须判定为紧凑");
+    assert!(
+        gallery_at(700, 600, 1.25).is_compact(),
+        "小档必须判定为紧凑"
+    );
 
     // 宽：有效 ≥ 1008 ⇒ 大档，且列数必须多于基准。
     let (cls, cols) = at(2400, 1400, 1.0);
@@ -1286,7 +1330,10 @@ fn content_width_follows_breakpoint() {
         nav,
         "折叠前后的内容区差必须恰好是导航宽（折叠后更大）"
     );
-    assert!(collapsed > 0.0 && collapsed.is_finite(), "内容区必须是有界正数");
+    assert!(
+        collapsed > 0.0 && collapsed.is_finite(),
+        "内容区必须是有界正数"
+    );
 }
 
 /// 触控目标必须按 scale 换算，保证视觉上达到官方的 40 epx 下限。
@@ -1298,10 +1345,16 @@ fn content_width_follows_breakpoint() {
 fn touch_target_converts_to_official_ephemeral_px() {
     let g = gallery_at(1400, 800, 1.25);
     assert_eq!(g.touch_target(zephyra_ui::responsive::TOUCH_MIN_EPX), 50.0);
-    assert_eq!(g.touch_target(zephyra_ui::responsive::TOUCH_OPTIMAL_EPX), 55.0);
+    assert_eq!(
+        g.touch_target(zephyra_ui::responsive::TOUCH_OPTIMAL_EPX),
+        55.0
+    );
     // 100% 下恒等；退化 scale 不应 panic 或给出 0。
     let plain = gallery_at(1400, 800, 1.0);
-    assert_eq!(plain.touch_target(zephyra_ui::responsive::TOUCH_MIN_EPX), 40.0);
+    assert_eq!(
+        plain.touch_target(zephyra_ui::responsive::TOUCH_MIN_EPX),
+        40.0
+    );
     let bad = gallery_at(1400, 800, 0.0);
     assert!(bad.touch_target(zephyra_ui::responsive::TOUCH_MIN_EPX) > 0.0);
 }

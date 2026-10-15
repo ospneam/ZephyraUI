@@ -95,9 +95,9 @@ fn bare_signature_agrees_with_binding_layer() {
             Quality: 0,
         },
         // 缓冲必须 `ROW_MAJOR`。这个测试原先也填了 `UNKNOWN`，所以「windows-rs 的封装
-    // 没问题、手写 C 签名也一样」的那个结论虽然没错，但**两边犯的是同一个字段错误** ——
-    // 它排除掉的是 ABI 假设，不是描述符假设。见 `minimal.rs` 与 `sweep.rs`。
-    Layout: D3D12_TEXTURE_LAYOUT_ROW_MAJOR,
+        // 没问题、手写 C 签名也一样」的那个结论虽然没错，但**两边犯的是同一个字段错误** ——
+        // 它排除掉的是 ABI 假设，不是描述符假设。见 `minimal.rs` 与 `sweep.rs`。
+        Layout: D3D12_TEXTURE_LAYOUT_ROW_MAJOR,
         Flags: D3D12_RESOURCE_FLAG_NONE,
     };
 
@@ -132,8 +132,15 @@ fn bare_signature_agrees_with_binding_layer() {
         )
     };
 
-    println!("windows-rs 包装层：{hr1:#X}（成功 = {:#X}）", r1.is_ok() as u32);
-    println!("裸 C 签名：      {:#X}（出参非空 = {}）", hr2.0 as u32, !out.is_null());
+    println!(
+        "windows-rs 包装层：{hr1:#X}（成功 = {:#X}）",
+        r1.is_ok() as u32
+    );
+    println!(
+        "裸 C 签名：      {:#X}（出参非空 = {}）",
+        hr2.0 as u32,
+        !out.is_null()
+    );
 
     assert_eq!(
         r1.is_ok(),

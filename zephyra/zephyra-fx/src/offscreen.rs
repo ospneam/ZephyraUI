@@ -29,7 +29,7 @@
 
 use zephyra_core::core::Rect;
 use zephyra_core::filter::FilterChain;
-use zephyra_core::paint::{Command, DisplayList, SortKey, command_content_rect, command_filter};
+use zephyra_core::paint::{command_content_rect, command_filter, Command, DisplayList, SortKey};
 
 /// 一帧的回放计划：普通段与离屏段按 `DisplayList` 顺序**交替**。
 ///
@@ -419,7 +419,11 @@ pub fn pass_quad(
 }
 
 /// 一次模糊趟的铺满四边形。
-pub fn blur_quad(step: &BlurStep, dst_size: (f32, f32), src_size: (f32, f32)) -> [crate::quad::Vertex; 4] {
+pub fn blur_quad(
+    step: &BlurStep,
+    dst_size: (f32, f32),
+    src_size: (f32, f32),
+) -> [crate::quad::Vertex; 4] {
     pass_quad(
         dst_size,
         src_size,
@@ -483,10 +487,7 @@ pub fn composite_quad(
 /// 路径，筛选只发生一次。
 ///
 /// 代价是一次 `Command` 克隆，而最重的字段 `Arc<[Vertex]>` 克隆只是引用计数 +1。
-pub fn single_command_list(
-    cmd: &Command,
-    key: zephyra_core::paint::SortKey,
-) -> DisplayList {
+pub fn single_command_list(cmd: &Command, key: zephyra_core::paint::SortKey) -> DisplayList {
     let mut out = DisplayList::new();
     out.push(key, cmd.clone());
     out

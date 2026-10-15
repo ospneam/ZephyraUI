@@ -39,9 +39,10 @@
 //!
 //! ⚠️ **静默忽略的样式表比没有样式表更糟**：设计者以为生效了。
 
-use cssparser::{ParseErrorKind, ParserInput,
+use cssparser::{
     AtRuleParser, BasicParseError, BasicParseErrorKind, CowRcStr, DeclarationParser, ParseError,
-    Parser, QualifiedRuleParser, RuleBodyItemParser, RuleBodyParser, StyleSheetParser, Token,
+    ParseErrorKind, Parser, ParserInput, QualifiedRuleParser, RuleBodyItemParser, RuleBodyParser,
+    StyleSheetParser, Token,
 };
 use zephyra_core::id::NodeTag;
 
@@ -151,7 +152,13 @@ impl<'a> ZstyleParser<'a> {
     }
 
     /// 造一条错误。列号一律填 1、下划线盖整行——理由见 [`Error::underline_len`]。
-    pub(crate) fn err(&mut self, line: u32, headline: String, near: Vec<(String, u32)>, hint: &str) {
+    pub(crate) fn err(
+        &mut self,
+        line: u32,
+        headline: String,
+        near: Vec<(String, u32)>,
+        hint: &str,
+    ) {
         self.errors.push(Error {
             file: self.file.to_string(),
             line_text: self.line_text(line),
@@ -282,11 +289,7 @@ impl<'i> QualifiedRuleParser<'i> for ZstyleParser<'_> {
                     //
                     // ⚠️ 残缺的规则**保留**：否则「拼错一个属性名」会让整组样式
                     // 一起消失，那是二次伤害。
-                    token_errs.push((
-                        e.location.line + 1,
-                        describe(&e),
-                        leftover.to_string(),
-                    ));
+                    token_errs.push((e.location.line + 1, describe(&e), leftover.to_string()));
                 }
             }
         }
@@ -330,9 +333,9 @@ impl<'i> DeclarationParser<'i> for ZstyleParser<'_> {
                     near.into_iter().map(|n| (n, line)).collect(),
                     &hint,
                 );
-                return Err(input.new_error(BasicParseErrorKind::UnexpectedToken(
-                    Token::Ident(name),
-                )));
+                return Err(
+                    input.new_error(BasicParseErrorKind::UnexpectedToken(Token::Ident(name)))
+                );
             }
         };
 
@@ -341,9 +344,7 @@ impl<'i> DeclarationParser<'i> for ZstyleParser<'_> {
             Ok(v) => Ok(Item::Decl(Declaration { key, value: v })),
             Err(()) => {
                 // `value::parse` 已经把具体原因记进 self.errors。
-                Err(input.new_error(BasicParseErrorKind::UnexpectedToken(
-                    Token::Ident(name),
-                )))
+                Err(input.new_error(BasicParseErrorKind::UnexpectedToken(Token::Ident(name))))
             }
         }
     }
@@ -383,11 +384,7 @@ pub fn parse(file_name: &str, css: &str) -> ParseResult {
         .filter_map(|r| match r {
             Ok(item) => Some(item),
             Err((e, leftover)) => {
-                token_errs.push((
-                    e.location.line + 1,
-                    describe(&e),
-                    leftover.to_string(),
-                ));
+                token_errs.push((e.location.line + 1, describe(&e), leftover.to_string()));
                 None
             }
         })
@@ -487,11 +484,13 @@ fn parse_selector<'i>(
                         line_text: p.line_text(line),
                         at: crate::errors::Pos { line, col: 1 },
                         underline_len: p.line_text(line).chars().count(),
-                           headline: "`.` must be followed by a name.".into(),
+                        headline: "`.` must be followed by a name.".into(),
                         near: Vec::new(),
-                           hint: "class names look like `.danger`.".into(),
+                        hint: "class names look like `.danger`.".into(),
                     });
-                    return Err(input.new_error(BasicParseErrorKind::UnexpectedToken(Token::Delim('.'))));
+                    return Err(
+                        input.new_error(BasicParseErrorKind::UnexpectedToken(Token::Delim('.')))
+                    );
                 }
             }
         }
@@ -508,7 +507,7 @@ fn parse_selector<'i>(
             underline_len: p.line_text(line).chars().count(),
             headline: "cannot read a selector here.".into(),
             near: Vec::new(),
-               hint: "selector is either a type (`Button`) or a class (`.danger`).".into(),
+            hint: "selector is either a type (`Button`) or a class (`.danger`).".into(),
         });
         return Err(input.new_error(BasicParseErrorKind::QualifiedRuleInvalid));
     }

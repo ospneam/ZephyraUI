@@ -16,7 +16,12 @@ use crate::args::Args;
 use crate::ExitCode;
 
 /// 模板文件名。`is_ours` 判定只认这些 —— 用来决定 `--force` 能删什么。
-const TEMPLATES: &[&str] = &["Cargo.toml", "zephyra.toml", "src/main.rs", "styles/app.zstyle"];
+const TEMPLATES: &[&str] = &[
+    "Cargo.toml",
+    "zephyra.toml",
+    "src/main.rs",
+    "styles/app.zstyle",
+];
 
 pub fn run(a: &Args, w: &mut dyn Write) -> Result<ExitCode, CliError> {
     let Some(name) = a.positional_at(0) else {
@@ -28,12 +33,19 @@ pub fn run(a: &Args, w: &mut dyn Write) -> Result<ExitCode, CliError> {
         return Err(CliError::usage("project name is empty"));
     }
     // crate 名只能是标识符片段；这里挡掉会生成**编译不过**的工程的那几种。
-    if !name.chars().next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_') {
+    if !name
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+    {
         return Err(CliError::usage(format!(
             "`{name}` is not a valid crate name: it must start with a letter or `_`"
         )));
     }
-    if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
         return Err(CliError::usage(format!(
             "`{name}` is not a valid crate name: only letters, digits, `_` and `-`"
         )));
@@ -66,7 +78,10 @@ pub fn run(a: &Args, w: &mut dyn Write) -> Result<ExitCode, CliError> {
         CliError::failure(format!("cannot create {}: {e}", root.join("src").display()))
     })?;
     std::fs::create_dir_all(root.join("styles")).map_err(|e| {
-        CliError::failure(format!("cannot create {}: {e}", root.join("styles").display()))
+        CliError::failure(format!(
+            "cannot create {}: {e}",
+            root.join("styles").display()
+        ))
     })?;
 
     write_file(&root.join("Cargo.toml"), &cargo_toml(name))?;
@@ -77,7 +92,10 @@ pub fn run(a: &Args, w: &mut dyn Write) -> Result<ExitCode, CliError> {
     w.line(&format!("created {}", root.display()));
     w.line("next:");
     w.line(&format!("  cd {}", name));
-    w.line(&format!("  zephyra check styles/app.zstyle   # {}.zstyle", name));
+    w.line(&format!(
+        "  zephyra check styles/app.zstyle   # {}.zstyle",
+        name
+    ));
     w.line(&format!("  zephyra run"));
     Ok(ExitCode::Success)
 }

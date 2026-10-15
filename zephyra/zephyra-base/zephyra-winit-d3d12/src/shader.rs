@@ -22,7 +22,9 @@
 #![cfg(windows)]
 
 use windows::core::PCSTR;
-use windows::Win32::Graphics::Direct3D12::{D3D12_INPUT_ELEMENT_DESC, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA};
+use windows::Win32::Graphics::Direct3D12::{
+    D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, D3D12_INPUT_ELEMENT_DESC,
+};
 use windows::Win32::Graphics::Dxgi::Common::{
     DXGI_FORMAT, DXGI_FORMAT_R32G32B32A32_FLOAT, DXGI_FORMAT_R32G32_FLOAT, DXGI_FORMAT_R32_FLOAT,
 };
@@ -41,23 +43,71 @@ pub const VS_BYTECODE: &[u8] = include_bytes!("../shaders/zephyra.vs.bin");
 /// 顺序与 `BlendMode` 的声明顺序对应，见 [`ps_for_blend_mode`]。
 pub const PS_VARIANTS: [(&str, &[u8]); 18] = [
     ("PSMain", include_bytes!("../shaders/zephyra.PSMain.ps.bin")),
-    ("PSOverlay", include_bytes!("../shaders/zephyra.PSOverlay.ps.bin")),
-    ("PSDarken", include_bytes!("../shaders/zephyra.PSDarken.ps.bin")),
-    ("PSLighten", include_bytes!("../shaders/zephyra.PSLighten.ps.bin")),
-    ("PSColorDodge", include_bytes!("../shaders/zephyra.PSColorDodge.ps.bin")),
-    ("PSColorBurn", include_bytes!("../shaders/zephyra.PSColorBurn.ps.bin")),
-    ("PSHardLight", include_bytes!("../shaders/zephyra.PSHardLight.ps.bin")),
-    ("PSSoftLight", include_bytes!("../shaders/zephyra.PSSoftLight.ps.bin")),
-    ("PSDifference", include_bytes!("../shaders/zephyra.PSDifference.ps.bin")),
-    ("PSExclusion", include_bytes!("../shaders/zephyra.PSExclusion.ps.bin")),
-    ("PSMultiply", include_bytes!("../shaders/zephyra.PSMultiply.ps.bin")),
+    (
+        "PSOverlay",
+        include_bytes!("../shaders/zephyra.PSOverlay.ps.bin"),
+    ),
+    (
+        "PSDarken",
+        include_bytes!("../shaders/zephyra.PSDarken.ps.bin"),
+    ),
+    (
+        "PSLighten",
+        include_bytes!("../shaders/zephyra.PSLighten.ps.bin"),
+    ),
+    (
+        "PSColorDodge",
+        include_bytes!("../shaders/zephyra.PSColorDodge.ps.bin"),
+    ),
+    (
+        "PSColorBurn",
+        include_bytes!("../shaders/zephyra.PSColorBurn.ps.bin"),
+    ),
+    (
+        "PSHardLight",
+        include_bytes!("../shaders/zephyra.PSHardLight.ps.bin"),
+    ),
+    (
+        "PSSoftLight",
+        include_bytes!("../shaders/zephyra.PSSoftLight.ps.bin"),
+    ),
+    (
+        "PSDifference",
+        include_bytes!("../shaders/zephyra.PSDifference.ps.bin"),
+    ),
+    (
+        "PSExclusion",
+        include_bytes!("../shaders/zephyra.PSExclusion.ps.bin"),
+    ),
+    (
+        "PSMultiply",
+        include_bytes!("../shaders/zephyra.PSMultiply.ps.bin"),
+    ),
     ("PSHue", include_bytes!("../shaders/zephyra.PSHue.ps.bin")),
-    ("PSSaturation", include_bytes!("../shaders/zephyra.PSSaturation.ps.bin")),
-    ("PSColor", include_bytes!("../shaders/zephyra.PSColor.ps.bin")),
-    ("PSLuminosity", include_bytes!("../shaders/zephyra.PSLuminosity.ps.bin")),
-    ("PSBlurH", include_bytes!("../shaders/zephyra.PSBlurH.ps.bin")),
-    ("PSBlurV", include_bytes!("../shaders/zephyra.PSBlurV.ps.bin")),
-    ("PSComposite", include_bytes!("../shaders/zephyra.PSComposite.ps.bin")),
+    (
+        "PSSaturation",
+        include_bytes!("../shaders/zephyra.PSSaturation.ps.bin"),
+    ),
+    (
+        "PSColor",
+        include_bytes!("../shaders/zephyra.PSColor.ps.bin"),
+    ),
+    (
+        "PSLuminosity",
+        include_bytes!("../shaders/zephyra.PSLuminosity.ps.bin"),
+    ),
+    (
+        "PSBlurH",
+        include_bytes!("../shaders/zephyra.PSBlurH.ps.bin"),
+    ),
+    (
+        "PSBlurV",
+        include_bytes!("../shaders/zephyra.PSBlurV.ps.bin"),
+    ),
+    (
+        "PSComposite",
+        include_bytes!("../shaders/zephyra.PSComposite.ps.bin"),
+    ),
 ];
 
 /// 第 `i` 个混合模式该用哪个 PS 变体；`None` = 默认 `PSMain` + 固定功能混合。
@@ -136,10 +186,10 @@ pub const PS_COMPOSITE: usize = 17;
 pub const VERTEX_LAYOUT: [(&str, u32, DXGI_FORMAT, u32); 7] = [
     // position — 不用 POSITION，理由见模块文档
     ("TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0),
-    ("TEXCOORD", 2, DXGI_FORMAT_R32G32_FLOAT, 8),     // local
-    ("TEXCOORD", 4, DXGI_FORMAT_R32G32_FLOAT, 16),    // uv
+    ("TEXCOORD", 2, DXGI_FORMAT_R32G32_FLOAT, 8), // local
+    ("TEXCOORD", 4, DXGI_FORMAT_R32G32_FLOAT, 16), // uv
     ("COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 24), // color
-    ("TEXCOORD", 6, DXGI_FORMAT_R32G32_FLOAT, 40),    // corner
+    ("TEXCOORD", 6, DXGI_FORMAT_R32G32_FLOAT, 40), // corner
     // half_size — 四边形常量，理由见 quad.rs::Vertex::half_size
     ("TEXCOORD", 8, DXGI_FORMAT_R32G32_FLOAT, 48),
     ("TEXCOORD", 10, DXGI_FORMAT_R32_FLOAT, 56), // kind
@@ -182,10 +232,7 @@ impl InputElement {
         let bytes = name.as_bytes();
         // 12 字节够装 "TEXCOORD"(8) + NUL。放不下说明表里语义名写错 —— 截断会让
         // D3D 读到相邻字节，症状是「绑定不到语义」且原因不明。
-        assert!(
-            bytes.len() < buf.len(),
-            "HLSL 语义名 {name:?} 超出 11 字节"
-        );
+        assert!(bytes.len() < buf.len(), "HLSL 语义名 {name:?} 超出 11 字节");
         buf[..bytes.len()].copy_from_slice(bytes);
         Self {
             name: Box::new(buf),
@@ -248,13 +295,10 @@ impl InputLayout {
     fn names_are_owned(&self) -> Result<(), usize> {
         for (i, d) in self.descs.iter().enumerate() {
             let p = d.SemanticName.0 as usize;
-            let ok = self
-                .owners
-                .iter()
-                .any(|o| {
-                    let base = o.name.as_ptr() as usize;
-                    p >= base && p < base + o.name.len()
-                });
+            let ok = self.owners.iter().any(|o| {
+                let base = o.name.as_ptr() as usize;
+                p >= base && p < base + o.name.len()
+            });
             if !ok {
                 return Err(i);
             }
@@ -307,10 +351,7 @@ pub fn validate_layout() -> Result<(), ShaderError> {
     let covered = (std::mem::offset_of!(Vertex, kind) + std::mem::size_of::<f32>()) as u32;
     let stride = std::mem::size_of::<Vertex>() as u32;
     if covered > stride {
-        return Err(ShaderError::LayoutOutOfRange {
-            covered,
-            stride,
-        });
+        return Err(ShaderError::LayoutOutOfRange { covered, stride });
     }
     Ok(())
 }

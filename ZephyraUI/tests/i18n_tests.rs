@@ -191,7 +191,10 @@ fn missing_key_shows_key_name_not_blank() {
     let g = Gallery::default();
     let got = g.tr("no.such.key");
     assert_eq!(got, "no.such.key", "缺失键必须回显键名");
-    assert!(!got.is_empty(), "绝不能是空串：空串看起来像「这里没有文字」");
+    assert!(
+        !got.is_empty(),
+        "绝不能是空串：空串看起来像「这里没有文字」"
+    );
 }
 
 // ---------------------------------------------------------------- 端到端
@@ -256,11 +259,7 @@ impl Harness {
         });
         let mut node = Node::from_element(&gallery.view(&ctx));
         sheet.apply_all(&mut node);
-        zephyra_core::layout::layout(
-            &mut node,
-            Rect::new(0.0, 0.0, VIEWPORT.0, VIEWPORT.1),
-            ctx,
-        );
+        zephyra_core::layout::layout(&mut node, Rect::new(0.0, 0.0, VIEWPORT.0, VIEWPORT.1), ctx);
         zephyra_core::node::clear_dirty(&mut node);
         Self {
             node,
@@ -341,7 +340,6 @@ fn collect_texts(node: &Node, out: &mut String) {
     }
 }
 
-
 /// 系统偏好 `zh-CN` 时，保留树上的文字必须是中文。
 #[test]
 fn chinese_system_preference_yields_chinese_ui() {
@@ -366,7 +364,10 @@ fn manual_locale_switch_changes_rendered_text() {
     h.click("ja");
     assert_eq!(h.gallery.locale(), "ja");
     let texts = h.texts();
-    assert!(texts.contains("ホーム"), "切到 ja 后应出现「ホーム」：{texts:?}");
+    assert!(
+        texts.contains("ホーム"),
+        "切到 ja 后应出现「ホーム」：{texts:?}"
+    );
     assert!(!texts.contains("Home"), "英文标题应消失：{texts:?}");
 
     // 再切回英文，确认是双向而不是单向。
@@ -498,10 +499,7 @@ fn locale_switch_preserves_other_state() {
 
     h.click("ja");
     assert_eq!(h.gallery.route, route_before, "切语言不该改路由");
-    assert_eq!(
-        h.gallery.checked[0], after_click,
-        "切语言不该动勾选状态"
-    );
+    assert_eq!(h.gallery.checked[0], after_click, "切语言不该动勾选状态");
 }
 
 /// 路由 id 不与语言标签撞车（否则点导航会顺手换语言）。

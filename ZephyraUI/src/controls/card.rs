@@ -52,7 +52,12 @@ pub fn setting_card(
 }
 
 /// 控件缩略卡（RinUI 的 ControlClip）：图标 + 标题 + 一句说明。
-pub fn clip_card(key: &'static str, icon: &'static str, title: &'static str, desc: &'static str) -> Element {
+pub fn clip_card(
+    key: &'static str,
+    icon: &'static str,
+    title: &'static str,
+    desc: &'static str,
+) -> Element {
     Element::new(NodeTag::Container)
         .with_key(key)
         .style("clip-card")

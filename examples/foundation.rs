@@ -11,17 +11,17 @@
 //!
 //! 用 `cargo run -p zephyra-foundation` 运行。
 
-use zephyra_core::core::Rect;
-use zephyra_core::paint::{Command, DisplayList, Layer, SortKey};
-use zephyra_core::property::{PropertyKey, PropertyValue};
-use zephyra_core::props;
-use zephyra_core::theme::{roles, Theme, ThemeVariant};
 use zephyra_core::context::Context;
+use zephyra_core::core::Rect;
 use zephyra_core::diff::{diff, DiffStats};
 use zephyra_core::element::Element;
 use zephyra_core::id::NodeTag;
 use zephyra_core::node::{Dirty, Node};
 use zephyra_core::paint::render;
+use zephyra_core::paint::{Command, DisplayList, Layer, SortKey};
+use zephyra_core::property::{PropertyKey, PropertyValue};
+use zephyra_core::props;
+use zephyra_core::theme::{roles, Theme, ThemeVariant};
 
 /// 内容前景色（语义名 → 主题角色）。
 const CONTENT: &PropertyKey = &PropertyKey::new("Content", PropertyValue::float(0.0));
@@ -37,7 +37,10 @@ fn ui_element() -> Element {
         // 必须给根一个背景色。真实管线里"没有背景"意味着**不画任何东西**，所以一棵
         // 全透明的树会产出空的 DisplayList——`tests::render_draws_nothing_when_no_node_has_a_background`
         // 钉的就是这条。
-        .with(&props::BACKGROUND, PropertyValue::color(Theme::dark().surface))
+        .with(
+            &props::BACKGROUND,
+            PropertyValue::color(Theme::dark().surface),
+        )
         .with_children([
             Element::new(NodeTag::Text).with_key("title"),
             Element::new(NodeTag::Control).with_key("ok").with(

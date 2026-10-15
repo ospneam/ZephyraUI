@@ -45,8 +45,8 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowId};
 use zephyra_core::context::Context;
-use zephyra_core::diff::DiffStats;
 use zephyra_core::core::Color;
+use zephyra_core::diff::DiffStats;
 use zephyra_core::element::Element;
 use zephyra_core::frame::{Damage, FrameCache, FrameOutcome};
 use zephyra_core::id::NodeTag;
@@ -66,13 +66,13 @@ pub mod texture;
 // 一个也用不到。下面按原路径再导出，是为了让既有调用点
 // （`zephyra_winit::cpu_only::CpuHost`、`zephyra_winit::quad::kind::GLYPH`）
 // 不用改 —— 搬 crate 是结构调整，不该顺手改调用点的名字。
+pub use zephyra_fx::layout_tree;
 pub use zephyra_fx::{cpu_only, cpu_raster, pixels, quad, text};
 pub use zephyra_fx::{
     from_font_file, from_system_font, Frame, InputState, PixelRead, RenderReport, TextEngine,
     TextureNames, View, FONT_OVERRIDE_ENV,
 };
 pub use zephyra_fx::{srgb_bytes, write_bmp};
-pub use zephyra_fx::layout_tree;
 
 pub use renderer::{RenderCtx, Renderer};
 pub use surface::{dcomp_enabled, Gpu, Surface, SurfaceError};
@@ -175,9 +175,7 @@ impl<V: View> HostWindow<V> {
         let use_dcomp = dcomp_enabled();
         let hwnd = surface::hwnd_of(window.as_ref())
             .map(|h| windows::Win32::Foundation::HWND(h as *mut _))
-            .ok_or_else(|| {
-                panic!("DComp 需要 Win32 HWND；非 Windows 后端尚未实现渲染器")
-            })
+            .ok_or_else(|| panic!("DComp 需要 Win32 HWND；非 Windows 后端尚未实现渲染器"))
             .expect("取 HWND");
 
         let surface = match Surface::new(hwnd, &gpu, (size.width, size.height), use_dcomp) {
@@ -187,8 +185,7 @@ impl<V: View> HostWindow<V> {
                     // 建树失败不能静默：少了 DComp 特性窗口依然完全可用，为此启动失败
                     // 是本末倒置；但**必须让用户看得见**，否则无从排查。
                     eprintln!("[zephyra] DComp 不可用（{e}），退回普通 DXGI 交换链");
-                    Surface::new(hwnd, &gpu, (size.width, size.height), false)
-                        .expect("普通交换链")
+                    Surface::new(hwnd, &gpu, (size.width, size.height), false).expect("普通交换链")
                 } else {
                     panic!("创建交换链失败: {e}");
                 }
@@ -263,8 +260,14 @@ impl<V: View> HostWindow<V> {
         width: u32,
         height: u32,
     ) -> zephyra_core::paint::TextureRef {
-        let tex = texture::create_rgba_texture(&self.gpu.device, &self.gpu.context, pixels, width, height)
-            .expect("创建纹理");
+        let tex = texture::create_rgba_texture(
+            &self.gpu.device,
+            &self.gpu.context,
+            pixels,
+            width,
+            height,
+        )
+        .expect("创建纹理");
         let srv = texture::create_srv(&self.gpu.device, &tex).expect("创建采样视图");
         self.textures.insert(name, srv, tex);
         zephyra_core::paint::TextureRef::new(name.to_string())
@@ -274,13 +277,7 @@ impl<V: View> HostWindow<V> {
     ///
     /// 返回 `false` = 纹理未注册或像素长度不足 —— 此时什么都没写入，调用方必须
     /// 自己重建纹理。采样视图不变，所以没有任何需要失效的缓存。
-    pub fn update_texture(
-        &self,
-        name: &str,
-        pixels: &[u8],
-        width: u32,
-        height: u32,
-    ) -> bool {
+    pub fn update_texture(&self, name: &str, pixels: &[u8], width: u32, height: u32) -> bool {
         self.textures
             .update(&self.gpu.context, name, pixels, width, height)
     }
@@ -335,8 +332,8 @@ impl<V: View> HostWindow<V> {
         let (stats, damage, redrawn) = {
             // 挂上内置图标集：矢量图标走完整的「图标名 → 展平 → 三角化 →
             // `Command::Path`」链条。理由与 `zephyra-winit-d3d12` 那份一致。
-            let ctx = Context::with_engine(theme, &self.engine)
-                .with_icons(zephyra_core::icon::builtin());
+            let ctx =
+                Context::with_engine(theme, &self.engine).with_icons(zephyra_core::icon::builtin());
 
             // 0. 把路由器持有的输入状态推给视图 —— hover 必然晚于上一帧的树（命中
             //    测试要读已布局的矩形），所以只能从下一帧开始生效。
@@ -373,11 +370,9 @@ impl<V: View> HostWindow<V> {
             let element = self.view.view(&ctx);
 
             // 1. 声明 → 保留 → （必要时）布局 → 降级，全部在核心里完成。
-            let outcome = self.cache.frame(
-                &element,
-                ctx,
-                (size.0 as f32, size.1 as f32),
-            );
+            let outcome = self
+                .cache
+                .frame(&element, ctx, (size.0 as f32, size.1 as f32));
 
             // ⚠️ 图集上传的判据是 `atlas_revision()`，**不是**「本帧有没有重绘」。
             //
@@ -634,9 +629,8 @@ impl<V: View> HostWindow<V> {
                     .filter_map(|y| {
                         let row = px.row(*y as u32);
                         let i = (px.width as usize / 2) * 4;
-                        row.get(i..i + 4).map(|p| {
-                            format!("y={y}: BGRA=({},{},{},{})", p[0], p[1], p[2], p[3])
-                        })
+                        row.get(i..i + 4)
+                            .map(|p| format!("y={y}: BGRA=({},{},{},{})", p[0], p[1], p[2], p[3]))
                     })
                     .collect();
                 if path != "-" && n == 0 {
@@ -655,10 +649,7 @@ impl<V: View> HostWindow<V> {
                 } else {
                     format!(
                         "；⚠ surface {}x{} 而后缓冲 {}x{}",
-                        px.declared_width,
-                        px.declared_height,
-                        px.width,
-                        px.height,
+                        px.declared_width, px.declared_height, px.width, px.height,
                     )
                 };
                 // 窗口客户区尺寸也打出来：它是\"交换链该有多大\"的唯一权威，
@@ -711,12 +702,7 @@ impl<V: View> ApplicationHandler for HostWindow<V> {
         event_loop.set_control_flow(ControlFlow::Poll);
     }
 
-    fn window_event(
-        &mut self,
-        event_loop: &ActiveEventLoop,
-        _id: WindowId,
-        event: WindowEvent,
-    ) {
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => {
@@ -791,12 +777,12 @@ impl<V: View> ApplicationHandler for HostWindow<V> {
                         Key::Named(NamedKey::Escape) => event_loop.exit(),
                         Key::Character(c) if c.as_str() == "t" => {
                             // 演示「切主题不碰树」：只换一个 &Theme，树完全不动。
-                            let next = if self.theme.variant == zephyra_core::theme::ThemeVariant::Dark
-                            {
-                                Theme::light()
-                            } else {
-                                Theme::dark()
-                            };
+                            let next =
+                                if self.theme.variant == zephyra_core::theme::ThemeVariant::Dark {
+                                    Theme::light()
+                                } else {
+                                    Theme::dark()
+                                };
                             self.set_theme(next);
                         }
                         _ => {}

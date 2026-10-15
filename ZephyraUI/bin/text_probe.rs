@@ -32,8 +32,14 @@ impl View for Probe {
         // 不显式声明会把三行排成一列横队，逐字符对号就乱了。
         Element::new(NodeTag::Container)
             .with_key("root")
-            .with(&props::DIRECTION, PropertyValue::direction(zephyra_core::layout::Direction::Vertical))
-            .with(&props::BACKGROUND, PropertyValue::color(zephyra_core::core::Color::rgb(0.05, 0.05, 0.06)))
+            .with(
+                &props::DIRECTION,
+                PropertyValue::direction(zephyra_core::layout::Direction::Vertical),
+            )
+            .with(
+                &props::BACKGROUND,
+                PropertyValue::color(zephyra_core::core::Color::rgb(0.05, 0.05, 0.06)),
+            )
             .with_children(LINES.iter().map(|(s, size)| text(s, *size)))
     }
 }
@@ -43,7 +49,10 @@ fn text(s: &'static str, size: f32) -> Element {
         .with_key(s)
         .with(&props::TEXT, PropertyValue::static_str(s))
         .with(&props::TEXT_SIZE, PropertyValue::float(size))
-        .with(&props::TEXT_COLOR, PropertyValue::color(zephyra_core::core::Color::rgb(1.0, 1.0, 1.0)))
+        .with(
+            &props::TEXT_COLOR,
+            PropertyValue::color(zephyra_core::core::Color::rgb(1.0, 1.0, 1.0)),
+        )
 }
 
 fn main() {
@@ -93,7 +102,10 @@ fn main() {
                 &host,
                 v0.position[0] * 450.0 + 450.0,
                 (0.5 - v0.position[1] * 0.5) * 300.0,
-                u0, v0u, u1, v1u,
+                u0,
+                v0u,
+                u1,
+                v1u,
             );
             if mismatch > 0.25 {
                 println!(
@@ -148,7 +160,13 @@ fn ascii_slot(
         let mut row = String::new();
         for x in x0..x1 {
             let a = atlas[(y * side + x) * 4 + 3];
-            row.push(if a > 128 { '#' } else if a > 32 { '.' } else { ' ' });
+            row.push(if a > 128 {
+                '#'
+            } else if a > 32 {
+                '.'
+            } else {
+                ' '
+            });
         }
         out.push_str(&format!("\n[probe]     |{row}|"));
     }

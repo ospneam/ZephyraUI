@@ -74,10 +74,7 @@ fn debug_layer_attached_and_has_messages() {
     //
     // 这一步是本测试的核心：原先的代码从全局 `ID3D12Debug` 上 cast，拿到的是**空**队列。
     let queue: Option<ID3D12InfoQueue> = device.cast::<ID3D12InfoQueue>().ok();
-    println!(
-        "  3. 设备 → ID3D12InfoQueue → {}",
-        yn(queue.is_some())
-    );
+    println!("  3. 设备 → ID3D12InfoQueue → {}", yn(queue.is_some()));
     let Some(queue) = queue else {
         println!("     ⇒ 队列拿不到，问不到原因。");
         return;
@@ -86,13 +83,13 @@ fn debug_layer_attached_and_has_messages() {
     println!("     刚建完时队列里有 {n0} 条");
 
     // ---- 7. 命令列表 / 分配器的真实生命周期 ----
-//
-// 症状：`begin_frame` 里 `list.Reset` 回 `E_FAIL`，调试层说
-// 「Reset fails because the command list was not closed」—— 而 `Gpu::new` 明明
-// `Close` 过。同样的代码上一轮却成功，所以是非确定性的。
-//
-// 与其推断，不如把每一步的 HRESULT 打出来。
-let alloc: ID3D12CommandAllocator =
+    //
+    // 症状：`begin_frame` 里 `list.Reset` 回 `E_FAIL`，调试层说
+    // 「Reset fails because the command list was not closed」—— 而 `Gpu::new` 明明
+    // `Close` 过。同样的代码上一轮却成功，所以是非确定性的。
+    //
+    // 与其推断，不如把每一步的 HRESULT 打出来。
+    let alloc: ID3D12CommandAllocator =
         match unsafe { device.CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT) } {
             Ok(a) => {
                 println!("  7. CreateCommandAllocator → ✅");
@@ -105,9 +102,8 @@ let alloc: ID3D12CommandAllocator =
         };
 
     let mk = |tag: &str| {
-        let r: windows::core::Result<ID3D12GraphicsCommandList> = unsafe {
-            device.CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, &alloc, None)
-        };
+        let r: windows::core::Result<ID3D12GraphicsCommandList> =
+            unsafe { device.CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, &alloc, None) };
         println!("     {tag}CreateCommandList → {}", yn(r.is_ok()));
         r
     };
@@ -125,17 +121,15 @@ let alloc: ID3D12CommandAllocator =
     };
 
     step("Close（刚创建）", unsafe { list.Close() });
-    step(
-        "list.Reset（第一次）",
-        unsafe { list.Reset::<&_, Option<&ID3D12PipelineState>>(&alloc, None) },
-    );
+    step("list.Reset（第一次）", unsafe {
+        list.Reset::<&_, Option<&ID3D12PipelineState>>(&alloc, None)
+    });
     step("alloc.Reset", unsafe { alloc.Reset() });
     // 第二轮：模拟 `submit` 之后再 `begin_frame`。
     step("Close（第二次）", unsafe { list.Close() });
-    step(
-        "list.Reset（第二次）",
-        unsafe { list.Reset::<&_, Option<&ID3D12PipelineState>>(&alloc, None) },
-    );
+    step("list.Reset（第二次）", unsafe {
+        list.Reset::<&_, Option<&ID3D12PipelineState>>(&alloc, None)
+    });
     step("alloc.Reset（第二次）", unsafe { alloc.Reset() });
 
     // ---- 4. 空根签名 ----
@@ -191,12 +185,15 @@ let alloc: ID3D12CommandAllocator =
         match unsafe { queue.GetMessage(i, Some(buf.as_mut_ptr().cast()), &mut len) } {
             Ok(()) => {}
             Err(e) => {
-                println!("     [{i}] GetMessage 失败 {:#X}，改用 size_of 试试", e.code().0 as u32);
+                println!(
+                    "     [{i}] GetMessage 失败 {:#X}，改用 size_of 试试",
+                    e.code().0 as u32
+                );
                 let mut len2 = std::mem::size_of::<D3D12_MESSAGE>();
                 let mut small = D3D12_MESSAGE::default();
-                if let Err(e2) = unsafe {
-                    queue.GetMessage(i, Some(&mut small as *mut _), &mut len2)
-                } {
+                if let Err(e2) =
+                    unsafe { queue.GetMessage(i, Some(&mut small as *mut _), &mut len2) }
+                {
                     println!("        仍然失败 {:#X}", e2.code().0 as u32);
                     continue;
                 }
@@ -246,8 +243,8 @@ fn yn(b: bool) -> &'static str {
 /// - `InputLayout.NumElements = 0` 且着色器无输入 —— 平凡着色器只用 `SV_VertexID`。
 fn pso_desc(root: &ID3D12RootSignature) -> D3D12_GRAPHICS_PIPELINE_STATE_DESC {
     // `pRootSignature` 是 `ManuallyDrop<Option<ID3D12RootSignature>>` —— windows-rs 要
-// 我们手动保证它在描述符存活期间不释放。`ManuallyDrop` 就是那个保证。
-let keep = std::mem::ManuallyDrop::new(Some(root.clone()));
+    // 我们手动保证它在描述符存活期间不释放。`ManuallyDrop` 就是那个保证。
+    let keep = std::mem::ManuallyDrop::new(Some(root.clone()));
     D3D12_GRAPHICS_PIPELINE_STATE_DESC {
         pRootSignature: keep.clone(),
         VS: D3D12_SHADER_BYTECODE {
@@ -296,7 +293,10 @@ let keep = std::mem::ManuallyDrop::new(Some(root.clone()));
             f
         },
         DSVFormat: DXGI_FORMAT_UNKNOWN,
-        SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+        SampleDesc: DXGI_SAMPLE_DESC {
+            Count: 1,
+            Quality: 0,
+        },
         NodeMask: 0,
         CachedPSO: D3D12_CACHED_PIPELINE_STATE::default(),
         Flags: D3D12_PIPELINE_STATE_FLAG_NONE,

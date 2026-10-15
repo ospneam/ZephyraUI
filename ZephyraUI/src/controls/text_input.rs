@@ -111,7 +111,10 @@ pub fn scrollable_text_area(
                 .with_children([Element::new(NodeTag::Container)
                     .with_key("fill:scroll")
                     .style("scroll-thumb")
-                    .with(&props::HEIGHT, PropertyValue::float((ratio * 120.0).max(16.0)))]),
+                    .with(
+                        &props::HEIGHT,
+                        PropertyValue::float((ratio * 120.0).max(16.0)),
+                    )]),
         ])
 }
 

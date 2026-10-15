@@ -424,16 +424,16 @@ pub fn name_affects_layout(name: &str) -> bool {
     matches!(
         name,
         "Padding"
-                | "Text.LineHeight"
-                | "Width"
-                | "Height"
-                | "Spacing"
-                | "Collapsed"
-                | "Direction"
-                | "CrossAlign"
-                | "MainAlign"
-                | "Text.Size"
-                | "Text.MaxWidth"
+            | "Text.LineHeight"
+            | "Width"
+            | "Height"
+            | "Spacing"
+            | "Collapsed"
+            | "Direction"
+            | "CrossAlign"
+            | "MainAlign"
+            | "Text.Size"
+            | "Text.MaxWidth"
     )
 }
 
@@ -744,7 +744,6 @@ fn upsert(
 fn id_of(key: &PropertyKey) -> usize {
     key as *const _ as usize
 }
-
 
 /// 按优先级解析属性值。
 ///

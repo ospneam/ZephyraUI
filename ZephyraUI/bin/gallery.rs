@@ -36,7 +36,6 @@ fn intent_cell(dark: bool) -> Arc<AtomicU8> {
 #[path = "../src/alloc_probe.rs"]
 mod alloc_probe;
 
-
 fn main() {
     // 与 demo 同一套字体手法：自带 MiSans（含 CJK），编译期内嵌，
     // 落地到临时文件后经环境变量让 zephyra-fx 选中它。
@@ -247,9 +246,7 @@ fn bench_cpu(probe: bool, light: bool) {
         } else {
             med as f64 / total as f64 * 100.0
         };
-        println!(
-            "[bench] {name:<8} 中位 {med:>6} µs  最大 {max:>6} µs  占比 {pct:>5.1}%"
-        );
+        println!("[bench] {name:<8} 中位 {med:>6} µs  最大 {max:>6} µs  占比 {pct:>5.1}%");
     }
 
     let frame = last.expect("FRAMES > 0");
@@ -266,7 +263,13 @@ fn bench_cpu(probe: bool, light: bool) {
     // 计时**（计时点之间漏了代码），那时"占比"这列数字会误导 —— 所以直接印出来。
     let sum: u64 = samples
         .iter()
-        .map(|s| s.view_us as u64 + s.diff_us as u64 + s.layout_us as u64 + s.paint_us as u64 + s.expand_us as u64)
+        .map(|s| {
+            s.view_us as u64
+                + s.diff_us as u64
+                + s.layout_us as u64
+                + s.paint_us as u64
+                + s.expand_us as u64
+        })
         .sum();
     let sum_total: u64 = samples.iter().map(|s| s.total_us as u64).sum();
     let accounted = if sum_total == 0 {
@@ -279,31 +282,11 @@ fn bench_cpu(probe: bool, light: bool) {
         samples.iter().map(|s| s.total_us).collect(),
         sum_total,
     );
-    report(
-        "view",
-        samples.iter().map(|s| s.view_us).collect(),
-        sum,
-    );
-    report(
-        "diff",
-        samples.iter().map(|s| s.diff_us).collect(),
-        sum,
-    );
-    report(
-        "layout",
-        samples.iter().map(|s| s.layout_us).collect(),
-        sum,
-    );
-    report(
-        "paint",
-        samples.iter().map(|s| s.paint_us).collect(),
-        sum,
-    );
-    report(
-        "expand",
-        samples.iter().map(|s| s.expand_us).collect(),
-        sum,
-    );
+    report("view", samples.iter().map(|s| s.view_us).collect(), sum);
+    report("diff", samples.iter().map(|s| s.diff_us).collect(), sum);
+    report("layout", samples.iter().map(|s| s.layout_us).collect(), sum);
+    report("paint", samples.iter().map(|s| s.paint_us).collect(), sum);
+    report("expand", samples.iter().map(|s| s.expand_us).collect(), sum);
     println!(
         "[bench] 各阶段之和 / 合计 = {accounted:.1}%（应当 ≈100%；明显小于 100 说明有代码没被计时）"
     );
@@ -358,7 +341,7 @@ fn bench_resize(probe: bool, light: bool) {
         host.set_theme(ThemeVariant::Light);
     }
 
-// 三个方向**分别**测。把宽高一起摆会互相抵消：宽度变化必然让整棵子树重测，
+    // 三个方向**分别**测。把宽高一起摆会互相抵消：宽度变化必然让整棵子树重测，
     // 于是"高度变化几乎免费"那部分被完全淹掉 —— 实测混在一起时
     // 507~586 µs，看不出任何双峰，而拆开之后差距是两个数量级。
     //
@@ -454,7 +437,7 @@ fn dump_cpu(light: bool) {
     };
     let mut view = Gallery::default();
     view.route = resolved;
-// --lang <tag>：强制语言，供**像素自验**用。
+    // --lang <tag>：强制语言，供**像素自验**用。
     //
     // 为什么需要它：dump 路不读系统语言（Gallery::default 的 prefs 是空的，
     // 于是走回落分支），所以中日文只能这样才看得到。而中日文能不能真正出图，
@@ -466,15 +449,12 @@ fn dump_cpu(light: bool) {
             None => {
                 // 未知语言**报错退出**，不静默回落：`--lang zh_Hant`（下划线）
                 // 这类拼错会给出英文界面，而那看起来像"功能没接上"。
-                eprintln!(
-                    "[gallery] 未知语言 {tag:?}；可用：{}",
-                    SUPPORTED.join(" ")
-                );
+                eprintln!("[gallery] 未知语言 {tag:?}；可用：{}", SUPPORTED.join(" "));
                 std::process::exit(2);
             }
         }
     }
-// `--enter-ms <n>`：把入场动画时钟拨到指定毫秒，供**像素自验**用。
+    // `--enter-ms <n>`：把入场动画时钟拨到指定毫秒，供**像素自验**用。
     //
     // 为什么需要它：动画只在"换路由之后的 333 ms 内"存在，而 dump 路只渲染
     // 一帧 —— 不拨时钟就永远只能看到放完之后的样子，看不出档位到底动没动。
@@ -615,9 +595,11 @@ impl winit::application::ApplicationHandler for Bootstrap {
         // `width: 1400px / height: 800px`（core 没有 flex-grow，铺满靠定值），
         // 而宿主默认给 640×480 —— 窗口比画布小的时候，超出部分只是**被裁掉**：
         // 布局对、绘制对、屏幕上一片内容不见了，看起来像排版坏了。
-        let (w, h) = (zephyra_ui::app::shell::CANVAS_W as u32, zephyra_ui::app::shell::CANVAS_H as u32);
-        let mut app =
-            zephyra_winit_d3d12::HostWindow::new_lenient_sized(event_loop, view, (w, h));
+        let (w, h) = (
+            zephyra_ui::app::shell::CANVAS_W as u32,
+            zephyra_ui::app::shell::CANVAS_H as u32,
+        );
+        let mut app = zephyra_winit_d3d12::HostWindow::new_lenient_sized(event_loop, view, (w, h));
 
         // 样式表是第一优先级证明物：「源码里没有样式」要能看到它接上了。
         app.set_styler(install(build_sheet()));

@@ -282,11 +282,7 @@ impl FrameCache {
         };
         if need_layout {
             if let Some(node) = self.node.as_mut() {
-                crate::layout::layout(
-                    node,
-                    Rect::new(0.0, 0.0, viewport.0, viewport.1),
-                    ctx,
-                );
+                crate::layout::layout(node, Rect::new(0.0, 0.0, viewport.0, viewport.1), ctx);
             }
         }
 

@@ -28,13 +28,9 @@
 //! 全通过 = 代码问题（描述符字段错了），从探针名查。
 //! `CreateBuffer` 就失败 = 环境问题，与本 crate 的代码无关。
 
-use windows::Win32::Graphics::Direct3D::{
-    D3D_DRIVER_TYPE_HARDWARE, D3D_FEATURE_LEVEL_11_0,
-};
+use windows::Win32::Graphics::Direct3D::{D3D_DRIVER_TYPE_HARDWARE, D3D_FEATURE_LEVEL_11_0};
 use windows::Win32::Graphics::Direct3D11::*;
-use windows::Win32::Graphics::Dxgi::Common::{
-    DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_SAMPLE_DESC,
-};
+use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_SAMPLE_DESC};
 
 fn device() -> Option<(ID3D11Device, ID3D11DeviceContext)> {
     let mut dev = None;
@@ -103,8 +99,8 @@ fn per_adapter_probe_d3d11_baseline_capability() {
     use windows::core::Interface as _;
     use windows::Win32::Graphics::Dxgi::CreateDXGIFactory1;
 
-    let factory: windows::Win32::Graphics::Dxgi::IDXGIFactory4 = unsafe { CreateDXGIFactory1() }
-        .expect("DXGI 工厂");
+    let factory: windows::Win32::Graphics::Dxgi::IDXGIFactory4 =
+        unsafe { CreateDXGIFactory1() }.expect("DXGI 工厂");
 
     // 汇总表：适配器 × 4 个探针
     let mut rows: Vec<(String, [char; 6])> = Vec::new();
@@ -112,7 +108,9 @@ fn per_adapter_probe_d3d11_baseline_capability() {
         let Ok(adapter) = (unsafe { factory.EnumAdapters1(i) }) else {
             break;
         };
-        let Ok(desc) = (unsafe { adapter.GetDesc() }) else { continue };
+        let Ok(desc) = (unsafe { adapter.GetDesc() }) else {
+            continue;
+        };
         let end = desc.Description.iter().position(|&c| c == 0).unwrap_or(128);
         let name = String::from_utf16_lossy(&desc.Description[..end]);
 
@@ -151,7 +149,10 @@ fn per_adapter_probe_d3d11_baseline_capability() {
                 MipLevels: 1,
                 ArraySize: 1,
                 Format: DXGI_FORMAT_R8G8B8A8_UNORM,
-                SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+                SampleDesc: DXGI_SAMPLE_DESC {
+                    Count: 1,
+                    Quality: 0,
+                },
                 Usage: usage,
                 BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
                 CPUAccessFlags: cpu,
@@ -209,7 +210,10 @@ fn per_adapter_probe_d3d11_baseline_capability() {
         };
 
         println!("\n=== {name} ===");
-        println!("  纹理 DEFAULT          {}", if p1_default { "✅" } else { "❌" });
+        println!(
+            "  纹理 DEFAULT          {}",
+            if p1_default { "✅" } else { "❌" }
+        );
         println!(
             "  纹理 DYNAMIC+无CPU权限  {}   ← 非法组合，回错是应该的",
             if p2_dynamic_wrong { "✅" } else { "❌" }
@@ -226,7 +230,10 @@ fn per_adapter_probe_d3d11_baseline_capability() {
             "  缓冲 DYNAMIC+WRITE     {}   ← 正确写法",
             if buf_dynamic { "✅" } else { "❌" }
         );
-        println!("  视口往返              {}", if viewport_ok { "✅" } else { "❌" });
+        println!(
+            "  视口往返              {}",
+            if viewport_ok { "✅" } else { "❌" }
+        );
         let mark = |b: bool| if b { 'Y' } else { 'n' };
         rows.push((
             name,
@@ -247,7 +254,11 @@ fn per_adapter_probe_d3d11_baseline_capability() {
         "适配器"
     );
     for (name, m) in &rows {
-        let w = if name.chars().count() > 30 { 30 } else { name.chars().count() };
+        let w = if name.chars().count() > 30 {
+            30
+        } else {
+            name.chars().count()
+        };
         println!(
             "  {:<w$}    {}      {}      {}      {}      {}      {}",
             name, m[0], m[1], m[2], m[3], m[4], m[5]
@@ -312,10 +323,7 @@ fn probe_d3d11_baseline_on_this_machine() {
                     Some(&mut mapped as *mut _),
                 )
             } {
-                Ok(()) => println!(
-                    "    Map(WRITE_DISCARD) ✅ RowPitch={}",
-                    mapped.RowPitch
-                ),
+                Ok(()) => println!("    Map(WRITE_DISCARD) ✅ RowPitch={}", mapped.RowPitch),
                 Err(e) => println!("    Map(WRITE_DISCARD) ❌ {:#X}", e.code().0 as u32),
             }
         }
@@ -326,7 +334,12 @@ fn probe_d3d11_baseline_on_this_machine() {
         ),
     }
 
-    probe_texture(&device, "CreateTexture2D 无 bind flag, DEFAULT", 0, D3D11_USAGE_DEFAULT);
+    probe_texture(
+        &device,
+        "CreateTexture2D 无 bind flag, DEFAULT",
+        0,
+        D3D11_USAGE_DEFAULT,
+    );
     probe_texture(
         &device,
         "CreateTexture2D SHADER_RESOURCE, DEFAULT",
@@ -406,7 +419,10 @@ fn probe_d3d11_baseline_on_this_machine() {
                     Some(&mut mapped as *mut _),
                 )
             } {
-                Ok(()) => println!("  ⚠ Map(DEFAULT 纹理) 竟然成功了（RowPitch={}）", mapped.RowPitch),
+                Ok(()) => println!(
+                    "  ⚠ Map(DEFAULT 纹理) 竟然成功了（RowPitch={}）",
+                    mapped.RowPitch
+                ),
                 Err(e) => println!(
                     "  · Map(DEFAULT 纹理) → {:#X} {}（预期如此：DEFAULT 内存 CPU 不可寻址）",
                     e.code().0 as u32,
@@ -464,15 +480,17 @@ fn probe_d3d11_baseline_on_this_machine() {
         CullMode: D3D11_CULL_NONE,
         ..Default::default()
     };
-    let rs = match unsafe {
-        device.CreateRasterizerState(&raster_desc, Some(&mut rs_out as *mut _))
-    } {
-        Ok(()) => rs_out,
-        Err(e) => {
-            println!("  ❌ CreateRasterizerState（合法 desc）→ {:#X}", e.code().0 as u32);
-            None
-        }
-    };
+    let rs =
+        match unsafe { device.CreateRasterizerState(&raster_desc, Some(&mut rs_out as *mut _)) } {
+            Ok(()) => rs_out,
+            Err(e) => {
+                println!(
+                    "  ❌ CreateRasterizerState（合法 desc）→ {:#X}",
+                    e.code().0 as u32
+                );
+                None
+            }
+        };
     let Some(rs) = rs else { return };
     unsafe { context.RSSetState(Some(&rs)) };
     let back = unsafe { context.RSGetState() };
@@ -504,7 +522,11 @@ fn probe_d3d11_baseline_on_this_machine() {
             "  RSSetViewports/RSGetViewports：个数 {n}，读回 {}×{}  {}",
             got[0].Width,
             got[0].Height,
-            if n == 1 && got[0].Width == 64.0 { "✅ 正常" } else { "❌ 被丢弃" }
+            if n == 1 && got[0].Width == 64.0 {
+                "✅ 正常"
+            } else {
+                "❌ 被丢弃"
+            }
         );
     }
 }

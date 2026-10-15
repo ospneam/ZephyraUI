@@ -477,9 +477,7 @@ impl Earcut {
         loop {
             let mut again = false;
             let (pv, nx) = (self.nodes[p].prev, self.nodes[p].next);
-            if !self.nodes[p].steiner
-                && (self.equals(p, nx) || self.area_rel(pv, p, nx) == 0.0)
-            {
+            if !self.nodes[p].steiner && (self.equals(p, nx) || self.area_rel(pv, p, nx) == 0.0) {
                 self.remove_node(p);
                 end = self.nodes[p].prev;
                 p = end;
@@ -551,7 +549,8 @@ impl Earcut {
     }
 
     fn push_tri(&mut self, a: usize, b: usize, c: usize) {
-        self.tris.push([self.nodes[a].p, self.nodes[b].p, self.nodes[c].p]);
+        self.tris
+            .push([self.nodes[a].p, self.nodes[b].p, self.nodes[c].p]);
     }
 
     // ---------------------------------------------------------------- 耳测试
@@ -717,9 +716,7 @@ impl Earcut {
                 while p_size > 0 || (q_size > 0 && q != NONE) {
                     let e;
                     if p_size != 0
-                        && (q_size == 0
-                            || q == NONE
-                            || self.nodes[p].z <= self.nodes[q].z)
+                        && (q_size == 0 || q == NONE || self.nodes[p].z <= self.nodes[q].z)
                     {
                         e = p;
                         p = self.nodes[p].next_z;
@@ -970,8 +967,7 @@ impl Earcut {
                 let better = if tan < tan_min {
                     true
                 } else if tan == tan_min {
-                    pp.x > mx
-                        || (pp.x == mx && self.sector_contains_sector(m, p))
+                    pp.x > mx || (pp.x == mx && self.sector_contains_sector(m, p))
                 } else {
                     false
                 };
@@ -1120,8 +1116,7 @@ impl Earcut {
     /// 对应 `locallyInside()`：`b` 是否在 `a` 的内角扇形内。
     fn locally_inside(&self, a: usize, b: usize) -> bool {
         if self.area(self.nodes[a].prev, a, self.nodes[a].next) < 0.0 {
-            self.area(a, b, self.nodes[a].next) >= 0.0
-                && self.area(a, self.nodes[a].prev, b) >= 0.0
+            self.area(a, b, self.nodes[a].next) >= 0.0 && self.area(a, self.nodes[a].prev, b) >= 0.0
         } else {
             self.area(a, b, self.nodes[a].prev) < 0.0 || self.area(a, self.nodes[a].next, b) < 0.0
         }
@@ -1221,10 +1216,7 @@ fn point_in_triangle_except_first(a: Point, b: Point, c: Point, p: Point) -> boo
 
 /// 对应 `onSegment()`：共线三点里 `q` 是否落在 `pr` 上。
 fn on_segment(p: Point, q: Point, r: Point) -> bool {
-    q.x <= p.x.max(r.x)
-        && q.x >= p.x.min(r.x)
-        && q.y <= p.y.max(r.y)
-        && q.y >= p.y.min(r.y)
+    q.x <= p.x.max(r.x) && q.x >= p.x.min(r.x) && q.y <= p.y.max(r.y) && q.y >= p.y.min(r.y)
 }
 
 fn sign(v: f32) -> i32 {

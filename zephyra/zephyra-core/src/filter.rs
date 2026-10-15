@@ -67,10 +67,7 @@ pub enum Filter {
     ///
     /// 两个 σ 分开给，是因为 UI 里水平方向的模糊（文字选中态的边缘柔化）
     /// 与垂直方向的模糊需求常常不同。
-    Blur {
-        sigma_x: f32,
-        sigma_y: f32,
-    },
+    Blur { sigma_x: f32, sigma_y: f32 },
     /// 外投影。
     ///
     /// 阴影画在**原图之外**，所以离屏矩形必须按 `offset + 3σ` 外扩；若
@@ -110,9 +107,7 @@ impl Filter {
                     bottom: ry,
                 }
             }
-            Filter::DropShadow {
-                offset, sigma, ..
-            } => {
+            Filter::DropShadow { offset, sigma, .. } => {
                 let r = blur_radius(*sigma);
                 // 影子 = 原矩形被模糊（**四边**各扩 r）后整体平移 offset。
                 //
@@ -213,14 +208,14 @@ pub struct FilterChain {
 impl FilterChain {
     /// 空链（恒等）。
     pub const fn none() -> Self {
-        Self { filters: Vec::new() }
+        Self {
+            filters: Vec::new(),
+        }
     }
 
     /// 单个滤镜。
     pub fn single(f: Filter) -> Self {
-        Self {
-            filters: vec![f],
-        }
+        Self { filters: vec![f] }
     }
 
     /// 按顺序构造（`filters[0]` 最先执行）。

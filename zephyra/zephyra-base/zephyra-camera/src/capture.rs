@@ -72,9 +72,10 @@ impl CameraManager {
     /// 退回协商值，也不要用三五个样本的结论去改节拍（中位数在极少样本下会被
     /// 单帧抖动主导）。
     pub fn observed_period(&self) -> Option<Duration> {
-        self.source_periods.get(self.source_periods.len() / 2).copied().filter(|_| {
-            self.source_periods.len() >= SOURCE_PERIOD_SAMPLES / 2
-        })
+        self.source_periods
+            .get(self.source_periods.len() / 2)
+            .copied()
+            .filter(|_| self.source_periods.len() >= SOURCE_PERIOD_SAMPLES / 2)
     }
 
     /// 采集节拍：取"请求值"与"实测周期"中**较慢**的那个。
@@ -135,8 +136,8 @@ impl CameraManager {
 
         let format =
             RequestedFormat::new::<RgbFormat>(RequestedFormatType::AbsoluteHighestFrameRate);
-        let mut camera =
-            Camera::new(index.clone(), format).map_err(|e| format!("Failed to open camera: {}", e))?;
+        let mut camera = Camera::new(index.clone(), format)
+            .map_err(|e| format!("Failed to open camera: {}", e))?;
 
         let _ = camera.set_resolution(target);
 

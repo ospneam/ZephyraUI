@@ -39,7 +39,11 @@ const EXPECTED: &[(&PropertyKey, bool, &str)] = &[
     // `arrange` 读 `node.cross_align(ctx)` 与 `node.stack(ctx)`
     //（后者带 `direction` + `main_align`）。
     (&props::DIRECTION, true, "主轴方向决定子节点怎么排"),
-    (&props::CROSS_ALIGN, true, "`arrange` 直接读 `node.cross_align`"),
+    (
+        &props::CROSS_ALIGN,
+        true,
+        "`arrange` 直接读 `node.cross_align`",
+    ),
     (&props::MAIN_ALIGN, true, "经 `node.stack()` 进入 `arrange`"),
     // ---- 影响布局：文本度量 ----
     // `measure` 走 `node.text_size(ctx)`，它内部取 `text_style()`（字号 + 行高）
@@ -51,18 +55,30 @@ const EXPECTED: &[(&PropertyKey, bool, &str)] = &[
     (&props::BACKGROUND, false, "只决定填充色"),
     (&props::CORNER_RADIUS, false, "只决定 SDF 圆角"),
     (&props::BORDER_COLOR, false, "只决定描边色"),
-    (&props::BORDER_WIDTH, false, "描边在同一个 Quad 里，不改盒子"),
+    (
+        &props::BORDER_WIDTH,
+        false,
+        "描边在同一个 Quad 里，不改盒子",
+    ),
     (&props::OPACITY, false, "只影响合成"),
     (&props::LAYER, false, "只影响排序"),
     (&props::FILTER, false, "滤镜不改变布局盒（离屏范围另算）"),
     (&props::BLEND_MODE, false, "只影响合成"),
     (&props::IMAGE_TEXTURE, false, "只决定画哪张图"),
-    (&props::IMAGE_SIZE, false, "画在**已排好版**的盒子里面，`measure` 不读"),
+    (
+        &props::IMAGE_SIZE,
+        false,
+        "画在**已排好版**的盒子里面，`measure` 不读",
+    ),
     (&props::IMAGE_TINT, false, "只影响着色"),
     (&props::IMAGE_SRC, false, "只影响 uv"),
     (&props::ICON_NAME, false, "只决定画哪个图标"),
     (&props::ICON_COLOR, false, "只影响图标颜色"),
-    (&props::TEXT, false, "文本内容本身进 `shape`，但**内容变了不等于盒子要重排**"),
+    (
+        &props::TEXT,
+        false,
+        "文本内容本身进 `shape`，但**内容变了不等于盒子要重排**",
+    ),
     (&props::TEXT_COLOR, false, "只影响颜色"),
     (&props::INTERACTIVE, false, "只影响命中测试与状态"),
     (&props::SELECTED, false, "只影响状态"),
@@ -83,7 +99,8 @@ fn every_real_property_key_has_a_pinned_layout_classification() {
     for (key, want, why) in EXPECTED {
         let got = name_affects_layout(key.name());
         assert_eq!(
-            got, *want,
+            got,
+            *want,
             "{} 的布局分类不对（{why}）。字符串名单说是 {got}，构造器说是 {want}",
             key.name()
         );
@@ -103,12 +120,36 @@ fn the_pinned_list_covers_every_property_declared_in_props() {
     // 反向：props.rs 里新增了键却忘了往 `EXPECTED` 里加一条 —— 那条键的分类就
     // 永远没人钉。这里用一张手工清单对照；漏一个就是漏一个。
     const DECLARED: &[&str] = &[
-        "PADDING", "WIDTH", "HEIGHT", "DIRECTION", "SPACING", "CROSS_ALIGN",
-        "MAIN_ALIGN", "COLLAPSED", "BACKGROUND", "CORNER_RADIUS", "BORDER_COLOR",
-        "BORDER_WIDTH", "OPACITY", "LAYER", "FILTER", "BLEND_MODE",
-        "IMAGE_TEXTURE", "IMAGE_SIZE", "IMAGE_TINT", "IMAGE_SRC", "ICON_NAME",
-        "ICON_COLOR", "TEXT", "TEXT_SIZE", "TEXT_COLOR", "TEXT_MAX_WIDTH",
-        "TEXT_LINE_HEIGHT", "INTERACTIVE", "SELECTED", "DISABLED",
+        "PADDING",
+        "WIDTH",
+        "HEIGHT",
+        "DIRECTION",
+        "SPACING",
+        "CROSS_ALIGN",
+        "MAIN_ALIGN",
+        "COLLAPSED",
+        "BACKGROUND",
+        "CORNER_RADIUS",
+        "BORDER_COLOR",
+        "BORDER_WIDTH",
+        "OPACITY",
+        "LAYER",
+        "FILTER",
+        "BLEND_MODE",
+        "IMAGE_TEXTURE",
+        "IMAGE_SIZE",
+        "IMAGE_TINT",
+        "IMAGE_SRC",
+        "ICON_NAME",
+        "ICON_COLOR",
+        "TEXT",
+        "TEXT_SIZE",
+        "TEXT_COLOR",
+        "TEXT_MAX_WIDTH",
+        "TEXT_LINE_HEIGHT",
+        "INTERACTIVE",
+        "SELECTED",
+        "DISABLED",
     ];
     let pinned: Vec<&str> = EXPECTED.iter().map(|(k, _, _)| k.name()).collect();
     // ⚠ `DECLARED` 记的是 Rust 的**静态名**，`key.name()` 是**属性字符串**，两者不同，
@@ -120,12 +161,36 @@ fn the_pinned_list_covers_every_property_declared_in_props() {
     );
     // `props` 里每个键的**属性字符串**：
     const NAMES: &[&str] = &[
-        "Padding", "Width", "Height", "Direction", "Spacing", "CrossAlign",
-        "MainAlign", "Collapsed", "Background", "CornerRadius", "BorderColor",
-        "BorderWidth", "Opacity", "Layer", "Filter", "BlendMode", "Image.Texture",
-        "Image.Size", "Image.Tint", "Image.Src", "Icon.Name", "Icon.Color",
-        "Text", "Text.Size", "Text.Color", "Text.MaxWidth", "Text.LineHeight",
-        "Interactive", "Selected", "Disabled",
+        "Padding",
+        "Width",
+        "Height",
+        "Direction",
+        "Spacing",
+        "CrossAlign",
+        "MainAlign",
+        "Collapsed",
+        "Background",
+        "CornerRadius",
+        "BorderColor",
+        "BorderWidth",
+        "Opacity",
+        "Layer",
+        "Filter",
+        "BlendMode",
+        "Image.Texture",
+        "Image.Size",
+        "Image.Tint",
+        "Image.Src",
+        "Icon.Name",
+        "Icon.Color",
+        "Text",
+        "Text.Size",
+        "Text.Color",
+        "Text.MaxWidth",
+        "Text.LineHeight",
+        "Interactive",
+        "Selected",
+        "Disabled",
     ];
     for n in NAMES {
         assert!(
@@ -159,7 +224,11 @@ fn the_four_constructors_pin_four_distinct_positions() {
 
     let f = || PropertyValue::float(0.0);
     let positions = [
-        ("new", PropertyKey::new("T.a", f()).inherits(), PropertyKey::new("T.a", f()).affects_layout()),
+        (
+            "new",
+            PropertyKey::new("T.a", f()).inherits(),
+            PropertyKey::new("T.a", f()).affects_layout(),
+        ),
         (
             "inheritable",
             PropertyKey::inheritable("T.b", f()).inherits(),
@@ -178,7 +247,9 @@ fn the_four_constructors_pin_four_distinct_positions() {
     ];
     let mut seen: Vec<(&str, bool, bool)> = Vec::new();
     for (name, inherits, layout) in positions {
-        let dup = seen.iter().position(|(_, i, l)| *i == inherits && *l == layout);
+        let dup = seen
+            .iter()
+            .position(|(_, i, l)| *i == inherits && *l == layout);
         assert!(
             dup.is_none(),
             "构造器 `{name}` 与 `{}` 的行为完全相同（inherits={inherits}, layout={layout}）——\

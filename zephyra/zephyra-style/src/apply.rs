@@ -84,11 +84,7 @@ struct Scratch<'a> {
 }
 
 /// 单个节点。抽成自由函数是为了和递归那次调用共用同一段逻辑。
-fn apply_node<'s>(
-    sheet: &'s StyleSheet,
-    node: &mut Node,
-    s: &mut Scratch<'s>,
-) {
+fn apply_node<'s>(sheet: &'s StyleSheet, node: &mut Node, s: &mut Scratch<'s>) {
     let tag = node.tag();
     // 分类名来自 `.style(...)`——**唯一**入口。
     //

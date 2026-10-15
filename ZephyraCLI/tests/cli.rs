@@ -48,7 +48,8 @@ fn parses_subcommand_and_positional() {
 
 #[test]
 fn flags_and_options_split() {
-    let ParseOutcome::Parsed(a) = args::parse(argv("run --release --manifest-path x/Cargo.toml")) else {
+    let ParseOutcome::Parsed(a) = args::parse(argv("run --release --manifest-path x/Cargo.toml"))
+    else {
         panic!("expected Parsed");
     };
     assert!(a.has("release"));
@@ -188,7 +189,10 @@ fn new_rejects_names_that_would_not_compile() {
             panic!()
         };
         let code = (commands::find("new").unwrap().run)(&a, &mut io);
-        assert!(code.is_err(), "`{bad}` should be rejected before writing anything");
+        assert!(
+            code.is_err(),
+            "`{bad}` should be rejected before writing anything"
+        );
         assert_eq!(code.unwrap_err().code, ExitCode::Usage);
     }
 }
@@ -205,10 +209,16 @@ fn scaffolded_stylesheet_passes_its_own_check() {
     let mut o = Vec::new();
     let mut e = Vec::new();
     {
-        let mut io = Io { out: &mut o, err: &mut e };
-        let ParseOutcome::Parsed(a) =
-            args::parse(vec!["new".into(), "app".into(), "--path".into(), dir.display().to_string()])
-        else {
+        let mut io = Io {
+            out: &mut o,
+            err: &mut e,
+        };
+        let ParseOutcome::Parsed(a) = args::parse(vec![
+            "new".into(),
+            "app".into(),
+            "--path".into(),
+            dir.display().to_string(),
+        ]) else {
             panic!()
         };
         (commands::find("new").unwrap().run)(&a, &mut io).unwrap();
@@ -290,9 +300,7 @@ fn dev_is_registered_with_its_flags() {
 /// 「unknown flag `--styles`」，即用户完全看不到真正的原因（他传了合法的标志）。
 #[test]
 fn dev_styles_flag_is_parsed_as_a_value() {
-    let ParseOutcome::Parsed(a) =
-        args::parse(argv("dev --styles styles --no-watch"))
-    else {
+    let ParseOutcome::Parsed(a) = args::parse(argv("dev --styles styles --no-watch")) else {
         panic!("expected Parsed")
     };
     assert_eq!(a.option("styles"), Some("styles"));
@@ -328,7 +336,10 @@ fn scaffold_dependencies_all_resolve_to_real_packages() {
     let mut o = Vec::new();
     let mut e = Vec::new();
     {
-        let mut io = Io { out: &mut o, err: &mut e };
+        let mut io = Io {
+            out: &mut o,
+            err: &mut e,
+        };
         let ParseOutcome::Parsed(a) = args::parse(vec![
             "new".into(),
             "app".into(),
@@ -347,9 +358,10 @@ fn scaffold_dependencies_all_resolve_to_real_packages() {
         let Some(after) = line.split("path = ").nth(1) else {
             continue;
         };
-        let quoted = after.split('"').nth(1).unwrap_or_else(|| {
-            panic!("`path =` in the manifest is not quoted: {line}")
-        });
+        let quoted = after
+            .split('"')
+            .nth(1)
+            .unwrap_or_else(|| panic!("`path =` in the manifest is not quoted: {line}"));
         saw_any = true;
         let p = quoted;
         let manifest_path = std::path::Path::new(p).join("Cargo.toml");
@@ -360,7 +372,10 @@ fn scaffold_dependencies_all_resolve_to_real_packages() {
              `no matching package` -- which says nothing about the real cause)"
         );
     }
-    assert!(saw_any, "no path dependencies found -- the template lost them?");
+    assert!(
+        saw_any,
+        "no path dependencies found -- the template lost them?"
+    );
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -384,7 +399,10 @@ fn scaffold_entry_implements_every_required_trait_method() {
     let mut o = Vec::new();
     let mut e = Vec::new();
     {
-        let mut io = Io { out: &mut o, err: &mut e };
+        let mut io = Io {
+            out: &mut o,
+            err: &mut e,
+        };
         let ParseOutcome::Parsed(a) = args::parse(vec![
             "new".into(),
             "app".into(),
@@ -399,7 +417,10 @@ fn scaffold_entry_implements_every_required_trait_method() {
     let src = std::fs::read_to_string(dir.join("app").join("src").join("main.rs")).unwrap();
     // `View` 的两个必需方法
     for m in ["fn on_input", "fn view"] {
-        assert!(src.contains(m), "scaffold entry is missing `{m}` (required by `View`)");
+        assert!(
+            src.contains(m),
+            "scaffold entry is missing `{m}` (required by `View`)"
+        );
     }
     // `ApplicationHandler` 在 winit 0.30 里没有给 `window_event` 默认实现
     for m in ["fn resumed", "fn window_event"] {

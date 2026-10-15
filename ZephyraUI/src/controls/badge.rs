@@ -11,7 +11,12 @@ use zephyra_core::props;
 use super::with_classes;
 
 /// 文字徽章。`severity` ∈ `info` / `success` / `caution` / `error`。
-pub fn info_badge(key: &'static str, text: &'static str, severity: &'static str, solid: bool) -> Element {
+pub fn info_badge(
+    key: &'static str,
+    text: &'static str,
+    severity: &'static str,
+    solid: bool,
+) -> Element {
     let mut classes: Vec<&'static str> = vec![severity];
     if !solid {
         classes.push("outline");

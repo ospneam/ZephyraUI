@@ -429,7 +429,10 @@ impl<'a> Cursor<'a> {
 
     /// 下一 token 是否为数字起始（digit / '.' / '+' / '-'；无命令字母以 +/- 开头，安全）。
     fn at_number(&self) -> bool {
-        let mut probe = Cursor { s: self.s, i: self.i };
+        let mut probe = Cursor {
+            s: self.s,
+            i: self.i,
+        };
         probe.skip_ws();
         match probe.s.get(probe.i) {
             Some(&b) => b.is_ascii_digit() || b == b'.' || b == b'+' || b == b'-',

@@ -21,6 +21,11 @@
 //! 通道」，这样换呈现格式时不会假失败。
 #![cfg(windows)]
 
+use windows::Win32::Graphics::Direct3D12::{
+    ID3D12Resource, D3D12_HEAP_TYPE_READBACK, D3D12_RESOURCE_STATE_COPY_DEST,
+    D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_PRESENT,
+};
+use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_R8G8B8A8_UNORM;
 use zephyra_core::core::{Color, CornerRadius, Rect};
 use zephyra_core::paint::{Command, DisplayList, SortKey};
 use zephyra_dcomp::SwapchainDesc;
@@ -30,11 +35,6 @@ use zephyra_winit_d3d12::{
     swapchain::{Swapchain, BUFFER_COUNT, MSAA_SAMPLES},
     Gpu, RenderReport,
 };
-use windows::Win32::Graphics::Direct3D12::{
-    D3D12_HEAP_TYPE_READBACK, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_COPY_SOURCE,
-    D3D12_RESOURCE_STATE_PRESENT, ID3D12Resource,
-};
-use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_R8G8B8A8_UNORM;
 
 /// 后缓冲边长。
 const SIZE: u32 = 128;
@@ -72,7 +72,8 @@ fn swapchain_presents_real_pixels() {
     // 不在这里 `begin_frame` —— 下面那次手工记录用不到，而 `render_and_read` 自己会开帧。
     // 连着开两次会让第二次 `list.Reset` 失败（「命令列表未关闭」），那是一条与本测试
     // 无关的假故障。
-    let mut chain = Swapchain::new(&gpu, (SIZE, SIZE), &swapchain_desc(), MSAA_SAMPLES).expect("建交换链");
+    let mut chain =
+        Swapchain::new(&gpu, (SIZE, SIZE), &swapchain_desc(), MSAA_SAMPLES).expect("建交换链");
     assert_eq!(chain.buffer_count(), BUFFER_COUNT);
     assert_eq!(chain.size(), (SIZE, SIZE));
 
@@ -131,7 +132,8 @@ fn both_back_buffers_are_drawable() {
     let Ok(mut gpu) = Gpu::new() else {
         panic!("建不出 D3D12 设备");
     };
-    let mut chain = Swapchain::new(&gpu, (SIZE, SIZE), &swapchain_desc(), MSAA_SAMPLES).expect("建交换链");
+    let mut chain =
+        Swapchain::new(&gpu, (SIZE, SIZE), &swapchain_desc(), MSAA_SAMPLES).expect("建交换链");
     let mut renderer = Renderer::new(&gpu.device, ATLAS_SIZE, chain.samples()).expect("建渲染器");
     let textures = TextureTable::new();
     let list = one_red_quad(SIZE);
@@ -139,7 +141,14 @@ fn both_back_buffers_are_drawable() {
     let mut seen = std::collections::BTreeSet::new();
     for _ in 0..4 {
         gpu.begin_frame().expect("开帧失败");
-        let (_, pixels) = render_and_read(&mut gpu, &mut chain, &mut renderer, &textures, &list, (SIZE, SIZE));
+        let (_, pixels) = render_and_read(
+            &mut gpu,
+            &mut chain,
+            &mut renderer,
+            &textures,
+            &list,
+            (SIZE, SIZE),
+        );
         let idx = chain.back_buffer_index();
         let drawn = count_red(&pixels);
         println!("[swapchain] 后缓冲 #{idx}: {drawn} 个红像素");
@@ -165,7 +174,8 @@ fn resize_之后仍然能画() {
     let Ok(mut gpu) = Gpu::new() else {
         panic!("建不出 D3D12 设备");
     };
-    let mut chain = Swapchain::new(&gpu, (SIZE, SIZE), &swapchain_desc(), MSAA_SAMPLES).expect("建交换链");
+    let mut chain =
+        Swapchain::new(&gpu, (SIZE, SIZE), &swapchain_desc(), MSAA_SAMPLES).expect("建交换链");
     let mut renderer = Renderer::new(&gpu.device, ATLAS_SIZE, chain.samples()).expect("建渲染器");
     let textures = TextureTable::new();
 
@@ -230,7 +240,8 @@ fn resize_buffers_在画过之后失败_并按设计重建() {
     let Ok(mut gpu) = Gpu::new() else {
         panic!("建不出 D3D12 设备");
     };
-    let mut chain = Swapchain::new(&gpu, (SIZE, SIZE), &swapchain_desc(), MSAA_SAMPLES).expect("建交换链");
+    let mut chain =
+        Swapchain::new(&gpu, (SIZE, SIZE), &swapchain_desc(), MSAA_SAMPLES).expect("建交换链");
     let mut renderer = Renderer::new(&gpu.device, ATLAS_SIZE, chain.samples()).expect("建渲染器");
     let textures = TextureTable::new();
     let list = one_red_quad(SIZE);
@@ -255,7 +266,10 @@ fn resize_buffers_在画过之后失败_并按设计重建() {
     // 超出容量 ⇒ 重建，且容量带余量。
     let big = (SIZE * 4, SIZE * 2);
     chain.resize(&gpu, big).expect("resize 不该报错");
-    assert!(chain.was_recreated(), "超出容量必须重建（视口不能比后缓冲大）");
+    assert!(
+        chain.was_recreated(),
+        "超出容量必须重建（视口不能比后缓冲大）"
+    );
     assert_eq!(chain.content_size(), big, "内容尺寸仍按窗口");
     assert!(
         chain.size().0 >= big.0 && chain.size().1 >= big.1,
@@ -268,7 +282,14 @@ fn resize_buffers_在画过之后失败_并按设计重建() {
     gpu.begin_frame().expect("开帧失败");
     let sz = chain.content_size();
     let big_quad = one_red_quad(sz.0);
-    let (_, pixels) = render_and_read(&mut gpu, &mut chain, &mut renderer, &textures, &big_quad, sz);
+    let (_, pixels) = render_and_read(
+        &mut gpu,
+        &mut chain,
+        &mut renderer,
+        &textures,
+        &big_quad,
+        sz,
+    );
     let drawn = count_red(&pixels);
     // 读回的是整块后缓冲（容量），quad 只画了内容那一块 ⇒ 按面积折算。
     let (bw, bh) = chain.size();
@@ -300,8 +321,8 @@ fn window_resize_does_not_rebuild_swapchain() {
         panic!("建不出 D3D12 设备");
     };
     let start_size = (SIZE * 2, SIZE * 2);
-    let mut chain = Swapchain::new(&gpu, start_size, &swapchain_desc(), MSAA_SAMPLES)
-        .expect("建交换链");
+    let mut chain =
+        Swapchain::new(&gpu, start_size, &swapchain_desc(), MSAA_SAMPLES).expect("建交换链");
     assert_eq!(chain.size(), start_size, "建链时容量应等于请求尺寸");
 
     // 模拟一次拖动：40 个连续变化的尺寸，全部**应该**只改内容尺寸。
@@ -319,8 +340,7 @@ fn window_resize_does_not_rebuild_swapchain() {
         }
         // 内容尺寸永远不得超过容量 —— 否则会画到窗口外。
         assert!(
-            chain.content_size().0 <= chain.size().0
-                && chain.content_size().1 <= chain.size().1,
+            chain.content_size().0 <= chain.size().0 && chain.content_size().1 <= chain.size().1,
             "第 {step} 步内容 {:?} 超出容量 {:?}",
             chain.content_size(),
             chain.size()
@@ -348,8 +368,8 @@ fn rebuilds_with_headroom_when_capacity_insufficient() {
     let Ok(gpu) = Gpu::new() else {
         panic!("建不出 D3D12 设备");
     };
-    let mut chain = Swapchain::new(&gpu, (SIZE, SIZE), &swapchain_desc(), MSAA_SAMPLES)
-        .expect("建交换链");
+    let mut chain =
+        Swapchain::new(&gpu, (SIZE, SIZE), &swapchain_desc(), MSAA_SAMPLES).expect("建交换链");
     assert!(!chain.was_recreated(), "刚建好不算重建");
 
     // 窗口长到超出当前容量 ⇒ 必须重建，且容量比请求**大**（有余量）。
@@ -372,8 +392,7 @@ fn rebuilds_with_headroom_when_capacity_insufficient() {
     // 重建之后还能画 —— 否则只是「不报错」而不是「能用」。
     drop(chain.take_superseded());
     let mut gpu = gpu;
-    let mut renderer =
-        Renderer::new(&gpu.device, ATLAS_SIZE, chain.samples()).expect("建渲染器");
+    let mut renderer = Renderer::new(&gpu.device, ATLAS_SIZE, chain.samples()).expect("建渲染器");
     let textures = TextureTable::new();
     gpu.begin_frame().expect("开帧失败");
     let sz = chain.content_size();
@@ -588,7 +607,8 @@ fn old_swapchain_must_survive_until_host_rebinds() {
     let Ok(mut gpu) = Gpu::new() else {
         panic!("建不出 D3D12 设备");
     };
-    let mut chain = Swapchain::new(&gpu, (SIZE, SIZE), &swapchain_desc(), MSAA_SAMPLES).expect("建交换链");
+    let mut chain =
+        Swapchain::new(&gpu, (SIZE, SIZE), &swapchain_desc(), MSAA_SAMPLES).expect("建交换链");
     let mut renderer = Renderer::new(&gpu.device, ATLAS_SIZE, chain.samples()).expect("建渲染器");
     let textures = TextureTable::new();
     let list = one_red_quad(SIZE);
@@ -599,7 +619,9 @@ fn old_swapchain_must_survive_until_host_rebinds() {
     let _ = render_and_read(&mut gpu, &mut chain, &mut renderer, &textures, &list, sz);
     chain.present(1).expect("present 失败");
 
-    chain.resize(&mut gpu, (SIZE * 2, SIZE * 2)).expect("resize 应当成功");
+    chain
+        .resize(&mut gpu, (SIZE * 2, SIZE * 2))
+        .expect("resize 应当成功");
     assert!(chain.was_recreated(), "本机画过之后必然走重建");
 
     // 判据一：旧链还在。
@@ -636,7 +658,8 @@ fn zero_sized_resize_is_ignored_not_an_error() {
     let Ok(mut gpu) = Gpu::new() else {
         panic!("建不出 D3D12 设备");
     };
-    let mut chain = Swapchain::new(&gpu, (SIZE, SIZE), &swapchain_desc(), MSAA_SAMPLES).expect("建交换链");
+    let mut chain =
+        Swapchain::new(&gpu, (SIZE, SIZE), &swapchain_desc(), MSAA_SAMPLES).expect("建交换链");
     for bad in [(0, 0), (0, 480), (640, 0)] {
         chain
             .resize(&mut gpu, bad)

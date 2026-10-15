@@ -207,10 +207,8 @@ fn icon_geometry_falls_inside_node_rect() {
 /// 而唯一能区分"用了 rect"与"丢了 rect"的量是**坐标范围**。
 #[test]
 fn icon_size_scales_with_node() {
-    let small = path_bounds(&render_of(&icon_el("gear"), UNIT))
-        .expect("20×20 的齿轮应当产出路径");
-    let big = path_bounds(&render_of(&icon_el("gear"), BIG))
-        .expect("48×48 的齿轮应当产出路径");
+    let small = path_bounds(&render_of(&icon_el("gear"), UNIT)).expect("20×20 的齿轮应当产出路径");
+    let big = path_bounds(&render_of(&icon_el("gear"), BIG)).expect("48×48 的齿轮应当产出路径");
 
     // viewBox 是 24×24 等比映射到 20×20 与 48×48，宽高比一致 ⇒ 缩放因子
     // 恰好是 20/24 与 48/24，即 2.4 倍。留 1% 余量给浮点与展平的弦高误差。
@@ -251,10 +249,7 @@ fn icon_size_scales_with_node() {
 #[test]
 fn corner_radius_reaches_image_command() {
     let el = Element::new(NodeTag::Container)
-        .with(
-            &crate::props::IMAGE_TEXTURE,
-            PropertyValue::static_str("t"),
-        )
+        .with(&crate::props::IMAGE_TEXTURE, PropertyValue::static_str("t"))
         .with(&crate::props::CORNER_RADIUS, PropertyValue::float(14.0));
     let list = render_of(&el, UNIT);
     let radii: Vec<f32> = list
@@ -274,8 +269,8 @@ fn corner_radius_reaches_image_command() {
 /// 图像的 `radius` 缺省是 0（直角），且**与矩形共用同一个属性**。
 #[test]
 fn image_default_corner_radius_is_zero() {
-    let el =
-        Element::new(NodeTag::Container).with(&crate::props::IMAGE_TEXTURE, PropertyValue::static_str("t"));
+    let el = Element::new(NodeTag::Container)
+        .with(&crate::props::IMAGE_TEXTURE, PropertyValue::static_str("t"));
     let list = render_of(&el, UNIT);
     let radii: Vec<f32> = list
         .iter()
@@ -295,8 +290,7 @@ fn image_wins_when_both_image_and_icon_are_set() {
         .with(
             &crate::props::IMAGE_TEXTURE,
             PropertyValue::static_str("some-texture"),
-        )
-;
+        );
     let list = render_of(&el, UNIT);
     assert_eq!(
         path_triangles(&list),
@@ -323,8 +317,10 @@ fn icon_colour_comes_from_icon_color_and_is_not_inherited() {
     let colored = Element::new(NodeTag::Container)
         .with_key("root")
         .with(&crate::props::ICON_NAME, PropertyValue::static_str("gear"))
-        .with(&crate::props::ICON_COLOR, PropertyValue::color(Color::rgb(1.0, 0.0, 0.0)))
-;
+        .with(
+            &crate::props::ICON_COLOR,
+            PropertyValue::color(Color::rgb(1.0, 0.0, 0.0)),
+        );
     let list = render_of(&colored, UNIT);
     let fill = list
         .iter()
@@ -406,10 +402,16 @@ fn path_vertex_count_is_always_a_multiple_of_three() {
 /// 它们各自只画一个图标、一个矩形，恰好落在同一个键上。
 #[test]
 fn cache_must_not_confuse_icons_at_different_positions() {
-    let a = path_bounds(&render_of(&icon_el("gear"), Rect::new(0.0, 0.0, 20.0, 20.0)))
-        .expect("第一个齿轮");
-    let b = path_bounds(&render_of(&icon_el("gear"), Rect::new(40.0, 0.0, 20.0, 20.0)))
-        .expect("第二个齿轮");
+    let a = path_bounds(&render_of(
+        &icon_el("gear"),
+        Rect::new(0.0, 0.0, 20.0, 20.0),
+    ))
+    .expect("第一个齿轮");
+    let b = path_bounds(&render_of(
+        &icon_el("gear"),
+        Rect::new(40.0, 0.0, 20.0, 20.0),
+    ))
+    .expect("第二个齿轮");
 
     // 尺寸相同是前提 —— 这条只管"位置进了键没有"。
     assert!(
@@ -423,10 +425,12 @@ fn cache_must_not_confuse_icons_at_different_positions() {
         let mut lo = f32::MAX;
         let mut hi = f32::MIN;
         for item in list.iter() {
-            let Command::Path { vertices, .. } = &item.command else { continue };
+            let Command::Path { vertices, .. } = &item.command else {
+                continue;
+            };
             // `vertices` 是 `Arc<[Vertex]>`；`Arc` 的 `Deref` 到切片，但不为迭代器实现，
-        // 所以要显式 `.iter()`。
-        for v in vertices.iter() {
+            // 所以要显式 `.iter()`。
+            for v in vertices.iter() {
                 lo = lo.min(v.position.x);
                 hi = hi.max(v.position.x);
             }
@@ -473,10 +477,12 @@ fn cache_hit_is_byte_identical_to_first_computation() {
         let list = render_of(&icon_el("gear"), bounds);
         let mut all = Vec::new();
         for item in list.iter() {
-            let Command::Path { vertices, .. } = &item.command else { continue };
+            let Command::Path { vertices, .. } = &item.command else {
+                continue;
+            };
             // `vertices` 是 `Arc<[Vertex]>`；`Arc` 的 `Deref` 到切片，但不为迭代器实现，
-        // 所以要显式 `.iter()`。
-        for v in vertices.iter() {
+            // 所以要显式 `.iter()`。
+            for v in vertices.iter() {
                 all.push([v.position.x, v.position.y]);
             }
         }

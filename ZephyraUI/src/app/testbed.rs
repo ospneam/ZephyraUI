@@ -23,11 +23,11 @@
 //! 且 CPU 路也能看到真像素），uv 样张保留（GPU 路验证裁剪，CPU 路画占位）。
 //! 这是**等价换测法**，不是降级：被测的是裁剪逻辑，不是"用哪张纹理"。
 
+use zephyra_core::core::UvRect;
 use zephyra_core::element::Element;
 use zephyra_core::id::NodeTag;
 use zephyra_core::property::PropertyValue;
 use zephyra_core::props;
-use zephyra_core::core::UvRect;
 
 use super::Gallery;
 use crate::controls::text_label;
@@ -121,7 +121,10 @@ fn crop_row() -> Element {
                             &props::IMAGE_SRC,
                             PropertyValue::uv_rect(UvRect::new(c.1, c.2, c.3, c.4)),
                         )
-                        .with(&props::IMAGE_TEXTURE, PropertyValue::static_str(TESTBED_TEXTURE))
+                        .with(
+                            &props::IMAGE_TEXTURE,
+                            PropertyValue::static_str(TESTBED_TEXTURE),
+                        )
                         .style("testbed-crop")
                 })
                 .collect::<Vec<Element>>(),
@@ -142,20 +145,37 @@ fn effects() -> Element {
 
     // 三趟 σ2 ≈ 一趟 σ2.83 —— 过渡带明显更宽，这就是判据。
     let triple = FilterChain::new([
-        Filter::Blur { sigma_x: 2.0, sigma_y: 2.0 },
-        Filter::Blur { sigma_x: 2.0, sigma_y: 2.0 },
-        Filter::Blur { sigma_x: 2.0, sigma_y: 2.0 },
+        Filter::Blur {
+            sigma_x: 2.0,
+            sigma_y: 2.0,
+        },
+        Filter::Blur {
+            sigma_x: 2.0,
+            sigma_y: 2.0,
+        },
+        Filter::Blur {
+            sigma_x: 2.0,
+            sigma_y: 2.0,
+        },
     ]);
 
     let row = Element::new(NodeTag::Container)
         .with_key("effects-row")
         .style("testbed-effects")
         .with_children([
-            swatch("fx-none", "control", FilterChain::none(), BlendMode::SrcOver),
+            swatch(
+                "fx-none",
+                "control",
+                FilterChain::none(),
+                BlendMode::SrcOver,
+            ),
             swatch(
                 "fx-blur",
                 "accent",
-                FilterChain::single(Filter::Blur { sigma_x: 3.0, sigma_y: 3.0 }),
+                FilterChain::single(Filter::Blur {
+                    sigma_x: 3.0,
+                    sigma_y: 3.0,
+                }),
                 BlendMode::SrcOver,
             ),
             swatch(
@@ -169,7 +189,12 @@ fn effects() -> Element {
                 BlendMode::SrcOver,
             ),
             swatch("fx-triple", "accent", triple, BlendMode::SrcOver),
-            swatch("fx-multiply", "warm", FilterChain::none(), BlendMode::Multiply),
+            swatch(
+                "fx-multiply",
+                "warm",
+                FilterChain::none(),
+                BlendMode::Multiply,
+            ),
             swatch("fx-screen", "warm", FilterChain::none(), BlendMode::Screen),
         ]);
     row
@@ -218,7 +243,9 @@ fn status_line(g: &Gallery) -> Element {
         .style("testbed-status")
         .with_children([
             // 焦点环样式的圆点。
-            Element::new(NodeTag::Container).with_key("focus").style("dot"),
+            Element::new(NodeTag::Container)
+                .with_key("focus")
+                .style("dot"),
             Element::new(NodeTag::Text)
                 .with_key("hovered")
                 .with(&props::TEXT, PropertyValue::static_str(caption(g)))

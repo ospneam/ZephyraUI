@@ -73,12 +73,7 @@ impl CpuCanvas {
     /// alpha 通道 `ONE/INV_SRC_ALPHA`。抄错这条会让半透明区域整体偏暗 ——
     /// 那时看起来像「颜色不对」，而根因在参考实现自己身上，是最难查的一类。
     fn blend(&mut self, x: i32, y: i32, color: [f32; 4], coverage: f32) {
-        if coverage <= 0.0
-            || x < 0
-            || y < 0
-            || x >= self.width as i32
-            || y >= self.height as i32
-        {
+        if coverage <= 0.0 || x < 0 || y < 0 || x >= self.width as i32 || y >= self.height as i32 {
             return;
         }
         let a = (color[3] * coverage).clamp(0.0, 1.0);
@@ -125,7 +120,11 @@ impl CpuCanvas {
                 (0.5 - ndc[1] * 0.5) * self.height as f32,
             )
         };
-        let p = [to_px(chunk[0].position), to_px(chunk[1].position), to_px(chunk[2].position)];
+        let p = [
+            to_px(chunk[0].position),
+            to_px(chunk[1].position),
+            to_px(chunk[2].position),
+        ];
         // 有向面积：0 = 退化（三点共线），`expand` 已经滤过一次，这里是兜底。
         let area = (p[1].0 - p[0].0) * (p[2].1 - p[0].1) - (p[2].0 - p[0].0) * (p[1].1 - p[0].1);
         if area.abs() < 1e-9 {
@@ -155,7 +154,11 @@ impl CpuCanvas {
                             px as f32 + (sx as f32 + 0.5) / SUBS as f32,
                             py as f32 + (sy as f32 + 0.5) / SUBS as f32,
                         );
-                        let e = [edge(p[1], p[2], s), edge(p[2], p[0], s), edge(p[0], p[1], s)];
+                        let e = [
+                            edge(p[1], p[2], s),
+                            edge(p[2], p[0], s),
+                            edge(p[0], p[1], s),
+                        ];
                         if (e[0] >= 0.0 && e[1] >= 0.0 && e[2] >= 0.0)
                             || (e[0] <= 0.0 && e[1] <= 0.0 && e[2] <= 0.0)
                         {
@@ -338,10 +341,7 @@ fn sdf_coverage(local: [f32; 2], half_size: [f32; 2], corner: [f32; 2]) -> f32 {
     // 什么单位这里就是什么单位），所以两者相减不需要任何换算。
     let p = [local[0] - half_size[0], local[1] - half_size[1]];
     let r = corner[0].min(half_size[0].min(half_size[1]));
-    let q = [
-        p[0].abs() - half_size[0] + r,
-        p[1].abs() - half_size[1] + r,
-    ];
+    let q = [p[0].abs() - half_size[0] + r, p[1].abs() - half_size[1] + r];
     let (mx, my) = (q[0].max(0.0), q[1].max(0.0));
     let d = (mx * mx + my * my).sqrt() + q[0].max(q[1]).min(0.0) - r;
 

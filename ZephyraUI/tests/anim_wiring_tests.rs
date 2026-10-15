@@ -22,8 +22,8 @@
 
 use zephyra_fx::{InputState, View};
 
-use zephyra_ui::app::Gallery;
 use zephyra_ui::anim;
+use zephyra_ui::app::Gallery;
 
 /// 一帧的间隔（ms）。取 16.0 而不是真实帧时间：断言要可复现。
 const DT: f32 = 16.0;
@@ -114,7 +114,10 @@ fn no_class_name_after_tier_exhausted() {
     g.route = "settings";
     // 先吃掉"路由变了"那一帧。
     let first = run_frames(&mut g, 1);
-    assert_eq!(first[0], None, "进度 0 时不该发分类名（`anim::step(0) == None`）");
+    assert_eq!(
+        first[0], None,
+        "进度 0 时不该发分类名（`anim::step(0) == None`）"
+    );
 
     // 一路跑到放完。
     let mut seen: Vec<Option<&'static str>> = Vec::new();
@@ -132,14 +135,8 @@ fn no_class_name_after_tier_exhausted() {
         "放完之后必须撤掉分类名（否则页面停在 `.enter-8` 的 0.91 不透明度上）：{seen:?}"
     );
     // 中间应当至少出现过 `enter-1` 与 `enter-8`。
-    assert!(
-        seen.contains(&Some("enter-1")),
-        "应出现 enter-1：{seen:?}"
-    );
-    assert!(
-        seen.contains(&Some("enter-8")),
-        "应出现 enter-8：{seen:?}"
-    );
+    assert!(seen.contains(&Some("enter-1")), "应出现 enter-1：{seen:?}");
+    assert!(seen.contains(&Some("enter-8")), "应出现 enter-8：{seen:?}");
 }
 
 /// 8 档一个都不能少，且档位单调不减。

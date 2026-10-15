@@ -240,7 +240,12 @@ pub const AREA_EPS: f32 = 1e-9;
 /// 容差用**相对**判据：绝对 `1e-6` 在 24 单位viewBox 下是 4e-8 比例，在
 /// 4096 像素的大图上却是 2.5e-10 —— 后者会被浮点噪声轻易越过。
 fn same_point(a: Point, b: Point) -> bool {
-    let scale = a.x.abs().max(a.y.abs()).max(b.x.abs()).max(b.y.abs()).max(1.0);
+    let scale =
+        a.x.abs()
+            .max(a.y.abs())
+            .max(b.x.abs())
+            .max(b.y.abs())
+            .max(1.0);
     let eps = POINT_EPS * scale;
     (a.x - b.x).abs() <= eps && (a.y - b.y).abs() <= eps
 }

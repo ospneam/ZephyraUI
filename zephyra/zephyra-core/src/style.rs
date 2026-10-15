@@ -54,9 +54,7 @@ impl Node {
     pub fn text_style(&self, ctx: Context<'_>) -> crate::text::TextStyle {
         crate::text::TextStyle {
             // 字号缺省不写死：0.0 会被宿主当成"非法"，由宿主回落到自己的默认字号。
-            size: self
-                .number_or(&crate::props::TEXT_SIZE, 14.0, ctx)
-                .max(1.0),
+            size: self.number_or(&crate::props::TEXT_SIZE, 14.0, ctx).max(1.0),
             weight: 400,
             family: None,
             line_height: {
@@ -76,7 +74,7 @@ impl Node {
     ///
     /// 测量走 [`crate::text::TextEngine`] —— 核心不认识字体，所以这一步必然要
     /// 问宿主。没有引擎时返回 `None`，于是文本节点按零尺寸参与布局。
-pub fn text_size(&self, ctx: Context<'_>) -> Option<crate::core::Size> {
+    pub fn text_size(&self, ctx: Context<'_>) -> Option<crate::core::Size> {
         self.shape(ctx).map(|s| s.size)
     }
 
@@ -124,10 +122,10 @@ pub fn text_size(&self, ctx: Context<'_>) -> Option<crate::core::Size> {
     /// 不含它 —— 名字只在本次降级里用来查图标集，之后就被丢掉。所以借用是安全的。
     pub fn icon_name(&self, ctx: Context<'_>) -> Option<std::borrow::Cow<'_, str>> {
         match self.value(&crate::props::ICON_NAME, ctx).as_deref()? {
-            PropertyValue::StaticStr(s) if !s.is_empty() => {
-                Some(std::borrow::Cow::Borrowed(*s))
+            PropertyValue::StaticStr(s) if !s.is_empty() => Some(std::borrow::Cow::Borrowed(*s)),
+            PropertyValue::Str(s) if !s.is_empty() => {
+                Some(std::borrow::Cow::Owned(s.as_ref().to_owned()))
             }
-            PropertyValue::Str(s) if !s.is_empty() => Some(std::borrow::Cow::Owned(s.as_ref().to_owned())),
             _ => None,
         }
     }

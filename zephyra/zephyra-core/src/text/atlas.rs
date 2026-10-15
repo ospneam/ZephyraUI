@@ -178,12 +178,7 @@ pub trait EvictionPolicy {
     ///
     /// 返回 `None` 表示淘汰到空都放不下 —— 那只有"单个字形比整张图集还大"或
     /// "图集小到离谱"两种情况。
-    fn evict(
-        &self,
-        entries: &[EntryInfo],
-        need: (u32, u32),
-        side: u32,
-    ) -> Option<EvictPlan>;
+    fn evict(&self, entries: &[EntryInfo], need: (u32, u32), side: u32) -> Option<EvictPlan>;
 }
 
 /// 默认策略：丢最久未用的，重排时高度降序。
@@ -218,12 +213,7 @@ fn occupies_canvas(e: &EntryInfo) -> bool {
 }
 
 impl EvictionPolicy for LruEviction {
-    fn evict(
-        &self,
-        entries: &[EntryInfo],
-        need: (u32, u32),
-        side: u32,
-    ) -> Option<EvictPlan> {
+    fn evict(&self, entries: &[EntryInfo], need: (u32, u32), side: u32) -> Option<EvictPlan> {
         if need.0 == 0 || need.1 == 0 {
             // 空白字形不占画布，永远放得下 —— 不该触发任何淘汰。
             return Some(EvictPlan {
@@ -571,10 +561,7 @@ impl GlyphAtlas {
         };
 
         // 真正要占的地方：位图 + 四周一圈透明留白。
-        let padded = (
-            r.width + 2 * GLYPH_PADDING,
-            r.height + 2 * GLYPH_PADDING,
-        );
+        let padded = (r.width + 2 * GLYPH_PADDING, r.height + 2 * GLYPH_PADDING);
         let (x, y) = match self.shelf.place(padded.0, padded.1) {
             Some(p) => p,
             None => {
@@ -593,12 +580,7 @@ impl GlyphAtlas {
         self.revision += 1;
 
         let entry = AtlasGlyph {
-            uv: Rect::new(
-                ink_x as f32,
-                ink_y as f32,
-                r.width as f32,
-                r.height as f32,
-            ),
+            uv: Rect::new(ink_x as f32, ink_y as f32, r.width as f32, r.height as f32),
             size: Size::new(r.width as f32, r.height as f32),
             offset: r.offset,
         };
@@ -678,11 +660,7 @@ impl GlyphAtlas {
     /// 代价是白丢一批本该淘汰的字形（它们仍在图集里），而收益是画布永不被清空 ——
     /// 后者的症状是"所有文字突然消失，且没有任何报错"。
     fn make_room(&mut self, need_w: u32, need_h: u32) -> Option<()> {
-        let entries: Vec<EntryInfo> = self
-            .glyphs
-            .iter()
-            .map(|(k, e)| e.info(*k))
-            .collect();
+        let entries: Vec<EntryInfo> = self.glyphs.iter().map(|(k, e)| e.info(*k)).collect();
         let plan = self.policy.evict(&entries, (need_w, need_h), self.side)?;
 
         // 复验：用策略给的**同一个顺序**干跑一次。
@@ -826,7 +804,11 @@ impl GlyphAtlas {
     /// 诊断信息。
     pub fn stats(&self) -> AtlasStats {
         AtlasStats {
-            glyphs: self.glyphs.values().filter(|e| e.glyph.size.width > 0.0).count(),
+            glyphs: self
+                .glyphs
+                .values()
+                .filter(|e| e.glyph.size.width > 0.0)
+                .count(),
             // 下一个**新行**的顶部。当前行部分占用的横向空间不计入 ——
             // `used_px` 的语义是"已提交的行高度之和"，与横向填充率无关。
             used_px: self.shelf.y + self.shelf.row_h,

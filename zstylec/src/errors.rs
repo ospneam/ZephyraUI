@@ -53,11 +53,7 @@ pub struct Error {
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(
-            f,
-               "error: {} {}",
-            self.file, self.at
-        )?;
+        writeln!(f, "error: {} {}", self.file, self.at)?;
         // 原文那一行。行首加行号，出错的字符下面盖 `^`。
         writeln!(f, "    {}", self.line_text)?;
         let pad = " ".repeat(self.at.col.saturating_sub(1));
@@ -150,10 +146,10 @@ mod tests {
         };
         let s = e.to_string();
         assert!(s.contains("button.zstyle"), "must contain the file name");
-           assert!(s.contains("line 3, col 12"), "must give line and col");
+        assert!(s.contains("line 3, col 12"), "must give line and col");
         assert!(s.contains("^^^^^^^^^^^^^"), "must have the caret");
-           assert!(s.contains("closest matches:"), "must list candidates");
+        assert!(s.contains("closest matches:"), "must list candidates");
         assert!(s.contains("corner-radius"), "candidates must appear");
-           assert!(s.contains("hint:"), "must give a hint");
+        assert!(s.contains("hint:"), "must give a hint");
     }
 }

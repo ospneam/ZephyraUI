@@ -4,19 +4,19 @@
 //! 节点无条件画同一条硬编码 Quad，于是"属性系统 / 主题 / 绘制"三个模块各自存在
 //! 却从未接在一起。这里第一次让它们串起来跑，并断言串起来之后的可见行为。
 
-use crate::core::{Color, Rect, UvRect};
-use crate::layout::{AlignItems, Direction, MainAxisAlign};
-use crate::paint::{Command, Layer};
-use crate::property::PropertyValue;
-use crate::props;
-use crate::theme::{roles, Theme};
 use crate::context::Context;
+use crate::core::{Color, Rect, UvRect};
 use crate::diff::diff;
 use crate::element::Element;
 use crate::id::NodeTag;
 use crate::layout::layout;
+use crate::layout::{AlignItems, Direction, MainAxisAlign};
 use crate::node::Node;
 use crate::paint::render;
+use crate::paint::{Command, Layer};
+use crate::property::PropertyValue;
+use crate::props;
+use crate::theme::{roles, Theme};
 
 /// 这批测试大多只关心几何与绘制，用深色主题即可；需要对比主题的用例自建 `Context`。
 fn ctx() -> Context<'static> {
@@ -53,7 +53,10 @@ fn laid_out(element: &Element, bounds: Rect) -> Node {
 /// 所以凡是断言某个节点自身尺寸的用例，都必须把它放进容器里当子项。
 fn as_child(element: Element, bounds: Rect) -> Node {
     let root = Element::new(NodeTag::Container)
-        .with(&props::DIRECTION, PropertyValue::direction(Direction::Horizontal))
+        .with(
+            &props::DIRECTION,
+            PropertyValue::direction(Direction::Horizontal),
+        )
         .with_children([element]);
     let mut wrapper = Node::from_element(&root);
     layout(&mut wrapper, bounds, ctx());
@@ -89,8 +92,10 @@ fn image_src(node: &Node) -> Vec<Option<UvRect>> {
 
 /// 带一张纹理的图像节点。`src = None` 表示"用默认（整张）"。
 fn image(src: Option<UvRect>) -> Element {
-    let mut e = Element::new(NodeTag::Image)
-        .with(&props::IMAGE_TEXTURE, PropertyValue::static_str("atlas.png"));
+    let mut e = Element::new(NodeTag::Image).with(
+        &props::IMAGE_TEXTURE,
+        PropertyValue::static_str("atlas.png"),
+    );
     if let Some(uv) = src {
         e = e.with(&props::IMAGE_SRC, PropertyValue::uv_rect(uv));
     }
@@ -102,9 +107,15 @@ fn image(src: Option<UvRect>) -> Element {
 #[test]
 fn horizontal_stack_places_children_left_to_right_with_spacing() {
     let e = Element::new(NodeTag::Container)
-        .with(&props::DIRECTION, PropertyValue::direction(Direction::Horizontal))
+        .with(
+            &props::DIRECTION,
+            PropertyValue::direction(Direction::Horizontal),
+        )
         .with(&props::SPACING, PropertyValue::float(10.0))
-        .with_children([sized(40.0, 20.0)(Element::new(NodeTag::Control)), sized(40.0, 20.0)(Element::new(NodeTag::Control))]);
+        .with_children([
+            sized(40.0, 20.0)(Element::new(NodeTag::Control)),
+            sized(40.0, 20.0)(Element::new(NodeTag::Control)),
+        ]);
     let node = laid_out(&e, Rect::new(0.0, 0.0, 500.0, 100.0));
 
     let rects: Vec<Rect> = node.children().iter().map(|c| c.rect()).collect();
@@ -120,9 +131,15 @@ fn horizontal_stack_places_children_left_to_right_with_spacing() {
 #[test]
 fn vertical_stack_stacks_downward() {
     let e = Element::new(NodeTag::Container)
-        .with(&props::DIRECTION, PropertyValue::direction(Direction::Vertical))
+        .with(
+            &props::DIRECTION,
+            PropertyValue::direction(Direction::Vertical),
+        )
         .with(&props::SPACING, PropertyValue::float(4.0))
-        .with_children([sized(30.0, 10.0)(Element::new(NodeTag::Control)), sized(30.0, 10.0)(Element::new(NodeTag::Control))]);
+        .with_children([
+            sized(30.0, 10.0)(Element::new(NodeTag::Control)),
+            sized(30.0, 10.0)(Element::new(NodeTag::Control)),
+        ]);
     let node = laid_out(&e, Rect::new(0.0, 0.0, 100.0, 400.0));
 
     let rects: Vec<Rect> = node.children().iter().map(|c| c.rect()).collect();
@@ -156,7 +173,10 @@ fn the_root_always_fills_the_bounds_it_is_given() {
 fn content_never_exceeds_the_constraint_maximum() {
     // 子项要 1000px 宽，但只给了 200 ——必须被裁到 200，否则一个长列表会把窗口顶出去。
     let e = Element::new(NodeTag::Container)
-        .with(&props::DIRECTION, PropertyValue::direction(Direction::Horizontal))
+        .with(
+            &props::DIRECTION,
+            PropertyValue::direction(Direction::Horizontal),
+        )
         .with_children([sized(1000.0, 10.0)(Element::new(NodeTag::Control))]);
     let node = laid_out(&e, Rect::new(0.0, 0.0, 200.0, 100.0));
     assert!(
@@ -181,8 +201,14 @@ fn padding_insets_the_children() {
 fn cross_align_stretch_makes_children_fill_the_cross_axis() {
     // 工具栏的"组容器撑满高度"就是这个。
     let e = Element::new(NodeTag::Container)
-        .with(&props::DIRECTION, PropertyValue::direction(Direction::Horizontal))
-        .with(&props::CROSS_ALIGN, PropertyValue::cross_align(AlignItems::Stretch))
+        .with(
+            &props::DIRECTION,
+            PropertyValue::direction(Direction::Horizontal),
+        )
+        .with(
+            &props::CROSS_ALIGN,
+            PropertyValue::cross_align(AlignItems::Stretch),
+        )
         .with_children([sized(40.0, 10.0)(Element::new(NodeTag::Control))]);
     let node = laid_out(&e, Rect::new(0.0, 0.0, 300.0, 56.0));
     assert_eq!(
@@ -195,8 +221,14 @@ fn cross_align_stretch_makes_children_fill_the_cross_axis() {
 #[test]
 fn cross_align_center_centers_on_the_cross_axis() {
     let e = Element::new(NodeTag::Container)
-        .with(&props::DIRECTION, PropertyValue::direction(Direction::Horizontal))
-        .with(&props::CROSS_ALIGN, PropertyValue::cross_align(AlignItems::Center))
+        .with(
+            &props::DIRECTION,
+            PropertyValue::direction(Direction::Horizontal),
+        )
+        .with(
+            &props::CROSS_ALIGN,
+            PropertyValue::cross_align(AlignItems::Center),
+        )
         .with_children([sized(40.0, 10.0)(Element::new(NodeTag::Control))]);
     let node = laid_out(&e, Rect::new(0.0, 0.0, 300.0, 50.0));
     assert_eq!(node.children()[0].rect().y, 20.0, "(50-10)/2 = 20");
@@ -205,9 +237,18 @@ fn cross_align_center_centers_on_the_cross_axis() {
 #[test]
 fn main_align_space_between_pushes_the_ends_apart() {
     let e = Element::new(NodeTag::Container)
-        .with(&props::DIRECTION, PropertyValue::direction(Direction::Horizontal))
-        .with(&props::MAIN_ALIGN, PropertyValue::main_align(MainAxisAlign::SpaceBetween))
-        .with_children([sized(40.0, 10.0)(Element::new(NodeTag::Control)), sized(40.0, 10.0)(Element::new(NodeTag::Control))]);
+        .with(
+            &props::DIRECTION,
+            PropertyValue::direction(Direction::Horizontal),
+        )
+        .with(
+            &props::MAIN_ALIGN,
+            PropertyValue::main_align(MainAxisAlign::SpaceBetween),
+        )
+        .with_children([
+            sized(40.0, 10.0)(Element::new(NodeTag::Control)),
+            sized(40.0, 10.0)(Element::new(NodeTag::Control)),
+        ]);
     let node = laid_out(&e, Rect::new(0.0, 0.0, 200.0, 20.0));
     let rects: Vec<Rect> = node.children().iter().map(|c| c.rect()).collect();
     assert_eq!(rects[0].x, 0.0);
@@ -219,12 +260,15 @@ fn collapsed_children_take_no_space_at_all() {
     // 与"宽度为 0"不同：折叠的子项连间距都不占。工具栏在图片模式下少一个按钮时，
     // 间距必须跟着消失，而不是留下一个 10px 的空洞。
     let e = Element::new(NodeTag::Container)
-        .with(&props::DIRECTION, PropertyValue::direction(Direction::Horizontal))
+        .with(
+            &props::DIRECTION,
+            PropertyValue::direction(Direction::Horizontal),
+        )
         .with(&props::SPACING, PropertyValue::float(10.0))
         .with_children([
             sized(40.0, 20.0)(Element::new(NodeTag::Control)),
             sized(40.0, 20.0)(
-                Element::new(NodeTag::Control).with(&props::COLLAPSED, PropertyValue::bool(true))
+                Element::new(NodeTag::Control).with(&props::COLLAPSED, PropertyValue::bool(true)),
             ),
             sized(40.0, 20.0)(Element::new(NodeTag::Control)),
         ]);
@@ -254,7 +298,10 @@ fn a_zero_width_sibling_still_occupies_its_spacing() {
     // 与上一条严格对照：折叠（不占位）与"宽度为 0"（仍占一个间距位）是两件事。
     // 混淆二者会让"隐藏一项"在界面上留下一个空洞。
     let e = Element::new(NodeTag::Container)
-        .with(&props::DIRECTION, PropertyValue::direction(Direction::Horizontal))
+        .with(
+            &props::DIRECTION,
+            PropertyValue::direction(Direction::Horizontal),
+        )
         .with(&props::SPACING, PropertyValue::float(10.0))
         .with_children([
             sized(40.0, 20.0)(Element::new(NodeTag::Control)),
@@ -267,18 +314,17 @@ fn a_zero_width_sibling_still_occupies_its_spacing() {
     // 折叠那条的对应值是 50 与（无第 3 项），差别正来自"零宽仍占位"。
     assert_eq!(node.children()[1].rect().width, 0.0);
     assert_eq!(node.children()[1].rect().x, 50.0);
-    assert_eq!(
-        node.children()[2].rect().x,
-        60.0,
-        "零宽项仍占一个间距位"
-    );
+    assert_eq!(node.children()[2].rect().x, 60.0, "零宽项仍占一个间距位");
 }
 
 // ============================== 绘制 ==============================
 
 #[test]
 fn transparent_nodes_produce_no_commands() {
-    let node = laid_out(&Element::new(NodeTag::Container), Rect::new(0.0, 0.0, 10.0, 10.0));
+    let node = laid_out(
+        &Element::new(NodeTag::Container),
+        Rect::new(0.0, 0.0, 10.0, 10.0),
+    );
     assert!(
         commands(&node).is_empty(),
         "全透明的树应产出空 DisplayList——否则一层空容器会挡住下面的一切"
@@ -298,7 +344,10 @@ fn background_becomes_a_quad_at_the_node_rect() {
 fn border_rides_along_with_the_fill_in_one_command() {
     // 描边复用 Quad 的 stroke 字段，于是"圆角矩形 = 一个 draw call"才成立。
     let e = sized(40.0, 40.0)(quad(Color::rgb(0.1, 0.1, 0.1)))
-        .with(&props::BORDER_COLOR, PropertyValue::color(Color::rgb(1.0, 1.0, 1.0)))
+        .with(
+            &props::BORDER_COLOR,
+            PropertyValue::color(Color::rgb(1.0, 1.0, 1.0)),
+        )
         .with(&props::BORDER_WIDTH, PropertyValue::float(2.0));
     let node = laid_out(&e, Rect::new(0.0, 0.0, 200.0, 200.0));
     let cmds = commands(&node);
@@ -351,12 +400,10 @@ fn image_becomes_an_image_command_centred_in_its_node() {
 
 #[test]
 fn image_fills_the_node_when_no_size_is_given() {
-    let e = sized(50.0, 25.0)(
-        Element::new(NodeTag::Image).with(
-            &props::IMAGE_TEXTURE,
-            PropertyValue::static_str("atlas/pen"),
-        ),
-    );
+    let e = sized(50.0, 25.0)(Element::new(NodeTag::Image).with(
+        &props::IMAGE_TEXTURE,
+        PropertyValue::static_str("atlas/pen"),
+    ));
     let node = as_child(e, Rect::new(0.0, 0.0, 200.0, 200.0));
     match &commands(&node)[0] {
         Command::Image { dst, .. } => assert_eq!(*dst, Rect::new(0.0, 0.0, 50.0, 25.0)),
@@ -368,7 +415,10 @@ fn image_fills_the_node_when_no_size_is_given() {
 fn children_render_after_their_parents_background() {
     // 顺序即 z 序：父背景必须在子内容之前，否则子内容被自己的父盖住。
     let e = Element::new(NodeTag::Container)
-        .with(&props::BACKGROUND, PropertyValue::color(Color::rgb(0.2, 0.2, 0.2)))
+        .with(
+            &props::BACKGROUND,
+            PropertyValue::color(Color::rgb(0.2, 0.2, 0.2)),
+        )
         .with_children([quad(Color::rgb(0.9, 0.9, 0.9))]);
     let node = laid_out(&e, Rect::new(0.0, 0.0, 100.0, 100.0));
 
@@ -389,8 +439,7 @@ fn children_render_after_their_parents_background() {
 
 #[test]
 fn layer_property_selects_the_compositing_layer() {
-    let e = quad(Color::rgb(0.2, 0.2, 0.2))
-        .with(&props::LAYER, PropertyValue::layer(Layer::Popup));
+    let e = quad(Color::rgb(0.2, 0.2, 0.2)).with(&props::LAYER, PropertyValue::layer(Layer::Popup));
     let node = laid_out(&e, Rect::new(0.0, 0.0, 50.0, 50.0));
     let mut list = crate::paint::DisplayList::new();
     render(&node, ctx(), &mut list);
@@ -405,10 +454,10 @@ fn resource_keys_resolve_to_concrete_theme_values() {
     // "切主题"链路的最小闭环：属性存键 → 按当前主题解析 → 驱动绘制。
     let theme = Theme::dark();
     let ctx = Context::new(&theme);
-    let e = sized(10.0, 10.0)(
-        Element::new(NodeTag::Container)
-            .with(&props::BACKGROUND, PropertyValue::Resource(roles::SURFACE.into())),
-    );
+    let e = sized(10.0, 10.0)(Element::new(NodeTag::Container).with(
+        &props::BACKGROUND,
+        PropertyValue::Resource(roles::SURFACE.into()),
+    ));
     let node = Node::from_element(&e);
 
     let resolved = node.background(ctx);
@@ -427,8 +476,10 @@ fn resolving_a_resource_key_leaves_the_key_in_place() {
     // 视觉空操作，而代码读起来完全正常。
     let theme = Theme::dark();
     let ctx = Context::new(&theme);
-    let e = Element::new(NodeTag::Container)
-        .with(&props::BACKGROUND, PropertyValue::Resource(roles::SURFACE.into()));
+    let e = Element::new(NodeTag::Container).with(
+        &props::BACKGROUND,
+        PropertyValue::Resource(roles::SURFACE.into()),
+    );
     let node = Node::from_element(&e);
 
     let _ = node.background(ctx);
@@ -445,8 +496,10 @@ fn resolving_a_resource_key_leaves_the_key_in_place() {
 fn switching_theme_changes_the_resolved_color() {
     let dark_theme = Theme::dark();
     let light_theme = Theme::light();
-    let e = Element::new(NodeTag::Container)
-        .with(&props::BACKGROUND, PropertyValue::Resource(roles::SURFACE.into()));
+    let e = Element::new(NodeTag::Container).with(
+        &props::BACKGROUND,
+        PropertyValue::Resource(roles::SURFACE.into()),
+    );
     let node = Node::from_element(&e);
 
     // 同一棵树、同一份属性，只换上下文里的主题引用。
@@ -464,8 +517,10 @@ fn a_literal_value_ignores_the_theme_entirely() {
     // 字面量不该被主题影响——否则"局部覆盖"这个能力不存在。
     let dark_theme = Theme::dark();
     let light_theme = Theme::light();
-    let e = Element::new(NodeTag::Container)
-        .with(&props::BACKGROUND, PropertyValue::color(Color::rgb(0.3, 0.6, 0.9)));
+    let e = Element::new(NodeTag::Container).with(
+        &props::BACKGROUND,
+        PropertyValue::color(Color::rgb(0.3, 0.6, 0.9)),
+    );
     let node = Node::from_element(&e);
     assert_eq!(
         node.background(Context::new(&dark_theme)),
@@ -487,7 +542,8 @@ fn unknown_resource_key_resolves_to_nothing_rather_than_black() {
         "无法解析的资源键应读作透明（不画背景），而不是黑色"
     );
     assert!(
-        node.value(&props::BACKGROUND, Context::new(&theme)).is_none(),
+        node.value(&props::BACKGROUND, Context::new(&theme))
+            .is_none(),
         "无法解析的资源键应显式报告为 None，让调用方能发现它"
     );
 }
@@ -497,10 +553,10 @@ fn spacing_resources_resolve_to_dip_values() {
     // 间距也是资源，验证 resource_value 不只认颜色。
     let theme = Theme::dark();
     let ctx = Context::new(&theme);
-    let node = Node::from_element(
-        &Element::new(NodeTag::Container)
-            .with(&props::SPACING, PropertyValue::Resource("spacing.small".into())),
-    );
+    let node = Node::from_element(&Element::new(NodeTag::Container).with(
+        &props::SPACING,
+        PropertyValue::Resource("spacing.small".into()),
+    ));
     assert!((node.stack(ctx).spacing - crate::core::Spacing::Small.dip()).abs() < 1e-6);
 }
 
@@ -515,8 +571,10 @@ fn changing_a_paint_property_does_not_force_relayout() {
     layout(&mut node, Rect::new(0.0, 0.0, 100.0, 100.0), ctx());
     crate::node::clear_dirty(&mut node);
 
-    let changed = Element::new(NodeTag::Container)
-        .with(&props::BACKGROUND, PropertyValue::color(Color::rgb(0.9, 0.0, 0.0)));
+    let changed = Element::new(NodeTag::Container).with(
+        &props::BACKGROUND,
+        PropertyValue::color(Color::rgb(0.9, 0.0, 0.0)),
+    );
     let stats = diff(&mut node, &changed);
     assert!(stats.dirtied > 0, "颜色变了应被检出");
     assert!(
@@ -529,18 +587,30 @@ fn changing_a_paint_property_does_not_force_relayout() {
 #[test]
 fn changing_spacing_forces_relayout() {
     let before = Element::new(NodeTag::Container)
-        .with(&props::DIRECTION, PropertyValue::direction(Direction::Horizontal))
+        .with(
+            &props::DIRECTION,
+            PropertyValue::direction(Direction::Horizontal),
+        )
         .with(&props::SPACING, PropertyValue::float(2.0))
-        .with_children([sized(20.0, 20.0)(Element::new(NodeTag::Control)), sized(20.0, 20.0)(Element::new(NodeTag::Control))]);
+        .with_children([
+            sized(20.0, 20.0)(Element::new(NodeTag::Control)),
+            sized(20.0, 20.0)(Element::new(NodeTag::Control)),
+        ]);
     let mut node = Node::from_element(&before);
     crate::node::clear_dirty(&mut node);
     layout(&mut node, Rect::new(0.0, 0.0, 200.0, 100.0), ctx());
     crate::node::clear_dirty(&mut node);
 
     let after = Element::new(NodeTag::Container)
-        .with(&props::DIRECTION, PropertyValue::direction(Direction::Horizontal))
+        .with(
+            &props::DIRECTION,
+            PropertyValue::direction(Direction::Horizontal),
+        )
         .with(&props::SPACING, PropertyValue::float(20.0))
-        .with_children([sized(20.0, 20.0)(Element::new(NodeTag::Control)), sized(20.0, 20.0)(Element::new(NodeTag::Control))]);
+        .with_children([
+            sized(20.0, 20.0)(Element::new(NodeTag::Control)),
+            sized(20.0, 20.0)(Element::new(NodeTag::Control)),
+        ]);
     let stats = diff(&mut node, &after);
     assert!(
         stats.needs_layout(),
@@ -552,9 +622,15 @@ fn changing_spacing_forces_relayout() {
 fn layout_is_stable_across_repeated_calls() {
     // 同一输入两次布局必须产出完全相同的矩形——否则"静止时零重建"无从谈起。
     let e = Element::new(NodeTag::Container)
-        .with(&props::DIRECTION, PropertyValue::direction(Direction::Horizontal))
+        .with(
+            &props::DIRECTION,
+            PropertyValue::direction(Direction::Horizontal),
+        )
         .with(&props::SPACING, PropertyValue::float(7.0))
-        .with_children([sized(33.0, 11.0)(Element::new(NodeTag::Control)), sized(17.0, 29.0)(Element::new(NodeTag::Control))]);
+        .with_children([
+            sized(33.0, 11.0)(Element::new(NodeTag::Control)),
+            sized(17.0, 29.0)(Element::new(NodeTag::Control)),
+        ]);
 
     let mut a = Node::from_element(&e);
     layout(&mut a, Rect::new(0.0, 0.0, 300.0, 100.0), ctx());
@@ -582,10 +658,7 @@ fn an_image_without_src_uses_the_whole_texture() {
 #[test]
 fn an_explicit_full_rect_also_reads_as_uncropped() {
     // 显式写整张 uv 与不写必须落到同一个结果——否则"设与不设"会画出不同画面。
-    let node = laid_out(
-        &image(Some(UvRect::FULL)),
-        Rect::new(0.0, 0.0, 64.0, 64.0),
-    );
+    let node = laid_out(&image(Some(UvRect::FULL)), Rect::new(0.0, 0.0, 64.0, 64.0));
     assert_eq!(image_src(&node), vec![None]);
 }
 
@@ -652,21 +725,30 @@ fn src_does_not_affect_layout() {
 fn nested_containers_each_get_their_own_rect() {
     // 工具栏的真实形状：根 Row 里三个组容器，组里各有按钮。
     let button = || {
-        sized(40.0, 40.0)(
-            Element::new(NodeTag::Control)
-                .with(&props::BACKGROUND, PropertyValue::color(Color::rgb(0.3, 0.3, 0.3))),
-        )
+        sized(40.0, 40.0)(Element::new(NodeTag::Control).with(
+            &props::BACKGROUND,
+            PropertyValue::color(Color::rgb(0.3, 0.3, 0.3)),
+        ))
     };
     let group = |children: Vec<Element>| {
         Element::new(NodeTag::Container)
-            .with(&props::DIRECTION, PropertyValue::direction(Direction::Horizontal))
+            .with(
+                &props::DIRECTION,
+                PropertyValue::direction(Direction::Horizontal),
+            )
             .with(&props::SPACING, PropertyValue::float(2.0))
             .with(&props::PADDING, PropertyValue::float(10.0))
-            .with(&props::BACKGROUND, PropertyValue::color(Color::rgb(0.1, 0.1, 0.1)))
+            .with(
+                &props::BACKGROUND,
+                PropertyValue::color(Color::rgb(0.1, 0.1, 0.1)),
+            )
             .with_children(children)
     };
     let e = Element::new(NodeTag::Container)
-        .with(&props::DIRECTION, PropertyValue::direction(Direction::Horizontal))
+        .with(
+            &props::DIRECTION,
+            PropertyValue::direction(Direction::Horizontal),
+        )
         .with(&props::SPACING, PropertyValue::float(8.0))
         .with_children([group(vec![button(), button()]), group(vec![button()])]);
 

@@ -68,11 +68,9 @@ impl fmt::Debug for WindowHandle {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // 句柄是裸地址：调试输出里直接打地址没有信息量，还会在日志里指向
         // 可能已释放的窗口。只报"有/无"。
-        f.debug_tuple("WindowHandle").field(&if self.is_valid() {
-            &"valid"
-        } else {
-            &"null"
-        }).finish()
+        f.debug_tuple("WindowHandle")
+            .field(&if self.is_valid() { &"valid" } else { &"null" })
+            .finish()
     }
 }
 

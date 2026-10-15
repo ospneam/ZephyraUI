@@ -26,8 +26,8 @@ use zephyra_platform::{
 
 mod live_resize;
 pub use live_resize::{
-    install as install_live_resize, restore as restore_live_resize, set_render_hook,
-    wm_size_count, wm_size_skipped, LiveResizeError, RenderHook,
+    install as install_live_resize, restore as restore_live_resize, set_render_hook, wm_size_count,
+    wm_size_skipped, LiveResizeError, RenderHook,
 };
 mod locale;
 mod version;
@@ -150,7 +150,11 @@ fn apply(window: WindowHandle, chrome: WindowChrome) -> ApplyOutcome {
     let dark = if caps.dark_mode {
         // DWMWA_USE_IMMERSIVE_DARK_MODE = 20，BOOL。
         // 文档：Use with DwmSetWindowAttribute；取值类型 BOOL。
-        set_dwm(hwnd, DwmAttr::UseImmersiveDarkMode, &BOOL32(chrome.dark as u32))
+        set_dwm(
+            hwnd,
+            DwmAttr::UseImmersiveDarkMode,
+            &BOOL32(chrome.dark as u32),
+        )
     } else {
         false
     };
@@ -168,17 +172,13 @@ fn apply(window: WindowHandle, chrome: WindowChrome) -> ApplyOutcome {
 
     let caption_color = match chrome.caption_color {
         // DWMWA_CAPTION_COLOR = 35，COLORREF。
-        Some(rgb) if caps.caption_color => {
-            set_dwm(hwnd, DwmAttr::CaptionColor, &COLORREF(rgb))
-        }
+        Some(rgb) if caps.caption_color => set_dwm(hwnd, DwmAttr::CaptionColor, &COLORREF(rgb)),
         _ => false,
     };
 
     let border_color = match chrome.border_color {
         // DWMWA_BORDER_COLOR = 34，COLORREF。
-        Some(rgb) if caps.border_color => {
-            set_dwm(hwnd, DwmAttr::BorderColor, &COLORREF(rgb))
-        }
+        Some(rgb) if caps.border_color => set_dwm(hwnd, DwmAttr::BorderColor, &COLORREF(rgb)),
         _ => false,
     };
 
@@ -242,8 +242,9 @@ enum DwmAttr {
 /// 取值来自 `DWM_SYSTEMBACKDROP_TYPE`（`docs/win/02-mica.md` §1），用
 /// `windows` crate 的**强类型常量**，不写裸数字。
 #[cfg(windows)]
-fn dwm_backdrop(kind: BackdropKind) -> Option<windows::Win32::Graphics::Dwm::DWM_SYSTEMBACKDROP_TYPE>
-{
+fn dwm_backdrop(
+    kind: BackdropKind,
+) -> Option<windows::Win32::Graphics::Dwm::DWM_SYSTEMBACKDROP_TYPE> {
     use windows::Win32::Graphics::Dwm::{
         DWMSBT_MAINWINDOW, DWMSBT_NONE, DWMSBT_TABBEDWINDOW, DWMSBT_TRANSIENTWINDOW,
     };
@@ -294,13 +295,7 @@ fn set_dwm(
     // - `attr` 全部来自文档枚举（见 [`DwmAttr`]），值类型与文档一致
     //   （BOOL / COLORREF / 枚举 int32）。
     unsafe {
-        DwmSetWindowAttribute(
-            hwnd,
-            attr.raw(),
-            bytes.as_ptr().cast(),
-            bytes.len() as u32,
-        )
-        .is_ok()
+        DwmSetWindowAttribute(hwnd, attr.raw(), bytes.as_ptr().cast(), bytes.len() as u32).is_ok()
     }
 }
 
@@ -403,8 +398,8 @@ fn sys_theme() -> Option<ThemePreference> {
             0x0000,
         ];
         static VALUE_NAME: &[u16] = &[
-            0x0041, 0x0070, 0x0070, 0x0073, 0x0055, 0x0073, 0x0065, 0x004c, 0x0069, 0x0067,
-            0x0068, 0x0074, 0x0054, 0x0068, 0x0065, 0x006d, 0x0065, // AppsUseLightTheme
+            0x0041, 0x0070, 0x0070, 0x0073, 0x0055, 0x0073, 0x0065, 0x004c, 0x0069, 0x0067, 0x0068,
+            0x0074, 0x0054, 0x0068, 0x0065, 0x006d, 0x0065, // AppsUseLightTheme
             0x0000,
         ];
         // SAFETY: 键路径与值名都是 NUL 结尾的 `static` 缓冲（生命周期 = 整个进程），

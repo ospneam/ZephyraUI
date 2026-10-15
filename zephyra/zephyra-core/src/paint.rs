@@ -585,7 +585,13 @@ impl PaintState {
     }
 }
 
-fn render_rec(node: &Node, ctx: Context<'_>, order: &mut u32, out: &mut DisplayList, state: PaintState) {
+fn render_rec(
+    node: &Node,
+    ctx: Context<'_>,
+    order: &mut u32,
+    out: &mut DisplayList,
+    state: PaintState,
+) {
     if node.is_collapsed(ctx) {
         return;
     }
@@ -708,7 +714,11 @@ fn render_rec(node: &Node, ctx: Context<'_>, order: &mut u32, out: &mut DisplayL
     if let Some(mut cmd) = text_command(node, ctx, offset, opacity) {
         // `text_command` 造出命令后才补效果 —— 那时它已不再关心 style，只管排版。
         match &mut cmd {
-            Command::Text { filter: f, blend: b, .. } => {
+            Command::Text {
+                filter: f,
+                blend: b,
+                ..
+            } => {
                 *f = filter.clone();
                 *b = blend;
             }
@@ -1007,9 +1017,7 @@ fn icon_command(
     // viewBox → 节点矩形的映射，展平之后立刻套上（三角化只关心最终坐标）。
     let contours: Vec<crate::geom::Contour> = flat
         .into_iter()
-        .map(|c| {
-            crate::geom::Contour::new(c.points().iter().copied().map(map).collect())
-        })
+        .map(|c| crate::geom::Contour::new(c.points().iter().copied().map(map).collect()))
         .filter(|c| c.is_fillable())
         .collect();
     if contours.is_empty() {

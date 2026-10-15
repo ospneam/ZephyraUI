@@ -54,7 +54,9 @@ use zephyra_core::layout::Direction;
 use zephyra_core::property::PropertyValue;
 use zephyra_core::props;
 use zephyra_fx::cpu_only::CpuHost;
-use zephyra_winit_d3d12::{surface::Offscreen, Gpu, InputState, Renderer, TextureTable, View, Z_INDEX};
+use zephyra_winit_d3d12::{
+    surface::Offscreen, Gpu, InputState, Renderer, TextureTable, View, Z_INDEX,
+};
 
 /// 目标边长。
 const SIZE: u32 = 256;
@@ -70,7 +72,14 @@ const INK_RATIO_MAX: f64 = 0.03;
 /// 参考图上「内容像素」占比的下限 —— 低于它说明这套判据没有判别力。
 const COVERAGE_MIN: f64 = 0.08;
 /// 演示文字。中英文各一半：中文走全角步进、拉丁走窄步进，两条排版路径都要覆盖。
-const LINES: [&str; 6] = ["字形 MMMM", "核心 IIII", "WWWW 渲染", "契约 XXXX", "稳态 YYYY", "ZephyraUI 0000"];
+const LINES: [&str; 6] = [
+    "字形 MMMM",
+    "核心 IIII",
+    "WWWW 渲染",
+    "契约 XXXX",
+    "稳态 YYYY",
+    "ZephyraUI 0000",
+];
 
 /// 一屏文字：字足够大、足够多。
 ///
@@ -124,7 +133,10 @@ fn glyph_quads(batch: &zephyra_fx::quad::QuadBatch) -> usize {
 /// 字形在 CPU 与 GPU 上必须画出同一张图。
 #[test]
 #[ignore = "需要真 GPU。手动跑：--ignored --nocapture"]
-#[allow(non_snake_case, reason = "测试名用中文描述被测行为，比逐字翻成英文好读")]
+#[allow(
+    non_snake_case,
+    reason = "测试名用中文描述被测行为，比逐字翻成英文好读"
+)]
 fn glyphs_on_gpu_match_cpu_reference_image() {
     let view = TextHeavy { lines: &LINES };
     // ---- 参考侧：CPU ----
@@ -258,7 +270,11 @@ fn glyphs_on_gpu_match_cpu_reference_image() {
             );
         };
         // 两侧的通道序**不同**：CPU 画布是 RGBA，DXGI 读回是 BGRA。
-        dump("glyph-cpu", &canvas.pixels, zephyra_fx::pixels::ChannelOrder::Rgba);
+        dump(
+            "glyph-cpu",
+            &canvas.pixels,
+            zephyra_fx::pixels::ChannelOrder::Rgba,
+        );
         dump("glyph-gpu", &pixels, zephyra_fx::pixels::ChannelOrder::Bgra);
         eprintln!(
             "[glyph] 已把两侧落盘到 {}/glyph-{{cpu,gpu}}.bmp",

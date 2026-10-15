@@ -45,20 +45,18 @@ pub fn parse(
             Ok(PropertyValue::float(*value as f64 as f32))
         }
         // ---- 颜色：`#rgb` / `#rrggbb` / `#rrggbbaa` ----
-        Token::IDHash(h) | Token::Hash(h) => {
-            match parse_hex_color(h) {
-                Some(c) => Ok(PropertyValue::color(c)),
-                None => {
-                    p.errors.push(unexpected(
-                        p,
-                        line,
-                        &format!("'#{h}' is not a valid color."),
-                        &["#rgb", "#rrggbb", "#rrggbbaa"],
-                    ));
-                    Err(())
-                }
+        Token::IDHash(h) | Token::Hash(h) => match parse_hex_color(h) {
+            Some(c) => Ok(PropertyValue::color(c)),
+            None => {
+                p.errors.push(unexpected(
+                    p,
+                    line,
+                    &format!("'#{h}' is not a valid color."),
+                    &["#rgb", "#rrggbb", "#rrggbbaa"],
+                ));
+                Err(())
             }
-        }
+        },
         // ---- 命名颜色 / 关键字 ----
         Token::Ident(word) => {
             let w = word.as_ref();
@@ -91,7 +89,7 @@ pub fn parse(
             p.errors.push(unexpected(
                 p,
                 line,
-                   &format!("unexpected here: {other:?}"),
+                &format!("unexpected here: {other:?}"),
                 &["number", "#rrggbb", "@token", "transparent"],
             ));
             Err(())
@@ -156,7 +154,8 @@ fn enum_value(key: &PropertyKey, word: &str) -> Option<PropertyValue> {
 }
 
 /// 造一条「值不对」的错误。
-fn unexpected(p: &ZstyleParser<'_>, line: u32, msg: &str, want: &[&str]) -> Error {    Error {
+fn unexpected(p: &ZstyleParser<'_>, line: u32, msg: &str, want: &[&str]) -> Error {
+    Error {
         file: p.file.to_string(),
         line_text: p.line_text(line),
         at: crate::errors::Pos { line, col: 1 },

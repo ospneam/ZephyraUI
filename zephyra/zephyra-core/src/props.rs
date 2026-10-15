@@ -27,26 +27,19 @@ pub static WIDTH: PropertyKey = PropertyKey::layout("Width", PropertyValue::floa
 pub static HEIGHT: PropertyKey = PropertyKey::layout("Height", PropertyValue::float(f32::NAN));
 
 /// 堆叠方向（仅对容器生效）。
-pub static DIRECTION: PropertyKey = PropertyKey::layout(
-    "Direction",
-    PropertyValue::direction(Direction::Horizontal),
-);
+pub static DIRECTION: PropertyKey =
+    PropertyKey::layout("Direction", PropertyValue::direction(Direction::Horizontal));
 
 /// 主轴上相邻子项的间距。
-pub static SPACING: PropertyKey =
-    PropertyKey::layout("Spacing", PropertyValue::float(0.0));
+pub static SPACING: PropertyKey = PropertyKey::layout("Spacing", PropertyValue::float(0.0));
 
 /// 交叉轴对齐（由容器统一施加给子项）。
-pub static CROSS_ALIGN: PropertyKey = PropertyKey::layout(
-    "CrossAlign",
-    PropertyValue::cross_align(AlignItems::Start),
-);
+pub static CROSS_ALIGN: PropertyKey =
+    PropertyKey::layout("CrossAlign", PropertyValue::cross_align(AlignItems::Start));
 
 /// 主轴对齐（由容器施加给整组子项）。
-pub static MAIN_ALIGN: PropertyKey = PropertyKey::layout(
-    "MainAlign",
-    PropertyValue::main_align(MainAxisAlign::Start),
-);
+pub static MAIN_ALIGN: PropertyKey =
+    PropertyKey::layout("MainAlign", PropertyValue::main_align(MainAxisAlign::Start));
 
 /// 子节点参与布局（`false` 时不占位、不绘制）。
 ///
@@ -57,20 +50,22 @@ pub static COLLAPSED: PropertyKey = PropertyKey::layout("Collapsed", PropertyVal
 // ============================== 外观 ==============================
 
 /// 背景填充色。`Color(0,0,0,0)` 表示不画背景。
-pub static BACKGROUND: PropertyKey =
-    PropertyKey::new("Background", PropertyValue::color(Color::rgba(0.0, 0.0, 0.0, 0.0)));
+pub static BACKGROUND: PropertyKey = PropertyKey::new(
+    "Background",
+    PropertyValue::color(Color::rgba(0.0, 0.0, 0.0, 0.0)),
+);
 
 /// 圆角半径（DIP）。
-pub static CORNER_RADIUS: PropertyKey =
-    PropertyKey::new("CornerRadius", PropertyValue::float(0.0));
+pub static CORNER_RADIUS: PropertyKey = PropertyKey::new("CornerRadius", PropertyValue::float(0.0));
 
 /// 描边颜色。alpha 为 0 表示不描边。
-pub static BORDER_COLOR: PropertyKey =
-    PropertyKey::new("BorderColor", PropertyValue::color(Color::rgba(0.0, 0.0, 0.0, 0.0)));
+pub static BORDER_COLOR: PropertyKey = PropertyKey::new(
+    "BorderColor",
+    PropertyValue::color(Color::rgba(0.0, 0.0, 0.0, 0.0)),
+);
 
 /// 描边宽度（DIP）。
-pub static BORDER_WIDTH: PropertyKey =
-    PropertyKey::new("BorderWidth", PropertyValue::float(0.0));
+pub static BORDER_WIDTH: PropertyKey = PropertyKey::new("BorderWidth", PropertyValue::float(0.0));
 
 /// 整体不透明度。
 pub static OPACITY: PropertyKey = PropertyKey::inheritable("Opacity", PropertyValue::float(1.0));
@@ -92,10 +87,8 @@ pub static TRANSLATE_X: PropertyKey = PropertyKey::new("TranslateX", PropertyVal
 pub static TRANSLATE_Y: PropertyKey = PropertyKey::new("TranslateY", PropertyValue::float(0.0));
 
 /// 合成层（决定后端如何切 render pass）。
-pub static LAYER: PropertyKey = PropertyKey::new(
-    "Layer",
-    PropertyValue::layer(crate::paint::Layer::Content),
-);
+pub static LAYER: PropertyKey =
+    PropertyKey::new("Layer", PropertyValue::layer(crate::paint::Layer::Content));
 
 // ============================== 效果 ==============================
 
@@ -104,8 +97,10 @@ pub static LAYER: PropertyKey = PropertyKey::new(
 /// 不可继承：滤镜是**节点自身的**外观属性，父节点设了模糊不该让整棵子树跟着
 /// 糊掉（那正是"可继承"会带来灾难的地方 —— `Opacity` 可继承是因为半透明叠加
 /// 天然正确，模糊叠加则完全不成立）。
-pub static FILTER: PropertyKey =
-    PropertyKey::new("Filter", PropertyValue::filter(crate::filter::FilterChain::none()));
+pub static FILTER: PropertyKey = PropertyKey::new(
+    "Filter",
+    PropertyValue::filter(crate::filter::FilterChain::none()),
+);
 
 /// 混合模式（默认 [`crate::filter::BlendMode::SrcOver`]，即普通 alpha 合成）。
 ///
@@ -119,14 +114,11 @@ pub static BLEND_MODE: PropertyKey = PropertyKey::new(
 // ============================== 内容 ==============================
 
 /// 图像纹理句柄（宿主定义）。
-pub static IMAGE_TEXTURE: PropertyKey = PropertyKey::new(
-    "Image.Texture",
-    PropertyValue::static_str(""),
-);
+pub static IMAGE_TEXTURE: PropertyKey =
+    PropertyKey::new("Image.Texture", PropertyValue::static_str(""));
 
 /// 图像绘制矩形（DIP 边长，正方形）。`-1` 表示"撑满节点矩形"。
-pub static IMAGE_SIZE: PropertyKey =
-    PropertyKey::new("Image.Size", PropertyValue::float(-1.0));
+pub static IMAGE_SIZE: PropertyKey = PropertyKey::new("Image.Size", PropertyValue::float(-1.0));
 
 /// 图像着色（乘算）。
 pub static IMAGE_TINT: PropertyKey = PropertyKey::new(
@@ -166,15 +158,16 @@ pub static IMAGE_SRC: PropertyKey =
 /// 同时设两者时**图像胜出**（它不需要三角化，且已有位图缓存）。理由见
 /// [`crate::paint::render_rec`] 里那段的说明 —— 那是一条真会被写出来的歧义，
 /// 所以判据写在这里而不留在实现里。
-pub static ICON_NAME: PropertyKey =
-    PropertyKey::new("Icon.Name", PropertyValue::static_str(""));
+pub static ICON_NAME: PropertyKey = PropertyKey::new("Icon.Name", PropertyValue::static_str(""));
 
 /// 图标填充色。
 ///
 /// 不继承：图标的颜色由**该图标所在的控件**决定（按钮前景色），而继承链上的
 /// 文本色未必是同一个语义（同一行里按钮与标签常常不同色）。
-pub static ICON_COLOR: PropertyKey =
-    PropertyKey::new("Icon.Color", PropertyValue::color(Color::rgb(1.0, 1.0, 1.0)));
+pub static ICON_COLOR: PropertyKey = PropertyKey::new(
+    "Icon.Color",
+    PropertyValue::color(Color::rgb(1.0, 1.0, 1.0)),
+);
 
 // ============================== 文本 ==============================
 
@@ -189,8 +182,10 @@ pub static TEXT_SIZE: PropertyKey =
     PropertyKey::layout("Text.Size", PropertyValue::float(f32::NAN));
 
 /// 文本颜色（继承）。
-pub static TEXT_COLOR: PropertyKey =
-    PropertyKey::inheritable("Text.Color", PropertyValue::color(Color::rgb(1.0, 1.0, 1.0)));
+pub static TEXT_COLOR: PropertyKey = PropertyKey::inheritable(
+    "Text.Color",
+    PropertyValue::color(Color::rgb(1.0, 1.0, 1.0)),
+);
 
 /// 文本最大宽度（DIP），用于断行。`NaN` 表示不限宽（不换行）。
 pub static TEXT_MAX_WIDTH: PropertyKey =
@@ -232,7 +227,10 @@ pub fn control_fill_role(selected: bool, disabled: bool, hovered: bool) -> &'sta
 }
 
 /// 便捷构造：带圆角与背景的填充节点描述。
-pub fn fill_props(background: PropertyValue, radius: f32) -> Vec<(&'static PropertyKey, PropertyValue)> {
+pub fn fill_props(
+    background: PropertyValue,
+    radius: f32,
+) -> Vec<(&'static PropertyKey, PropertyValue)> {
     vec![
         (&BACKGROUND, background),
         (&CORNER_RADIUS, PropertyValue::float(radius)),
@@ -240,7 +238,10 @@ pub fn fill_props(background: PropertyValue, radius: f32) -> Vec<(&'static Prope
 }
 
 /// 便捷构造：描边。
-pub fn border_props(color: PropertyValue, width: f32) -> Vec<(&'static PropertyKey, PropertyValue)> {
+pub fn border_props(
+    color: PropertyValue,
+    width: f32,
+) -> Vec<(&'static PropertyKey, PropertyValue)> {
     vec![
         (&BORDER_COLOR, color),
         (&BORDER_WIDTH, PropertyValue::float(width)),

@@ -42,7 +42,10 @@ impl Viewport {
     /// 内容 → 屏幕。
     #[inline]
     pub fn canvas_to_screen(&self, x: f32, y: f32) -> (f32, f32) {
-        (x * self.scale + self.offset_x, y * self.scale + self.offset_y)
+        (
+            x * self.scale + self.offset_x,
+            y * self.scale + self.offset_y,
+        )
     }
 
     /// 捏合锚点换算：屏幕中点 → 内容锚点。

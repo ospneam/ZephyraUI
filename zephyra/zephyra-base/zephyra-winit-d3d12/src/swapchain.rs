@@ -85,7 +85,6 @@ pub const BUFFER_COUNT: u32 = 2;
 /// 而不是冒"也许某设备不支持"的风险换一个理论上更好的 8×。
 pub const MSAA_SAMPLES: u32 = 4;
 
-
 /// **运行期**的 MSAA 采样数：ZEPHYRA_MSAA=0 关掉多重采样，否则用 MSAA_SAMPLES。
 ///
 /// # 为什么要能关（这是给 GPU 挂掉时做二分用的开关，不是产品选项）
@@ -248,7 +247,8 @@ pub struct Swapchain {
     ///
     /// 见 [`Swapchain::present`] 里那段 Chromium 依据。拖动期间这里会被反复置位
     /// —— 那正是这个标志存在的理由。
-    first_present_flush: bool,    /// 连续两次 `Present` 之后仍未收到新尺寸的次数。
+    first_present_flush: bool,
+    /// 连续两次 `Present` 之后仍未收到新尺寸的次数。
     ///
     /// `Present` 失败时最常见的两个码是 `DXGI_ERROR_DEVICE_REMOVED`（设备没了）与
     /// `DXGI_ERROR_DEVICE_RESET`（设备重建中，**可恢复**）。后者应当重试而不是
@@ -326,7 +326,7 @@ impl Swapchain {
         let buffer_count = desc.buffer_count.max(BUFFER_COUNT);
         let mut me = Self {
             chain3,
-            chain1,            // ⚠ 容量 +1：后缓冲用 `0..buffer_count`，MSAA 用第 `buffer_count` 号。
+            chain1, // ⚠ 容量 +1：后缓冲用 `0..buffer_count`，MSAA 用第 `buffer_count` 号。
             heap: DescriptorHeap::new_rtv(&gpu.device, buffer_count + 1)?,
             msaa: None,
             samples,
@@ -404,13 +404,7 @@ impl Swapchain {
         };
         let dst = self.buffer(self.back_buffer_index())?;
         unsafe {
-            list.ResolveSubresource(
-                &dst,
-                0,
-                &m.tex,
-                0,
-                self.format(),
-            );
+            list.ResolveSubresource(&dst, 0, &m.tex, 0, self.format());
         }
         Ok(())
     }
@@ -458,7 +452,10 @@ impl Swapchain {
     ///
     /// flip model 下后缓冲常态就在 `PRESENT`，**不转就画不上去** —— 而 D3D12
     /// 不为此报任何错。所以这个转换必须由调用方在每帧开头显式做。
-    pub fn barrier_to_render_target(&self, list: &ID3D12GraphicsCommandList) -> Result<(), SurfaceError> {
+    pub fn barrier_to_render_target(
+        &self,
+        list: &ID3D12GraphicsCommandList,
+    ) -> Result<(), SurfaceError> {
         let res = self.buffer(self.back_buffer_index())?;
         Gpu::barrier(
             list,
@@ -483,19 +480,15 @@ impl Swapchain {
 
     /// 第 `i` 个后缓冲的资源。
     pub fn buffer(&self, i: u32) -> Result<ID3D12Resource, SurfaceError> {
-        self.views
-            .get(i as usize)
-            .cloned()
-            .ok_or_else(|| SurfaceError::new(
+        self.views.get(i as usize).cloned().ok_or_else(|| {
+            SurfaceError::new(
                 "后缓冲下标越界",
                 windows::core::Error::new(
                     windows::Win32::Foundation::E_POINTER,
-                    format!(
-                        "要第 {i} 个，交换链只有 {} 个",
-                        self.views.len()
-                    ),
+                    format!("要第 {i} 个，交换链只有 {} 个", self.views.len()),
                 ),
-            ))
+            )
+        })
     }
 
     /// 交换链本体（挂进 DComp 视觉树时用）。
@@ -605,7 +598,6 @@ impl Swapchain {
         self.device_dead.is_some()
     }
 
-
     /// 设备不可用的原因码（`DXGI_ERROR_DEVICE_HUNG` 等）。`None` = 设备还活着。
     pub fn device_dead_reason(&self) -> Option<u32> {
         self.device_dead
@@ -650,11 +642,7 @@ impl Swapchain {
     ///
     /// `(0, 0)` 是最小化状态，直接忽略（DXGI 拒绝 `ResizeBuffers(0,0,…)`，而这里
     /// 根本不调它，但内容尺寸为 0 时视口无意义）。
-    pub fn resize(
-        &mut self,
-        gpu: &Gpu,
-        size: (u32, u32),
-    ) -> Result<(), SurfaceError> {
+    pub fn resize(&mut self, gpu: &Gpu, size: (u32, u32)) -> Result<(), SurfaceError> {
         self.was_recreated = false;
         if size.0 == 0 || size.1 == 0 {
             return Ok(());

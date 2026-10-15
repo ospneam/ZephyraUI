@@ -64,8 +64,9 @@ fn glyph_atlas_contains_correct_glyphs() {
         "排版 `{SAMPLE}` 后一个字形都没有 —— 这台机器上没有可用字体"
     );
 
-    let (_handle, quads) = TextRender::glyph_quads(&mut stack, &shaped, Point::new(0.0, 40.0), &style)
-        .expect("有字体时 glyph_quads 不该返回 None");
+    let (_handle, quads) =
+        TextRender::glyph_quads(&mut stack, &shaped, Point::new(0.0, 40.0), &style)
+            .expect("有字体时 glyph_quads 不该返回 None");
     assert!(!quads.is_empty(), "没有产出任何字形四边形");
 
     let atlas = stack.atlas();
@@ -93,7 +94,10 @@ fn glyph_atlas_contains_correct_glyphs() {
         assert!(
             q.uv.x >= 0.0 && q.uv.y >= 0.0 && q.uv.right() <= 1.0 && q.uv.bottom() <= 1.0,
             "第 {i} 个字形的 uv ({}, {})-({}, {}) 越界",
-            q.uv.x, q.uv.y, q.uv.right(), q.uv.bottom()
+            q.uv.x,
+            q.uv.y,
+            q.uv.right(),
+            q.uv.bottom()
         );
     }
 

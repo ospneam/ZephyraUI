@@ -105,11 +105,9 @@ impl DcompCompositor {
                         }
                     },
                 },
-                None => {
-                    DCompositionCreateDevice2::<_, IDCompositionDevice>(
-                        None::<&windows::core::IUnknown>,
-                    )?
-                }
+                None => DCompositionCreateDevice2::<_, IDCompositionDevice>(
+                    None::<&windows::core::IUnknown>,
+                )?,
             }
         };
         Self::build_tree(hwnd, device)
@@ -145,7 +143,10 @@ impl DcompCompositor {
     /// 别去猜文档。
     pub fn add_visual_on_top(&mut self) -> windows::core::Result<VisualSlot> {
         let visual = unsafe { self.device.CreateVisual() }?;
-        unsafe { self.root.AddVisual(&visual, true, None::<&IDCompositionVisual>) }?;
+        unsafe {
+            self.root
+                .AddVisual(&visual, true, None::<&IDCompositionVisual>)
+        }?;
         self.visual_count += 1;
         Ok(VisualSlot {
             visual,

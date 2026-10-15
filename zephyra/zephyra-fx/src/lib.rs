@@ -48,8 +48,8 @@
 #![cfg_attr(windows, allow(dead_code))]
 
 pub mod cpu_only;
-pub mod geom_clip;
 pub mod cpu_raster;
+pub mod geom_clip;
 pub mod offscreen;
 pub mod pixels;
 pub mod quad;
@@ -72,8 +72,10 @@ pub use texture::TextureNames;
 /// 变成另一个键，而症状是「z-index 不生效」且没有任何编译或运行错误。
 ///
 /// 放这里就没有这份风险：两个后端共用一个定义。
-pub static Z_INDEX: zephyra_core::property::PropertyKey =
-    zephyra_core::property::PropertyKey::new("ZIndex", zephyra_core::property::PropertyValue::int(0));
+pub static Z_INDEX: zephyra_core::property::PropertyKey = zephyra_core::property::PropertyKey::new(
+    "ZIndex",
+    zephyra_core::property::PropertyValue::int(0),
+);
 
 /// 应用的文本引擎 —— 本 crate 唯一支持的字体来源。
 ///

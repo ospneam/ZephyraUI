@@ -20,7 +20,16 @@ pub fn check_box(
     hovered: bool,
     pressed: bool,
 ) -> Element {
-    check_like(key, label, "check-box", "check-indicator", "check-mark", checked, hovered, pressed)
+    check_like(
+        key,
+        label,
+        "check-box",
+        "check-indicator",
+        "check-mark",
+        checked,
+        hovered,
+        pressed,
+    )
 }
 
 /// 单选按钮（RinUI RadioButton）：指示器是圆（radius 99），标记是小圆点。
@@ -78,7 +87,9 @@ fn check_like(
     if checked {
         indicator_el = indicator_el.style("checked");
     }
-    let mut mark_el = Element::new(NodeTag::Container).with_key("mark").style(mark);
+    let mut mark_el = Element::new(NodeTag::Container)
+        .with_key("mark")
+        .style(mark);
     if checked {
         mark_el = mark_el.style("checked");
     }
@@ -113,9 +124,7 @@ pub fn toggle_switch(key: &'static str, checked: bool, hovered: bool, pressed: b
     if checked {
         track = track.style("on");
     }
-    el.with_children([track.with_children([
-        Element::new(NodeTag::Container)
-            .with_key("knob")
-            .style("switch-knob"),
-    ])])
+    el.with_children([track.with_children([Element::new(NodeTag::Container)
+        .with_key("knob")
+        .style("switch-knob")])])
 }

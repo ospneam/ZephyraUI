@@ -6,18 +6,18 @@
 //!
 //! 每条断言都对应一个"曾经会静默出错"的具体故障。
 
+use crate::context::Context;
 use crate::core::{Color, Point, Rect};
+use crate::element::Element;
 use crate::hit::{hit_test, HitResult, HitTestRequest, MAX_DEPTH};
+use crate::id::NodeTag;
 use crate::input::pointer::{PointerEvent, PointerPhase, PointerSource};
 use crate::input::router::{InputRouter, RoutedEvent, RoutedEvents};
+use crate::layout::layout;
 use crate::layout::Direction;
+use crate::node::Node;
 use crate::property::PropertyValue;
 use crate::props;
-use crate::context::Context;
-use crate::element::Element;
-use crate::id::NodeTag;
-use crate::layout::layout;
-use crate::node::Node;
 
 // ============================== 辅助 ==============================
 
@@ -32,14 +32,20 @@ fn hitbox(id: &'static str, w: f32, h: f32) -> Element {
         .with(&props::INTERACTIVE, PropertyValue::bool(true))
         .with(&props::WIDTH, PropertyValue::float(w))
         .with(&props::HEIGHT, PropertyValue::float(h))
-        .with(&props::BACKGROUND, PropertyValue::color(Color::rgb(0.2, 0.2, 0.2)))
+        .with(
+            &props::BACKGROUND,
+            PropertyValue::color(Color::rgb(0.2, 0.2, 0.2)),
+        )
 }
 
 /// 一行两个按钮：a 在左（0..40），b 在右（40..80）。
 fn two_buttons() -> Element {
     Element::new(NodeTag::Container)
         .with_key("root")
-        .with(&props::DIRECTION, PropertyValue::direction(Direction::Horizontal))
+        .with(
+            &props::DIRECTION,
+            PropertyValue::direction(Direction::Horizontal),
+        )
         .with(&props::SPACING, PropertyValue::float(0.0))
         .with(&props::PADDING, PropertyValue::float(0.0))
         .with_children([hitbox("a", 40.0, 40.0), hitbox("b", 40.0, 40.0)])
@@ -89,9 +95,7 @@ fn an_interactive_node_is_actually_reported_as_interactive() {
     // ⇒ 所有控件都收不到点击，而且没有任何报错。
     let node = tree(&two_buttons());
     let result = hit_at(&node, 10.0, 10.0);
-    let target = result
-        .target()
-        .expect("落在可交互按钮上时必须有 target");
+    let target = result.target().expect("落在可交互按钮上时必须有 target");
     assert_eq!(target.id, crate::id::ElementKey::Name("a".into()));
     assert!(target.interactive);
 }
@@ -134,7 +138,10 @@ fn a_container_is_on_the_path_but_is_not_the_target() {
     // 事件冒泡需要容器的矩形，但处理目标必须是按钮本身。
     let node = tree(&two_buttons());
     let result = hit_at(&node, 10.0, 10.0);
-    assert!(result.path.iter().any(|n| n.id == crate::id::ElementKey::Name("root".into())));
+    assert!(result
+        .path
+        .iter()
+        .any(|n| n.id == crate::id::ElementKey::Name("root".into())));
     assert_eq!(
         result.target().map(|n| &n.id),
         Some(&crate::id::ElementKey::Name("a".into()))
@@ -167,7 +174,10 @@ fn a_point_in_the_root_but_on_no_control_has_no_target() {
     let mut out = HitResult::default();
     assert!(hit_test(
         &node,
-        HitTestRequest { point: Point::new(10.0, 10.0), ignore_above: None },
+        HitTestRequest {
+            point: Point::new(10.0, 10.0),
+            ignore_above: None
+        },
         ctx(),
         &mut out
     ));
@@ -175,7 +185,10 @@ fn a_point_in_the_root_but_on_no_control_has_no_target() {
 
     assert!(hit_test(
         &node,
-        HitTestRequest { point: Point::new(150.0, 150.0), ignore_above: None },
+        HitTestRequest {
+            point: Point::new(150.0, 150.0),
+            ignore_above: None
+        },
         ctx(),
         &mut out
     ));
@@ -192,7 +205,10 @@ fn a_point_outside_the_root_leaves_the_buffer_empty() {
     let mut out = HitResult::default();
     assert!(!hit_test(
         &node,
-        HitTestRequest { point: Point::new(500.0, 500.0), ignore_above: None },
+        HitTestRequest {
+            point: Point::new(500.0, 500.0),
+            ignore_above: None
+        },
         ctx(),
         &mut out
     ));
@@ -210,10 +226,7 @@ fn collapsed_nodes_are_not_hittable() {
     let mut node = tree(&e);
     node.children_mut()[1].set_prop(&props::COLLAPSED, PropertyValue::bool(true));
     let result = hit_at(&node, 60.0, 10.0);
-    assert!(
-        result.target().is_none(),
-        "折叠的按钮不该被命中"
-    );
+    assert!(result.target().is_none(), "折叠的按钮不该被命中");
 }
 
 #[test]
@@ -224,7 +237,10 @@ fn a_deep_tree_truncates_but_still_answers_correctly() {
     for _ in 0..(MAX_DEPTH + 5) {
         element = Element::new(NodeTag::Container)
             .with_key("l")
-            .with(&props::DIRECTION, PropertyValue::direction(Direction::Vertical))
+            .with(
+                &props::DIRECTION,
+                PropertyValue::direction(Direction::Vertical),
+            )
             .with(&props::PADDING, PropertyValue::float(0.0))
             .with_children([element]);
     }
@@ -262,7 +278,11 @@ fn moving_between_buttons_keeps_the_same_revision_for_one_event() {
     let before = router.revision();
     route(&mut router, &node, ev(1, 60.0, 10.0, PointerPhase::Move));
     assert_eq!(router.hovered().and_then(|k| k.as_name()), Some("b"));
-    assert_eq!(router.revision(), before + 1, "一次移动只应产生一次状态变更");
+    assert_eq!(
+        router.revision(),
+        before + 1,
+        "一次移动只应产生一次状态变更"
+    );
 }
 
 #[test]
@@ -285,11 +305,7 @@ fn the_same_position_does_not_bump_the_revision() {
     for _ in 0..5 {
         route(&mut router, &node, ev(1, 10.0, 10.0, PointerPhase::Move));
     }
-    assert_eq!(
-        router.revision(),
-        before,
-        "位置未变就不该要求重绘"
-    );
+    assert_eq!(router.revision(), before, "位置未变就不该要求重绘");
 }
 
 // ============================== 路由：按下/抬起/点击 ==============================
@@ -302,7 +318,9 @@ fn press_and_release_on_the_same_button_produce_a_click() {
     assert!(matches!(events.first(), Some(RoutedEvent::Press(_))));
     events = route(&mut router, &node, ev(1, 10.0, 10.0, PointerPhase::Up));
     assert!(
-        events.iter().any(|e| matches!(e, RoutedEvent::Click(k) if k.as_name() == Some("a"))),
+        events
+            .iter()
+            .any(|e| matches!(e, RoutedEvent::Click(k) if k.as_name() == Some("a"))),
         "同点按下抬起应产生 click，实得 {events:?}"
     );
 }
@@ -332,7 +350,10 @@ fn dragging_from_a_onto_b_does_not_click_b() {
         !events.iter().any(|e| matches!(e, RoutedEvent::Click(_))),
         "a 按下、b 抬起不得触发 click，实得 {events:?}"
     );
-    match events.iter().find(|e| matches!(e, RoutedEvent::Release { .. })) {
+    match events
+        .iter()
+        .find(|e| matches!(e, RoutedEvent::Release { .. }))
+    {
         Some(RoutedEvent::Release { pressed, released }) => {
             assert_eq!(pressed.as_name(), Some("a"), "press 应归按下者");
             assert_eq!(
@@ -354,11 +375,7 @@ fn hover_is_frozen_while_dragging() {
     let hovered = router.hovered().cloned();
     route(&mut router, &node, ev(1, 10.0, 10.0, PointerPhase::Down));
     route(&mut router, &node, ev(1, 60.0, 10.0, PointerPhase::Move));
-    assert_eq!(
-        router.hovered(),
-        hovered.as_ref(),
-        "按下期间悬停不应跟随"
-    );
+    assert_eq!(router.hovered(), hovered.as_ref(), "按下期间悬停不应跟随");
     // 松手后悬停立刻追上当前位置
     route(&mut router, &node, ev(1, 60.0, 10.0, PointerPhase::Up));
     assert_eq!(router.hovered().and_then(|k| k.as_name()), Some("b"));
@@ -402,12 +419,24 @@ fn a_two_finger_pinch_is_reported_alongside_hover_changes() {
     route(
         &mut router,
         &node,
-        PointerEvent { id: 1, x: 10.0, y: 10.0, phase: PointerPhase::Down, source: PointerSource::Touch },
+        PointerEvent {
+            id: 1,
+            x: 10.0,
+            y: 10.0,
+            phase: PointerPhase::Down,
+            source: PointerSource::Touch,
+        },
     );
     let events = route(
         &mut router,
         &node,
-        PointerEvent { id: 2, x: 60.0, y: 10.0, phase: PointerPhase::Down, source: PointerSource::Touch },
+        PointerEvent {
+            id: 2,
+            x: 60.0,
+            y: 10.0,
+            phase: PointerPhase::Down,
+            source: PointerSource::Touch,
+        },
     );
     assert!(
         events.iter().any(|e| matches!(e, RoutedEvent::Gesture(_))),

@@ -135,12 +135,11 @@ fn d3d12_能把四边形画到像素上() {
     );
 
     // ---- 2. 离屏目标 ----
-    let target = Offscreen::new(&gpu.device, (SIZE, SIZE))
-        .unwrap_or_else(|e| {
-            // 调试层的消息是**排队**的，必须主动拉 —— 不拉就永远看不到。
-            gpu.drain_debug();
-            panic!("建不出离屏目标 —— 第 2 步（堆/描述符/RTV）断了：{e}")
-        });
+    let target = Offscreen::new(&gpu.device, (SIZE, SIZE)).unwrap_or_else(|e| {
+        // 调试层的消息是**排队**的，必须主动拉 —— 不拉就永远看不到。
+        gpu.drain_debug();
+        panic!("建不出离屏目标 —— 第 2 步（堆/描述符/RTV）断了：{e}")
+    });
 
     // ---- 3. 渲染器 + PSO ----
     let mut renderer = // 采样数 1：本测试的渲染目标是**单采样**离屏纹理（`Offscreen::new`），
@@ -224,12 +223,17 @@ fn d3d12_能把四边形画到像素上() {
     );
 
     // 回读缓冲：回读要求资源处于可拷贝状态，所以把拷贝命令也记录进去。
-    let staging = target.record_readback(&gpu.device, gpu.list()).unwrap_or_else(|e| {
-        // 消息是**排队**的，不主动拉就永远看不到 —— 这是本项目在 D3D11 与 D3D12
-        // 上各踩一次的坑。
-        gpu.drain_debug();
-        panic!("记录回读拷贝失败：{e:?}\n设备移除原因 = {:#X}", gpu.removed_reason().0)
-    });
+    let staging = target
+        .record_readback(&gpu.device, gpu.list())
+        .unwrap_or_else(|e| {
+            // 消息是**排队**的，不主动拉就永远看不到 —— 这是本项目在 D3D11 与 D3D12
+            // 上各踩一次的坑。
+            gpu.drain_debug();
+            panic!(
+                "记录回读拷贝失败：{e:?}\n设备移除原因 = {:#X}",
+                gpu.removed_reason().0
+            )
+        });
 
     gpu.submit().expect("提交命令列表失败");
     gpu.wait_gpu().expect("等 GPU 失败");
@@ -409,11 +413,7 @@ fn render_frames_reusing(list: &[DisplayList], clear: Color) -> Vec<Vec<u8>> {
         // 这是**有意**的：默认开启会让整台机器的测试跑不动。真正的门禁在
         // `$env:ZEPHYRA_D3D12_DEBUG=1` 下跑，变异脚本就是这么设的。
         let ids = gpu.drain_debug();
-        let state_errors: Vec<u32> = ids
-            .iter()
-            .copied()
-            .filter(|id| *id != 820)
-            .collect();
+        let state_errors: Vec<u32> = ids.iter().copied().filter(|id| *id != 820).collect();
         assert!(
             state_errors.is_empty(),
             "第 {} 帧：验证层报了状态类错误 {:?} —— 上面会打印具体内容",
@@ -455,11 +455,7 @@ fn the_second_frame_is_identical_to_the_first_when_a_filter_is_used() {
     );
     let frames = render_frames_reusing(&[list.clone(), list], Color::rgb(0.0, 0.0, 0.0));
     let (a, b) = (&frames[0], &frames[1]);
-    let diff = a
-        .iter()
-        .zip(b.iter())
-        .filter(|(x, y)| x != y)
-        .count();
+    let diff = a.iter().zip(b.iter()).filter(|(x, y)| x != y).count();
     assert_eq!(
         diff, 0,
         "第二帧与第一帧有 {diff} 个字节不同 —— 离屏 RT 的资源状态没有跨帧跟踪，\
@@ -487,18 +483,24 @@ fn the_second_frame_is_identical_to_the_first_when_a_filter_is_used() {
 #[test]
 fn a_reused_offscreen_pair_is_cleared_before_the_content_pass() {
     use zephyra_core::filter::{Filter, FilterChain};
-    let chain = FilterChain::single(Filter::Blur { sigma_x: 5.0, sigma_y: 5.0 });
-    let f1 = one(chain.clone(), Color::rgb(1.0, 1.0, 1.0), zephyra_core::core::Rect::new(
-        40.0, 40.0, 40.0, 40.0,
-    ));
-    let f2 = one(chain, Color::rgb(1.0, 1.0, 1.0), zephyra_core::core::Rect::new(
-        40.0, 48.0, 40.0, 40.0,
-    ));
+    let chain = FilterChain::single(Filter::Blur {
+        sigma_x: 5.0,
+        sigma_y: 5.0,
+    });
+    let f1 = one(
+        chain.clone(),
+        Color::rgb(1.0, 1.0, 1.0),
+        zephyra_core::core::Rect::new(40.0, 40.0, 40.0, 40.0),
+    );
+    let f2 = one(
+        chain,
+        Color::rgb(1.0, 1.0, 1.0),
+        zephyra_core::core::Rect::new(40.0, 48.0, 40.0, 40.0),
+    );
     // 先确认构图前提：两帧的 bounds 尺寸必须相同，否则 RT 对会被重建、本条恒真。
-    let b1 = zephyra_core::paint::command_content_rect(
-        &f1.iter().next().expect("一帧一条命令").command,
-    )
-    .expect("有内容");
+    let b1 =
+        zephyra_core::paint::command_content_rect(&f1.iter().next().expect("一帧一条命令").command)
+            .expect("有内容");
     let _ = b1;
     let frames = render_frames_reusing(&[f1, f2], Color::rgb(0.0, 0.0, 0.0));
     // 第二帧内容下移了 8px，所以**原位置**那条带上不该再有第一帧的内容。
@@ -680,25 +682,38 @@ fn per_run_dst_refresh_on_d3d12() {
     use zephyra_core::filter::BlendMode;
     let s = SIZE as f32;
     let mut list = DisplayList::new();
-    let mut push = |order: u32,
-                    fill: Color,
-                    blend: BlendMode,
-                    layer: zephyra_core::paint::Layer| {
-        list.push(
-            zephyra_core::paint::SortKey { layer, z: 0, order },
-            Command::Quad {
-                rect: zephyra_core::core::Rect::new(0.0, 0.0, s, s),
-                radius: zephyra_core::core::CornerRadius { radius: 0.0 },
-                fill,
-                stroke: None,
-                filter: zephyra_core::filter::FilterChain::none(),
-                blend,
-            },
-        );
-    };
-    push(0, Color::rgb(0.5, 0.5, 0.5), BlendMode::default(), zephyra_core::paint::Layer::Background);
-    push(1, Color::rgb(1.0, 0.0, 0.0), BlendMode::Darken, zephyra_core::paint::Layer::Content);
-    push(2, Color::rgb(0.0, 0.0, 1.0), BlendMode::Screen, zephyra_core::paint::Layer::Overlay);
+    let mut push =
+        |order: u32, fill: Color, blend: BlendMode, layer: zephyra_core::paint::Layer| {
+            list.push(
+                zephyra_core::paint::SortKey { layer, z: 0, order },
+                Command::Quad {
+                    rect: zephyra_core::core::Rect::new(0.0, 0.0, s, s),
+                    radius: zephyra_core::core::CornerRadius { radius: 0.0 },
+                    fill,
+                    stroke: None,
+                    filter: zephyra_core::filter::FilterChain::none(),
+                    blend,
+                },
+            );
+        };
+    push(
+        0,
+        Color::rgb(0.5, 0.5, 0.5),
+        BlendMode::default(),
+        zephyra_core::paint::Layer::Background,
+    );
+    push(
+        1,
+        Color::rgb(1.0, 0.0, 0.0),
+        BlendMode::Darken,
+        zephyra_core::paint::Layer::Content,
+    );
+    push(
+        2,
+        Color::rgb(0.0, 0.0, 1.0),
+        BlendMode::Screen,
+        zephyra_core::paint::Layer::Overlay,
+    );
     list.sort();
 
     let (px, _) = render_and_readback(&list, Color::rgb(0.0, 0.0, 0.0));
@@ -934,12 +949,10 @@ fn composite_lands_only_on_the_bounds_on_d3d12() {
             radius: zephyra_core::core::CornerRadius { radius: 0.0 },
             fill: Color::rgb(1.0, 1.0, 1.0),
             stroke: None,
-            filter: zephyra_core::filter::FilterChain::single(
-                zephyra_core::filter::Filter::Blur {
-                    sigma_x: 2.0,
-                    sigma_y: 2.0,
-                },
-            ),
+            filter: zephyra_core::filter::FilterChain::single(zephyra_core::filter::Filter::Blur {
+                sigma_x: 2.0,
+                sigma_y: 2.0,
+            }),
             blend: zephyra_core::filter::BlendMode::default(),
         },
     );
@@ -999,12 +1012,10 @@ fn composite_blends_over_the_destination_on_d3d12() {
             radius: zephyra_core::core::CornerRadius { radius: 0.0 },
             fill: Color::rgba(1.0, 1.0, 1.0, 0.25),
             stroke: None,
-            filter: zephyra_core::filter::FilterChain::single(
-                zephyra_core::filter::Filter::Blur {
-                    sigma_x: 0.0,
-                    sigma_y: 2.0,
-                },
-            ),
+            filter: zephyra_core::filter::FilterChain::single(zephyra_core::filter::Filter::Blur {
+                sigma_x: 0.0,
+                sigma_y: 2.0,
+            }),
             blend: zephyra_core::filter::BlendMode::default(),
         },
     );
@@ -1204,12 +1215,10 @@ fn offscreen_result_is_ordered_above_lower_primitives_on_d3d12() {
             radius: zephyra_core::core::CornerRadius { radius: 0.0 },
             fill: Color::rgb(1.0, 1.0, 1.0),
             stroke: None,
-            filter: zephyra_core::filter::FilterChain::single(
-                zephyra_core::filter::Filter::Blur {
-                    sigma_x: 1.0,
-                    sigma_y: 1.0,
-                },
-            ),
+            filter: zephyra_core::filter::FilterChain::single(zephyra_core::filter::Filter::Blur {
+                sigma_x: 1.0,
+                sigma_y: 1.0,
+            }),
             blend: zephyra_core::filter::BlendMode::default(),
         },
     );

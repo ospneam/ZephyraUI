@@ -20,12 +20,12 @@
 //! 变了就重绘。这是保留式 UI 的常规做法（GPUI 的 `Window`、egui 的 `repaint` 都这么做），
 //! 因为宿主真正需要的从来不是"发生了什么"，而是"要不要重画"。
 
+use crate::context::Context;
 use crate::core::Point;
 use crate::hit::{hit_test, HitResult, HitTestRequest};
-use crate::input::recognizer::{Gesture, Recognizer};
-use crate::input::pointer::{PointerEvent, PointerPhase};
-use crate::context::Context;
 use crate::id::ElementKey;
+use crate::input::pointer::{PointerEvent, PointerPhase};
+use crate::input::recognizer::{Gesture, Recognizer};
 
 /// 单个输入事件最多产出的路由事件数。
 ///
@@ -219,9 +219,7 @@ impl InputRouter {
             &mut self.hit,
         );
         let target = if hit_any {
-            self.hit
-                .target()
-                .map(|n| (n.id.clone(), n.rect))
+            self.hit.target().map(|n| (n.id.clone(), n.rect))
         } else {
             None
         };

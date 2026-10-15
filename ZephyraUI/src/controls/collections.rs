@@ -69,7 +69,11 @@ pub fn list_view(
 }
 
 /// 表格（RinUI TableView）：表头 + 数据行，定列宽。
-pub fn table_view(key: &'static str, headers: &'static [&'static str], rows: &'static [&'static [&'static str]]) -> Element {
+pub fn table_view(
+    key: &'static str,
+    headers: &'static [&'static str],
+    rows: &'static [&'static [&'static str]],
+) -> Element {
     let mut children = vec![header_row(headers)];
     for (r, row) in rows.iter().enumerate() {
         let cells: Vec<Element> = row
@@ -99,7 +103,11 @@ pub fn table_view(key: &'static str, headers: &'static [&'static str], rows: &'s
 ///
 /// `pages` 每项 `(标题, 一句说明)`；`index` 是当前页。**滑动手势不做**
 /// （core 无拖拽），翻页由宿主按 key 路由。
-pub fn swipe_view(key: &'static str, pages: &'static [(&'static str, &'static str)], index: usize) -> Element {
+pub fn swipe_view(
+    key: &'static str,
+    pages: &'static [(&'static str, &'static str)],
+    index: usize,
+) -> Element {
     let (title, desc) = pages.get(index).copied().unwrap_or(("—", ""));
     let pips: Vec<Element> = (0..pages.len())
         .map(|i| {

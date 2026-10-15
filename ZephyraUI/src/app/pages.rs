@@ -16,13 +16,13 @@ use zephyra_core::id::NodeTag;
 use super::{catalog, Gallery, COMBO_OPTIONS, LANG_SELFS, SUPPORTED};
 use crate::controls::{
     acrylic_card, auto_suggest_box, avatar, badge, busy_indicator, button, caption, card,
-    check_box, color_picker, combo_box, date_picker, dialog, drop_down_button,
-    error_page, expander, hyperlink, info_bar, info_badge, list_view, menu, menu_bar, nav_item,
-    nav_sub_item, page_indicator, pill_button, progress_bar, progress_ring, radio_button,
-    rounded_corner_overlay, round_button, scrollable_text_area, segmented, selector_bar,
-    setting_card, setting_expander, setting_item, slider, spin_box, swipe_view, table_view,
-    text_area, text_field, text_input_menu, text_label, time_picker, toast, toggle_switch,
-    tool_button, tool_tip,
+    check_box, color_picker, combo_box, date_picker, dialog, drop_down_button, error_page,
+    expander, hyperlink, info_badge, info_bar, list_view, menu, menu_bar, nav_item, nav_sub_item,
+    page_indicator, pill_button, progress_bar, progress_ring, radio_button, round_button,
+    rounded_corner_overlay, scrollable_text_area, segmented, selector_bar, setting_card,
+    setting_expander, setting_item, slider, spin_box, swipe_view, table_view, text_area,
+    text_field, text_input_menu, text_label, time_picker, toast, toggle_switch, tool_button,
+    tool_tip,
 };
 
 /// **基准画布**（[`app::BASE_VIEWPORT`] = 1400×800）下每个手排行的卡片数。
@@ -95,7 +95,6 @@ pub fn stack(id: u64, children: Vec<Element>) -> Element {
         .style("stack")
         .with_children(children)
 }
-
 
 /// 首页三张链接卡的 key。
 const LINK_KEYS: [&str; 3] = ["linkcard:0", "linkcard:1", "linkcard:2"];
@@ -188,7 +187,11 @@ fn banner() -> Element {
         .with_key("banner")
         .style("banner")
         .with_children([
-            text_label("banner-kicker", "A Fluent Design-like UI library, in Rust", "text-subtitle"),
+            text_label(
+                "banner-kicker",
+                "A Fluent Design-like UI library, in Rust",
+                "text-subtitle",
+            ),
             text_label("banner-title", "ZephyraUI Gallery", "banner-title"),
             text_label(
                 "banner-sub",
@@ -205,9 +208,21 @@ fn banner() -> Element {
 /// 的下限，改写则是另一次设计决定。
 fn link_row() -> Element {
     let links = [
-        ("gear", "Getting Started", "Get started with ZephyraUI and explore detailed documentation."),
-        ("doc", "Documentation", "Explore the comprehensive documentation for ZephyraUI components."),
-        ("star", "RinUI on GitHub", "Explore the RinUI source code and repository."),
+        (
+            "gear",
+            "Getting Started",
+            "Get started with ZephyraUI and explore detailed documentation.",
+        ),
+        (
+            "doc",
+            "Documentation",
+            "Explore the comprehensive documentation for ZephyraUI components.",
+        ),
+        (
+            "star",
+            "RinUI on GitHub",
+            "Explore the RinUI source code and repository.",
+        ),
     ];
     let cards: Vec<Element> = links
         .iter()
@@ -219,7 +234,10 @@ fn link_row() -> Element {
                 vec![
                     Element::new(NodeTag::Container)
                         .with_key("icon")
-                        .with(&zephyra_core::props::ICON_NAME, zephyra_core::property::PropertyValue::static_str(icon))
+                        .with(
+                            &zephyra_core::props::ICON_NAME,
+                            zephyra_core::property::PropertyValue::static_str(icon),
+                        )
                         .style("link-icon"),
                     text_label("link-title", title, "text-body-strong"),
                     caption("link-desc", desc),
@@ -257,7 +275,6 @@ fn pill_row(g: &Gallery) -> Element {
 
 // ---------------------------------------------------------- All samples
 
-
 /// All samples：把 catalog 的 **44 条**按原版顺序铺成卡片网格。
 ///
 /// # 为什么不用 `clip_grid` 那套手排常量
@@ -278,7 +295,11 @@ fn all_samples(g: &Gallery) -> Element {
             // 14 个分组 chip 条：点进分组索引页。这是 Rin-UI 分类导航的等价物 ——
             // 放在 All 页里而不是侧栏，因为 core 无滚动 / 无折叠，侧栏放不下 14 项。
             section("sec-groups", "Categories", vec![group_chip_row(g)]),
-            section("sec-all", "All controls", clip_grid_c(cards, g.card_columns())),
+            section(
+                "sec-all",
+                "All controls",
+                clip_grid_c(cards, g.card_columns()),
+            ),
         ])
 }
 
@@ -402,9 +423,30 @@ fn basic_input(g: &Gallery) -> Element {
                 vec![row(
                     10,
                     vec![
-                        button("btn-standard", "Standard", Some("pen"), "standard", g.hovers("btn-standard"), g.holds("btn-standard")),
-                        button("btn-accent", "Accent", None, "accent", g.hovers("btn-accent"), g.holds("btn-accent")),
-                        button("btn-subtle", "Subtle", Some("star"), "subtle", g.hovers("btn-subtle"), g.holds("btn-subtle")),
+                        button(
+                            "btn-standard",
+                            "Standard",
+                            Some("pen"),
+                            "standard",
+                            g.hovers("btn-standard"),
+                            g.holds("btn-standard"),
+                        ),
+                        button(
+                            "btn-accent",
+                            "Accent",
+                            None,
+                            "accent",
+                            g.hovers("btn-accent"),
+                            g.holds("btn-accent"),
+                        ),
+                        button(
+                            "btn-subtle",
+                            "Subtle",
+                            Some("star"),
+                            "subtle",
+                            g.hovers("btn-subtle"),
+                            g.holds("btn-subtle"),
+                        ),
                     ],
                 )],
             ),
@@ -414,14 +456,49 @@ fn basic_input(g: &Gallery) -> Element {
                 vec![row(
                     11,
                     vec![
-                        tool_button("tool:menu", "menu", g.hovers("tool:menu"), g.holds("tool:menu")),
+                        tool_button(
+                            "tool:menu",
+                            "menu",
+                            g.hovers("tool:menu"),
+                            g.holds("tool:menu"),
+                        ),
                         tool_button("tool:pen", "pen", g.hovers("tool:pen"), g.holds("tool:pen")),
-                        tool_button("tool:eraser", "eraser", g.hovers("tool:eraser"), g.holds("tool:eraser")),
-                        tool_button("tool:undo", "undo", g.hovers("tool:undo"), g.holds("tool:undo")),
-                        tool_button("tool:image", "image", g.hovers("tool:image"), g.holds("tool:image")),
-                        tool_button("tool:camera", "camera", g.hovers("tool:camera"), g.holds("tool:camera")),
-                        tool_button("tool:gear", "gear", g.hovers("tool:gear"), g.holds("tool:gear")),
-                        tool_button("tool:settings", "settings", g.hovers("tool:settings"), g.holds("tool:settings")),
+                        tool_button(
+                            "tool:eraser",
+                            "eraser",
+                            g.hovers("tool:eraser"),
+                            g.holds("tool:eraser"),
+                        ),
+                        tool_button(
+                            "tool:undo",
+                            "undo",
+                            g.hovers("tool:undo"),
+                            g.holds("tool:undo"),
+                        ),
+                        tool_button(
+                            "tool:image",
+                            "image",
+                            g.hovers("tool:image"),
+                            g.holds("tool:image"),
+                        ),
+                        tool_button(
+                            "tool:camera",
+                            "camera",
+                            g.hovers("tool:camera"),
+                            g.holds("tool:camera"),
+                        ),
+                        tool_button(
+                            "tool:gear",
+                            "gear",
+                            g.hovers("tool:gear"),
+                            g.holds("tool:gear"),
+                        ),
+                        tool_button(
+                            "tool:settings",
+                            "settings",
+                            g.hovers("tool:settings"),
+                            g.holds("tool:settings"),
+                        ),
                     ],
                 )],
             ),
@@ -436,8 +513,20 @@ fn basic_input(g: &Gallery) -> Element {
                 vec![row(
                     13,
                     vec![
-                        slider("slider:demo", 0.42, Some("42"), g.hovers("slider:demo"), g.holds("slider:demo")),
-                        slider("slider:demo2", 0.78, Some("78"), g.hovers("slider:demo2"), g.holds("slider:demo2")),
+                        slider(
+                            "slider:demo",
+                            0.42,
+                            Some("42"),
+                            g.hovers("slider:demo"),
+                            g.holds("slider:demo"),
+                        ),
+                        slider(
+                            "slider:demo2",
+                            0.78,
+                            Some("78"),
+                            g.hovers("slider:demo2"),
+                            g.holds("slider:demo2"),
+                        ),
                     ],
                 )],
             ),
@@ -447,9 +536,28 @@ fn basic_input(g: &Gallery) -> Element {
                 vec![row(
                     14,
                     vec![
-                        round_button("round:toggle", "Star", Some("star"), g.round_on, g.hovers("round:toggle"), g.holds("round:toggle")),
-                        hyperlink("link:docs", "ZephyraUI docs", "https://ui.rinlit.cn/", g.hovers("link:docs")),
-                        drop_down_button("dd:demo", "Options", Some("sliders"), g.dd_open, g.hovers("dd:demo"), g.holds("dd:demo")),
+                        round_button(
+                            "round:toggle",
+                            "Star",
+                            Some("star"),
+                            g.round_on,
+                            g.hovers("round:toggle"),
+                            g.holds("round:toggle"),
+                        ),
+                        hyperlink(
+                            "link:docs",
+                            "ZephyraUI docs",
+                            "https://ui.rinlit.cn/",
+                            g.hovers("link:docs"),
+                        ),
+                        drop_down_button(
+                            "dd:demo",
+                            "Options",
+                            Some("sliders"),
+                            g.dd_open,
+                            g.hovers("dd:demo"),
+                            g.holds("dd:demo"),
+                        ),
                     ],
                 )],
             ),
@@ -459,7 +567,12 @@ fn basic_input(g: &Gallery) -> Element {
                 vec![row(
                     15,
                     vec![
-                        combo_box("combo:demo", combo_label(g.combo), g.hovers("combo:demo"), g.holds("combo:demo")),
+                        combo_box(
+                            "combo:demo",
+                            combo_label(g.combo),
+                            g.hovers("combo:demo"),
+                            g.holds("combo:demo"),
+                        ),
                         spin_box(
                             "spin:demo",
                             spin_text(g.spin),
@@ -484,13 +597,13 @@ fn basic_input(g: &Gallery) -> Element {
 /// SpinBox 的显示值（内容是数据；演示范围 0..100）。
 fn spin_text(v: i32) -> &'static str {
     const TEXTS: [&str; 101] = [
-        "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15",
-        "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30",
-        "31", "32", "33", "34", "35", "36", "37", "38", "39", "40", "41", "42", "43", "44", "45",
-        "46", "47", "48", "49", "50", "51", "52", "53", "54", "55", "56", "57", "58", "59", "60",
-        "61", "62", "63", "64", "65", "66", "67", "68", "69", "70", "71", "72", "73", "74", "75",
-        "76", "77", "78", "79", "80", "81", "82", "83", "84", "85", "86", "87", "88", "89", "90",
-        "91", "92", "93", "94", "95", "96", "97", "98", "99", "100",
+        "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16",
+        "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30", "31",
+        "32", "33", "34", "35", "36", "37", "38", "39", "40", "41", "42", "43", "44", "45", "46",
+        "47", "48", "49", "50", "51", "52", "53", "54", "55", "56", "57", "58", "59", "60", "61",
+        "62", "63", "64", "65", "66", "67", "68", "69", "70", "71", "72", "73", "74", "75", "76",
+        "77", "78", "79", "80", "81", "82", "83", "84", "85", "86", "87", "88", "89", "90", "91",
+        "92", "93", "94", "95", "96", "97", "98", "99", "100",
     ];
     TEXTS[v.clamp(0, 100) as usize]
 }
@@ -512,10 +625,13 @@ fn check_col(g: &Gallery) -> Element {
 /// 单选一列（选中态是演示数据，点击不切换 —— 单选互斥需要组状态，属于交互
 /// 语义而非外观，这一版只展示长相）。
 fn radio_col(g: &Gallery) -> Element {
-    let children: Vec<Element> = [("radio:a", "Option A", true), ("radio:b", "Option B", false)]
-        .iter()
-        .map(|(key, label, checked)| radio_button(key, label, *checked, g.hovers(key), g.holds(key)))
-        .collect();
+    let children: Vec<Element> = [
+        ("radio:a", "Option A", true),
+        ("radio:b", "Option B", false),
+    ]
+    .iter()
+    .map(|(key, label, checked)| radio_button(key, label, *checked, g.hovers(key), g.holds(key)))
+    .collect();
     stack(21, children)
 }
 
@@ -643,7 +759,10 @@ fn collections(g: &Gallery) -> Element {
                     "Advanced",
                     "展开后才看见的内容",
                     g.expanded,
-                    vec![caption("sex-desc", "折叠走 COLLAPSED，与 Expander 同一机制")],
+                    vec![caption(
+                        "sex-desc",
+                        "折叠走 COLLAPSED，与 Expander 同一机制",
+                    )],
                 )],
             ),
         ])
@@ -713,8 +832,22 @@ fn navigation_page(g: &Gallery) -> Element {
                 vec![stack(
                     32,
                     vec![
-                        nav_sub_item("sub:overview", "Overview", Some("grid"), true, g.hovers("sub:overview"), g.holds("sub:overview")),
-                        nav_sub_item("sub:shortcuts", "Shortcuts", Some("menu"), false, g.hovers("sub:shortcuts"), g.holds("sub:shortcuts")),
+                        nav_sub_item(
+                            "sub:overview",
+                            "Overview",
+                            Some("grid"),
+                            true,
+                            g.hovers("sub:overview"),
+                            g.holds("sub:overview"),
+                        ),
+                        nav_sub_item(
+                            "sub:shortcuts",
+                            "Shortcuts",
+                            Some("menu"),
+                            false,
+                            g.hovers("sub:shortcuts"),
+                            g.holds("sub:shortcuts"),
+                        ),
                     ],
                 )],
             ),
@@ -725,10 +858,41 @@ fn navigation_page(g: &Gallery) -> Element {
 fn dialogs_page(g: &Gallery) -> Element {
     // 2026 年 10 月：10 月 1 日是周四（列 4）。
     let cells: &[Option<u8>] = &[
-        None, None, None, None, Some(1), Some(2), Some(3), Some(4), Some(5), Some(6), Some(7),
-        Some(8), Some(9), Some(10), Some(11), Some(12), Some(13), Some(14), Some(15), Some(16),
-        Some(17), Some(18), Some(19), Some(20), Some(21), Some(22), Some(23), Some(24), Some(25),
-        Some(26), Some(27), Some(28), Some(29), Some(30), Some(31),
+        None,
+        None,
+        None,
+        None,
+        Some(1),
+        Some(2),
+        Some(3),
+        Some(4),
+        Some(5),
+        Some(6),
+        Some(7),
+        Some(8),
+        Some(9),
+        Some(10),
+        Some(11),
+        Some(12),
+        Some(13),
+        Some(14),
+        Some(15),
+        Some(16),
+        Some(17),
+        Some(18),
+        Some(19),
+        Some(20),
+        Some(21),
+        Some(22),
+        Some(23),
+        Some(24),
+        Some(25),
+        Some(26),
+        Some(27),
+        Some(28),
+        Some(29),
+        Some(30),
+        Some(31),
     ];
     Element::new(NodeTag::Container)
         .with_key("dialogs")
@@ -786,7 +950,11 @@ fn dialogs_page(g: &Gallery) -> Element {
                             "overlay:demo",
                             "r7",
                             vec![
-                                text_label("overlay-title", "RoundedCornerOverlay", "text-body-strong"),
+                                text_label(
+                                    "overlay-title",
+                                    "RoundedCornerOverlay",
+                                    "text-body-strong",
+                                ),
                                 caption("overlay-desc", "透明底 + 圆角 + 边"),
                             ],
                         ),
@@ -889,9 +1057,26 @@ fn status_info(_g: &Gallery) -> Element {
                 vec![stack(
                     45,
                     vec![
-                        info_bar("bar:info", "Heads up", "样式表没加载上时界面长这样。", "info", true),
-                        info_bar("bar:success", "Saved", "28 条外观全部搬进了 demo.zstyle。", "success", true),
-                        toast("toast:caution", "Caution", "令牌拼错会静默退回默认值。", "caution"),
+                        info_bar(
+                            "bar:info",
+                            "Heads up",
+                            "样式表没加载上时界面长这样。",
+                            "info",
+                            true,
+                        ),
+                        info_bar(
+                            "bar:success",
+                            "Saved",
+                            "28 条外观全部搬进了 demo.zstyle。",
+                            "success",
+                            true,
+                        ),
+                        toast(
+                            "toast:caution",
+                            "Caution",
+                            "令牌拼错会静默退回默认值。",
+                            "caution",
+                        ),
                     ],
                 )],
             ),
@@ -944,7 +1129,14 @@ fn text_page(_g: &Gallery) -> Element {
                     51,
                     vec![
                         text_field("field:name", None, "Placeholder text", false, false, false),
-                        text_field("field:value", Some("Filled value"), "Placeholder", true, false, false),
+                        text_field(
+                            "field:value",
+                            Some("Filled value"),
+                            "Placeholder",
+                            true,
+                            false,
+                            false,
+                        ),
                     ],
                 )],
             ),
@@ -1001,27 +1193,63 @@ fn settings_page(g: &Gallery) -> Element {
                 "set-theme",
                 g.tr("set.theme.title"),
                 g.tr("set.theme.desc"),
-                toggle_switch("switch:master", g.switch_on, g.hovers("switch:master"), g.holds("switch:master")),
+                toggle_switch(
+                    "switch:master",
+                    g.switch_on,
+                    g.hovers("switch:master"),
+                    g.holds("switch:master"),
+                ),
             ),
             setting_card(
                 "set-volume",
                 g.tr("set.volume.title"),
                 g.tr("set.volume.desc"),
-                slider("slider:volume", g.volume, Some("62"), g.hovers("slider:volume"), g.holds("slider:volume")),
+                slider(
+                    "slider:volume",
+                    g.volume,
+                    Some("62"),
+                    g.hovers("slider:volume"),
+                    g.holds("slider:volume"),
+                ),
             ),
             setting_card(
                 "set-notify",
                 g.tr("set.notify.title"),
                 g.tr("set.notify.desc"),
-                toggle_switch("switch:notify", !g.switch_on, g.hovers("switch:notify"), g.holds("switch:notify")),
+                toggle_switch(
+                    "switch:notify",
+                    !g.switch_on,
+                    g.hovers("switch:notify"),
+                    g.holds("switch:notify"),
+                ),
             ),
             section(
                 "sec-adv",
                 g.tr("set.adv.title"),
                 vec![
-                    check_box("check:alpha", g.tr("set.adv.logging"), g.checked[0], g.hovers("check:alpha"), g.holds("check:alpha")),
-                    check_box("check:beta", g.tr("set.adv.hwaccel"), g.checked[1], g.hovers("check:beta"), g.holds("check:beta")),
-                    nav_item("nav-shortcut", g.tr("set.adv.shortcuts"), "menu", false, g.hovers("nav-shortcut"), g.holds("nav-shortcut"), false),
+                    check_box(
+                        "check:alpha",
+                        g.tr("set.adv.logging"),
+                        g.checked[0],
+                        g.hovers("check:alpha"),
+                        g.holds("check:alpha"),
+                    ),
+                    check_box(
+                        "check:beta",
+                        g.tr("set.adv.hwaccel"),
+                        g.checked[1],
+                        g.hovers("check:beta"),
+                        g.holds("check:beta"),
+                    ),
+                    nav_item(
+                        "nav-shortcut",
+                        g.tr("set.adv.shortcuts"),
+                        "menu",
+                        false,
+                        g.hovers("nav-shortcut"),
+                        g.holds("nav-shortcut"),
+                        false,
+                    ),
                 ],
             ),
         ])

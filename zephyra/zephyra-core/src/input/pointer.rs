@@ -125,11 +125,7 @@ impl PointerTable {
     /// 第 n 个活跃指针（槽位序，确定性）。n 越界 → `None`。
     #[inline]
     pub(crate) fn nth(&self, n: usize) -> Option<(u32, f32, f32)> {
-        self.slots
-            .iter()
-            .flatten()
-            .nth(n)
-            .map(|s| (s.id, s.x, s.y))
+        self.slots.iter().flatten().nth(n).map(|s| (s.id, s.x, s.y))
     }
 }
 

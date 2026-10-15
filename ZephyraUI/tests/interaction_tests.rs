@@ -30,8 +30,8 @@ use zephyra_core::input::{
     InputRouter, PointerEvent, PointerPhase, PointerSource, RoutedEvent, RoutedEvents,
 };
 use zephyra_core::layout::layout;
-use zephyra_core::node::{Node, clear_dirty};
-use zephyra_core::paint::{Command, DisplayList, render};
+use zephyra_core::node::{clear_dirty, Node};
+use zephyra_core::paint::{render, Command, DisplayList};
 use zephyra_core::theme::{Theme, ThemeVariant};
 use zephyra_fx::View;
 
@@ -115,15 +115,14 @@ impl Harness {
             Context::new(&self.theme),
             &mut out,
         );
-        (self.router.hovered().cloned(), self.router.pressed().cloned())
+        (
+            self.router.hovered().cloned(),
+            self.router.pressed().cloned(),
+        )
     }
 
     /// 同上，但把路由出来的事件也返回（click 类测试用）。
-    fn pointer_events(
-        &mut self,
-        phase: PointerPhase,
-        at: (f32, f32),
-    ) -> Vec<RoutedEvent> {
+    fn pointer_events(&mut self, phase: PointerPhase, at: (f32, f32)) -> Vec<RoutedEvent> {
         let mut out = RoutedEvents::new();
         self.router.on_pointer(
             &self.node,

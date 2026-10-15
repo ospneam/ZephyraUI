@@ -16,19 +16,19 @@
 
 use windows::core::w;
 use windows::core::Interface;
+use windows::core::{IUnknown, PCWSTR};
 use windows::Win32::Foundation::{HMODULE, HWND, RECT};
 use windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_HARDWARE;
 use windows::Win32::Graphics::Direct3D11::{
-    D3D11CreateDevice, D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_SDK_VERSION, ID3D11Device,
+    D3D11CreateDevice, ID3D11Device, D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_SDK_VERSION,
 };
 use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, RegisterClassExW, SetWindowPos, CS_HREDRAW, CS_VREDRAW,
-    CW_USEDEFAULT, HWND_TOPMOST, SWP_NOSIZE, SWP_SHOWWINDOW, WNDCLASSEXW, WS_EX_NOREDIRECTIONBITMAP,
-    WS_OVERLAPPEDWINDOW,
+    CW_USEDEFAULT, HWND_TOPMOST, SWP_NOSIZE, SWP_SHOWWINDOW, WNDCLASSEXW,
+    WS_EX_NOREDIRECTIONBITMAP, WS_OVERLAPPEDWINDOW,
 };
-use windows::core::{IUnknown, PCWSTR};
 
 unsafe extern "system" fn wnd_proc(
     hwnd: HWND,
@@ -70,8 +70,16 @@ fn create_test_window() -> HWND {
         .expect("CreateWindowExW");
         // `HWND_TOPMOST` 在 windows-rs 0.62 里是 `Option<HWND>`（可空语义被如实
         // 表达成 Option），所以直接传。
-        SetWindowPos(hwnd, Some(HWND_TOPMOST), 100, 100, 0, 0, SWP_NOSIZE | SWP_SHOWWINDOW)
-            .expect("SetWindowPos");
+        SetWindowPos(
+            hwnd,
+            Some(HWND_TOPMOST),
+            100,
+            100,
+            0,
+            0,
+            SWP_NOSIZE | SWP_SHOWWINDOW,
+        )
+        .expect("SetWindowPos");
         hwnd
     }
 }
@@ -112,8 +120,8 @@ fn full_chain_smoke() {
         eprintln!("[4] dxgi ok");
 
         // 1. DComp 合成器（IDXGIDevice 路线）
-        let mut comp = zephyra_dcomp::DcompCompositor::new(hwnd, &dxgi_device)
-            .expect("DcompCompositor::new");
+        let mut comp =
+            zephyra_dcomp::DcompCompositor::new(hwnd, &dxgi_device).expect("DcompCompositor::new");
         eprintln!("[5] compositor ok");
         assert_eq!(comp.visual_count(), 0);
         assert!(!comp.is_destroyed());
@@ -150,8 +158,7 @@ fn full_chain_smoke() {
         eprintln!("[9] wait ok");
 
         // 5. 偏移 API（IDCompositionVisual2 cast 路径）
-        comp.set_offset(&ui_slot, 0.0, 0.0)
-            .expect("set_offset");
+        comp.set_offset(&ui_slot, 0.0, 0.0).expect("set_offset");
 
         // 6. Present（硬约束 #3：非空 params）
         zephyra_dcomp::present_one(&swapchain, 0).expect("present_one");
@@ -197,11 +204,9 @@ fn device_creation_falls_back_to_null_device() {
         let queue_unknown: IUnknown = device.cast().expect("QI IUnknown");
 
         // 直接给 IDXGIDevice 的父类接口形态 —— DComp QI 会失败，走 fallback。
-        let comp = zephyra_dcomp::DcompCompositor::new_from_rendering_device(
-            hwnd,
-            Some(&queue_unknown),
-        )
-        .expect("应经 v2/v3/null fallback 建树成功");
+        let comp =
+            zephyra_dcomp::DcompCompositor::new_from_rendering_device(hwnd, Some(&queue_unknown))
+                .expect("应经 v2/v3/null fallback 建树成功");
 
         assert_eq!(comp.visual_count(), 0);
         assert!(comp.commit().is_ok(), "fallback 建出的树应可提交");

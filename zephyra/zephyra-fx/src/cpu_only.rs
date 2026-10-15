@@ -32,16 +32,16 @@
 //! 「顶点流是对的」，而不是「渲染是对的」。
 
 use zephyra_core::context::Context;
+use zephyra_core::diff::DiffStats;
 use zephyra_core::frame::{Damage, FrameCache, FrameOutcome};
 use zephyra_core::input::InputRouter;
 use zephyra_core::paint::DisplayList;
-use zephyra_core::diff::DiffStats;
 use zephyra_core::theme::Theme;
 
 use crate::cpu_raster::{self, CpuCanvas};
 use crate::quad;
-use crate::texture::TextureNames;
 use crate::text;
+use crate::texture::TextureNames;
 use crate::{Frame, View};
 
 /// 文本引擎 —— 与 [`crate::TextEngine`] 是**同一个类型**。
@@ -227,8 +227,8 @@ impl<V: View> CpuHost<V> {
             // 用 `with_engine(...)` 再 `.with_icons(...)` 而不是直接 `with_all`：
             // 布局与命中测试不需要图标，只有渲染趟要；而 `Context` 是 `Copy`，
             // 挂一次到处都能用。
-            let ctx = Context::with_engine(theme, &self.engine)
-                .with_icons(zephyra_core::icon::builtin());
+            let ctx =
+                Context::with_engine(theme, &self.engine).with_icons(zephyra_core::icon::builtin());
             let element = self.view.view(&ctx);
             let size = self.size;
             t.view_us = t0.elapsed().as_micros() as u32;
@@ -243,7 +243,9 @@ impl<V: View> CpuHost<V> {
             // "带观测钩子" —— 而它的全部价值就在于能在无 GPU 环境里断言。
             // 真要分段，直接改 `frame.rs` 加临时探针（注意探针本身的开销）。
             let tc = std::time::Instant::now();
-            let outcome = self.cache.frame(&element, ctx, (size.0 as f32, size.1 as f32));
+            let outcome = self
+                .cache
+                .frame(&element, ctx, (size.0 as f32, size.1 as f32));
             t.cache_us = tc.elapsed().as_micros() as u32;
 
             match outcome {
@@ -260,8 +262,12 @@ impl<V: View> CpuHost<V> {
         // `Unchanged` 时仍然展开：CPU 参考光栅器是**离屏单帧**工具（`--dump-cpu`
         // 只跑一帧），它的产物要能从上一帧的列表复现。门控省的是 GPU 那条路，
         // 不是这里。
-        let render =
-            quad::expand_into(self.cache.list(), self.size, &|n| self.textures.contains(n), &mut self.scratch);
+        let render = quad::expand_into(
+            self.cache.list(),
+            self.size,
+            &|n| self.textures.contains(n),
+            &mut self.scratch,
+        );
         t.expand_us = t4.elapsed().as_micros() as u32;
         t.total_us = t.sum();
 
@@ -316,8 +322,11 @@ impl<V: View> CpuHost<V> {
             pixels: atlas.pixels().to_vec(),
             size: atlas.size(),
         };
-        let mut canvas =
-            CpuCanvas::new(self.size.0, self.size.1, [clear.r, clear.g, clear.b, clear.a]);
+        let mut canvas = CpuCanvas::new(
+            self.size.0,
+            self.size.1,
+            [clear.r, clear.g, clear.b, clear.a],
+        );
         cpu_raster::draw_batch(&mut canvas, &batch, Some(&bitmap));
         canvas
     }
@@ -341,7 +350,11 @@ impl<V: View> CpuHost<V> {
     ///
     /// 用 sRGB 编码写：这是**给人看**的那一步，编码必须发生在这里而不是渲染里
     /// —— 混进渲染会让「像素值对不对」这个判据变得不可用。
-    pub fn dump_cpu_bmp(&self, path: &str, clear: zephyra_core::core::Color) -> std::io::Result<()> {
+    pub fn dump_cpu_bmp(
+        &self,
+        path: &str,
+        clear: zephyra_core::core::Color,
+    ) -> std::io::Result<()> {
         let canvas = self.render_cpu(clear);
         crate::write_bmp(
             path,

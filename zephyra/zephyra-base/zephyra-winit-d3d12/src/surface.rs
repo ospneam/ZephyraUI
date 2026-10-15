@@ -31,10 +31,10 @@
 #![cfg(windows)]
 
 use windows::core::Interface as _;
-use windows::Win32::Foundation::{E_POINTER, E_FAIL, RECT};
+use windows::Win32::Foundation::{E_FAIL, E_POINTER, RECT};
 use windows::Win32::Graphics::Direct3D12::*;
 use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_SAMPLE_DESC};
-use windows::Win32::Graphics::Dxgi::{CreateDXGIFactory1, DXGI_ERROR_NOT_FOUND, IDXGIAdapter1};
+use windows::Win32::Graphics::Dxgi::{CreateDXGIFactory1, IDXGIAdapter1, DXGI_ERROR_NOT_FOUND};
 
 /// 设备 + 提交队列 + 命令分配器 + 命令列表 + 栅栏。
 ///
@@ -227,7 +227,11 @@ impl DebugInfo {
                 //
                 // 先空指针问一次要多少（更稳），失败就退回一个宽松的固定值。
                 let mut need: usize = 0;
-                if self.queue.GetMessage(i, None, &mut need as *mut usize).is_err() {
+                if self
+                    .queue
+                    .GetMessage(i, None, &mut need as *mut usize)
+                    .is_err()
+                {
                     need = 0;
                 }
                 let mut buf = vec![0u8; need.max(std::mem::size_of::<D3D12_MESSAGE>() * 8)];
@@ -309,7 +313,7 @@ impl Gpu {
                 &mut device,
             )
         }
-            .map_err(|e| SurfaceError::new("D3D12CreateDevice", e))?;
+        .map_err(|e| SurfaceError::new("D3D12CreateDevice", e))?;
         let device = device.expect("D3D12CreateDevice 成功时必给设备");
 
         let queue: ID3D12CommandQueue =
@@ -323,17 +327,11 @@ impl Gpu {
                 unsafe { device.CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT) }
                     .map_err(|e| SurfaceError::new("CreateCommandAllocator", e))?;
             let list: ID3D12GraphicsCommandList = unsafe {
-                device.CreateCommandList(
-                    0,
-                    D3D12_COMMAND_LIST_TYPE_DIRECT,
-                    &allocator,
-                    None,
-                )
+                device.CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, &allocator, None)
             }
             .map_err(|e| SurfaceError::new("CreateCommandList", e))?;
             // `CreateCommandList` 交付时处于**记录中**状态，必须先关掉才能在帧循环里复用。
-            unsafe { list.Close() }
-                .map_err(|e| SurfaceError::new("Close 初始命令列表", e))?;
+            unsafe { list.Close() }.map_err(|e| SurfaceError::new("Close 初始命令列表", e))?;
             slots.push(FrameSlot {
                 allocator,
                 list,
@@ -351,15 +349,12 @@ impl Gpu {
             .map(|o| o.take().expect("刚刚逐个塞进去的"))
             .into();
 
-        let fence: ID3D12Fence = unsafe {
-            device.CreateFence(0, D3D12_FENCE_FLAG_NONE)
-        }
-        .map_err(|e| SurfaceError::new("CreateFence", e))?;
+        let fence: ID3D12Fence = unsafe { device.CreateFence(0, D3D12_FENCE_FLAG_NONE) }
+            .map_err(|e| SurfaceError::new("CreateFence", e))?;
 
-        let fence_event = unsafe {
-            windows::Win32::System::Threading::CreateEventW(None, false, false, None)
-        }
-        .map_err(|e| SurfaceError::new("CreateEvent（栅栏事件）", e))?;
+        let fence_event =
+            unsafe { windows::Win32::System::Threading::CreateEventW(None, false, false, None) }
+                .map_err(|e| SurfaceError::new("CreateEvent（栅栏事件）", e))?;
 
         let debug = if debug_enabled() {
             // 队列取自**设备**，不是全局 layer。见 `attach` 的说明。
@@ -437,7 +432,10 @@ impl Gpu {
         // `E_FAIL (0x80004005)`，与上面这条语义逐字对上。
         if let Err(e) = unsafe { slot.allocator.Reset() } {
             self.drain_debug();
-            return Err(SurfaceError::new("Reset 命令分配器（列表必须先处于关闭态）", e));
+            return Err(SurfaceError::new(
+                "Reset 命令分配器（列表必须先处于关闭态）",
+                e,
+            ));
         }
         if let Err(e) = unsafe { slot.list.Reset(&slot.allocator, None) } {
             self.drain_debug();
@@ -462,9 +460,10 @@ impl Gpu {
         let value = self.fence_value;
         // `ExecuteCommandLists` 收的是基类 `ID3D12CommandList`。`cast()` 走 QueryInterface，
         // 拿到的是**同一个对象**（D3D12 的接口继承不做包装），所以这里没有额外开销。
-        let base: ID3D12CommandList = slot.list.cast().map_err(|e| {
-            SurfaceError::new("把命令列表转成 ID3D12CommandList", e)
-        })?;
+        let base: ID3D12CommandList = slot
+            .list
+            .cast()
+            .map_err(|e| SurfaceError::new("把命令列表转成 ID3D12CommandList", e))?;
         unsafe { self.queue.ExecuteCommandLists(&[Some(base)]) };
         unsafe { self.queue.Signal(&self.fence, value) }
             .map_err(|e| SurfaceError::new("Signal 栅栏", e))?;
@@ -538,9 +537,9 @@ impl Gpu {
                 .map_err(|e| SurfaceError::new(format!("放开引用：Reset 命令列表（槽 {i}）"), e))?;
             unsafe { slot.list.Close() }
                 .map_err(|e| SurfaceError::new(format!("放开引用：Close 命令列表（槽 {i}）"), e))?;
-            unsafe { slot.allocator.Reset() }
-                .map_err(|e| SurfaceError::new(format!("放开引用：Reset 命令分配器（槽 {i}）"), e))?;
-
+            unsafe { slot.allocator.Reset() }.map_err(|e| {
+                SurfaceError::new(format!("放开引用：Reset 命令分配器（槽 {i}）"), e)
+            })?;
         }
         Ok(())
     }
@@ -559,12 +558,7 @@ impl Gpu {
                 unsafe { device.CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT) }
                     .map_err(|e| SurfaceError::new("重建槽：CreateCommandAllocator", e))?;
             let list: ID3D12GraphicsCommandList = unsafe {
-                device.CreateCommandList(
-                    0,
-                    D3D12_COMMAND_LIST_TYPE_DIRECT,
-                    &allocator,
-                    None,
-                )
+                device.CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, &allocator, None)
             }
             .map_err(|e| SurfaceError::new("重建槽：CreateCommandList", e))?;
             unsafe { list.Close() }.map_err(|e| SurfaceError::new("重建槽：Close", e))?;
@@ -660,7 +654,7 @@ impl Gpu {
         self.wait_gpu()
     }
 
-/// 发一条资源状态转换屏障。
+    /// 发一条资源状态转换屏障。
     ///
     /// # 为什么它是自由函数而不是 `Gpu` 的方法
     ///
@@ -678,14 +672,12 @@ impl Gpu {
                 Type: D3D12_RESOURCE_BARRIER_TYPE_TRANSITION,
                 Flags: D3D12_RESOURCE_BARRIER_FLAG_NONE,
                 Anonymous: D3D12_RESOURCE_BARRIER_0 {
-                    Transition: std::mem::ManuallyDrop::new(
-                        D3D12_RESOURCE_TRANSITION_BARRIER {
-                            pResource: std::mem::ManuallyDrop::new(Some(resource.clone())),
-                            Subresource: D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,
-                            StateBefore: before,
-                            StateAfter: after,
-                        },
-                    ),
+                    Transition: std::mem::ManuallyDrop::new(D3D12_RESOURCE_TRANSITION_BARRIER {
+                        pResource: std::mem::ManuallyDrop::new(Some(resource.clone())),
+                        Subresource: D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,
+                        StateBefore: before,
+                        StateAfter: after,
+                    }),
                 },
             }]);
         }
@@ -759,8 +751,17 @@ impl DescriptorHeap {
     /// 建 CBV/SRV/UAV 堆。
     ///
     /// `shader_visible = true` 才能被 `SetGraphicsRootDescriptorTable` 用。
-    pub fn new_srv(device: &ID3D12Device, count: u32, shader_visible: bool) -> Result<Self, SurfaceError> {
-        Self::new(device, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, count, shader_visible)
+    pub fn new_srv(
+        device: &ID3D12Device,
+        count: u32,
+        shader_visible: bool,
+    ) -> Result<Self, SurfaceError> {
+        Self::new(
+            device,
+            D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV,
+            count,
+            shader_visible,
+        )
     }
 
     fn new(
@@ -787,8 +788,7 @@ impl DescriptorHeap {
         Ok(Self {
             cpu_start: unsafe { heap.GetCPUDescriptorHandleForHeapStart() },
             // 只在 shader visible 时才问 GPU 句柄 —— 见 `gpu_start` 的说明。
-            gpu_start: shader_visible
-                .then(|| unsafe { heap.GetGPUDescriptorHandleForHeapStart() }),
+            gpu_start: shader_visible.then(|| unsafe { heap.GetGPUDescriptorHandleForHeapStart() }),
             // 名字叫 `GetDescriptorHandleIncrementSize` 而不是 C API 的
             // `GetDescriptorHandleSize` —— windows-rs 0.62 的命名，含义相同。
             stride: unsafe { device.GetDescriptorHandleIncrementSize(kind) },
@@ -1062,7 +1062,8 @@ impl Offscreen {
             End: total,
         };
         let mut ptr = std::ptr::null_mut();
-        if unsafe { staging.buffer.Map(0, Some(&range), Some(&mut ptr)) }.is_err() || ptr.is_null() {
+        if unsafe { staging.buffer.Map(0, Some(&range), Some(&mut ptr)) }.is_err() || ptr.is_null()
+        {
             return Vec::new();
         }
         let row_pitch = staging.row_pitch as usize;
@@ -1155,7 +1156,10 @@ pub fn texture_desc(size: (u32, u32), flags: D3D12_RESOURCE_FLAGS) -> D3D12_RESO
         DepthOrArraySize: 1,
         MipLevels: 1,
         Format: DXGI_FORMAT_R8G8B8A8_UNORM,
-        SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+        SampleDesc: DXGI_SAMPLE_DESC {
+            Count: 1,
+            Quality: 0,
+        },
         Layout: D3D12_TEXTURE_LAYOUT_UNKNOWN,
         Flags: flags,
     }
@@ -1211,16 +1215,17 @@ pub fn create_resource(
     // 直接用默认值。
     //
     // 颜色全零即透明黑：本项目所有清屏都是覆盖式的，值选什么都不影响正确性。
-    let clear: Option<D3D12_CLEAR_VALUE> = if desc.Flags.0 & D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET.0 != 0 {
-        Some(D3D12_CLEAR_VALUE {
-            Format: desc.Format,
-            Anonymous: D3D12_CLEAR_VALUE_0 {
-                Color: [0.0, 0.0, 0.0, 0.0],
-            },
-        })
-    } else {
-        None
-    };
+    let clear: Option<D3D12_CLEAR_VALUE> =
+        if desc.Flags.0 & D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET.0 != 0 {
+            Some(D3D12_CLEAR_VALUE {
+                Format: desc.Format,
+                Anonymous: D3D12_CLEAR_VALUE_0 {
+                    Color: [0.0, 0.0, 0.0, 0.0],
+                },
+            })
+        } else {
+            None
+        };
 
     let mut out = None::<ID3D12Resource>;
     unsafe {
@@ -1296,9 +1301,7 @@ fn pick_adapter(
         // 拿不到描述就当它不是软件适配器 —— 保守地继续用，总比直接放弃好。
         let (is_software, vram) = match unsafe { adapter.GetDesc1() } {
             Ok(d) => (
-                d.Flags
-                    & windows::Win32::Graphics::Dxgi::DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32
-                    != 0,
+                d.Flags & windows::Win32::Graphics::Dxgi::DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32 != 0,
                 d.DedicatedVideoMemory,
             ),
             Err(_) => (false, 0),

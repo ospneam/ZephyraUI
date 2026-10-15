@@ -7,9 +7,9 @@
 //! 逐个把实现改坏、确认它会红。
 
 use zephyra_core::core::Color;
+use zephyra_core::diff::diff;
 use zephyra_core::element::Element;
 use zephyra_core::id::NodeTag;
-use zephyra_core::diff::diff;
 use zephyra_core::node::{clear_dirty, Dirty, Node};
 use zephyra_core::property::{PropertyValue, ValueSource};
 use zephyra_core::props;
@@ -59,7 +59,10 @@ const BLUE: Color = Color::rgb(0.0, 0.0, 1.0);
 #[test]
 fn tag_selector_matches_only_that_type() {
     let s = Selector::tag(NodeTag::Control);
-    assert!(s.matches(NodeTag::Control, &["any"]), "matching type must hit");
+    assert!(
+        s.matches(NodeTag::Control, &["any"]),
+        "matching type must hit"
+    );
     assert!(
         !s.matches(NodeTag::Container, &[]),
         "a wrong type must not hit -- even when the element carries no class name"
@@ -69,7 +72,10 @@ fn tag_selector_matches_only_that_type() {
 #[test]
 fn named_selector_matches_on_key() {
     let s = Selector::named("danger");
-    assert!(s.matches(NodeTag::Control, &["danger"]), "matching name must hit");
+    assert!(
+        s.matches(NodeTag::Control, &["danger"]),
+        "matching name must hit"
+    );
     assert!(
         !s.matches(NodeTag::Control, &["normal"]),
         "a wrong name must not hit -- **the easiest one to write vacuous**: if names are not checked, any class name hits and the test still passes"
@@ -132,8 +138,16 @@ fn empty_names_matches_nodes_that_do_have_names() {
 
 #[test]
 fn specificity_counts_names_not_types() {
-    assert_eq!(Selector::tag(NodeTag::Control).specificity(), 0, "a bare type has no weight");
-    assert_eq!(Selector::named("danger").specificity(), 1, "one class name counts as 1");
+    assert_eq!(
+        Selector::tag(NodeTag::Control).specificity(),
+        0,
+        "a bare type has no weight"
+    );
+    assert_eq!(
+        Selector::named("danger").specificity(),
+        1,
+        "one class name counts as 1"
+    );
 }
 
 #[test]
@@ -431,7 +445,9 @@ fn an_event_key_is_not_a_style_name() {
 fn style_and_key_are_independent_namespaces() {
     // Same word, two roles: keyed for events, styled for looks.
     let mut node = Node::from_element(
-        &Element::new(NodeTag::Control).with_key("reset").style("primary"),
+        &Element::new(NodeTag::Control)
+            .with_key("reset")
+            .style("primary"),
     );
     let sheet = StyleSheet::from_rules(vec![
         background_rule(Selector::named("primary"), RED, 0),
@@ -524,7 +540,9 @@ fn a_state_class_that_disappears_takes_its_values_with_it() {
     let mut node = Node::from_element(&checked);
     sheet.apply_all(&mut node);
     assert_eq!(
-        node.props().lookup(&props::BORDER_WIDTH).map(|(v, _)| v.clone()),
+        node.props()
+            .lookup(&props::BORDER_WIDTH)
+            .map(|(v, _)| v.clone()),
         Some(PropertyValue::float(3.0)),
         "带 `checked` 时 BORDER_WIDTH 应当来自状态规则"
     );
@@ -533,13 +551,17 @@ fn a_state_class_that_disappears_takes_its_values_with_it() {
     zephyra_core::diff::diff(&mut node, &unchecked);
     sheet.apply_all(&mut node);
     assert_eq!(
-        node.props().lookup(&props::BORDER_WIDTH).map(|(v, _)| v.clone()),
+        node.props()
+            .lookup(&props::BORDER_WIDTH)
+            .map(|(v, _)| v.clone()),
         None,
         "`checked` 已经不在分类名里，它写的 BORDER_WIDTH 必须被拆掉 —— \
          这正是「点一下取消勾选，底色还是选中色」的成因"
     );
     assert_eq!(
-        node.props().lookup(&props::BACKGROUND).map(|(v, _)| v.clone()),
+        node.props()
+            .lookup(&props::BACKGROUND)
+            .map(|(v, _)| v.clone()),
         Some(PropertyValue::color(BLUE)),
         "基类规则仍然匹配，它的值必须留着（拆的只是没人写的那部分）"
     );
@@ -562,13 +584,14 @@ fn applying_after_diff_sees_restyled_nodes() {
     // 第一帧：Container。
     diff(&mut node, &Element::new(NodeTag::Container));
     sheet.apply_all(&mut node);
-    assert_eq!(background_of(&node), None, "Container must not match 'danger'");
+    assert_eq!(
+        background_of(&node),
+        None,
+        "Container must not match 'danger'"
+    );
 
     // 第二帧：同一个位置变成带 key 的 Control —— diff 会**整个替换**节点。
-    diff(
-        &mut node,
-        &Element::new(NodeTag::Control).style("danger"),
-    );
+    diff(&mut node, &Element::new(NodeTag::Control).style("danger"));
     // ⚠️ 关键：diff 之后这里必须是 None（Styled 层被重建丢掉了）。
     assert_eq!(
         background_of(&node),
@@ -588,5 +611,4 @@ fn rect_defaults_are_not_disturbed_by_styling() {
     let before = node.rect();
     sheet.apply_all(&mut node);
     assert_eq!(node.rect(), before, "apply must not touch the layout rect");
-
 }

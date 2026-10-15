@@ -153,32 +153,32 @@ fn cubic_bezier(t: f32, x1: f32, y1: f32, x2: f32, y2: f32) -> f32 {
     let x_of = |s: f32| ((ax * s + bx) * s + cx) * s;
     let y_of = |s: f32| ((ay * s + by) * s + cy) * s;
 
-        // 牛顿迭代解 `x_of(s) = t`。8 次足够：贝塞尔在这个区间上是单调的且平滑。
-        //
-        // ⚠️ `s` 必须每步夹在 [0,1]。不夹的后果很具体：`x_of(s)=s³` 时
-        // 导数 `3s²` 在 s→0 附近趋 0，于是一次迭代就把 s 推到 16.8，
-        // 之后 `y_of` 溢出、被外层 clamp 成 0.9989 —— 曲线看起来"倒退"，
-        // 而那种抖动与"参数选错"完全不同，极难归因。
-        let mut s = t;
-        for _ in 0..8 {
-            let x = x_of(s) - t;
-            let d = (3.0 * ax * s + 2.0 * bx) * s + cx;
-            if d == 0.0 || !d.is_finite() {
-                break;
-            }
-            let next = s - x / d;
-            if !next.is_finite() {
-                break;
-            }
-            let next = next.clamp(0.0, 1.0);
-            // 已收敛到浮点精度就停：继续迭代只会来回抖。
-            if (next - s).abs() < 1e-6 {
-                s = next;
-                break;
-            }
-            s = next;
+    // 牛顿迭代解 `x_of(s) = t`。8 次足够：贝塞尔在这个区间上是单调的且平滑。
+    //
+    // ⚠️ `s` 必须每步夹在 [0,1]。不夹的后果很具体：`x_of(s)=s³` 时
+    // 导数 `3s²` 在 s→0 附近趋 0，于是一次迭代就把 s 推到 16.8，
+    // 之后 `y_of` 溢出、被外层 clamp 成 0.9989 —— 曲线看起来"倒退"，
+    // 而那种抖动与"参数选错"完全不同，极难归因。
+    let mut s = t;
+    for _ in 0..8 {
+        let x = x_of(s) - t;
+        let d = (3.0 * ax * s + 2.0 * bx) * s + cx;
+        if d == 0.0 || !d.is_finite() {
+            break;
         }
-        y_of(s).clamp(0.0, 1.0)
+        let next = s - x / d;
+        if !next.is_finite() {
+            break;
+        }
+        let next = next.clamp(0.0, 1.0);
+        // 已收敛到浮点精度就停：继续迭代只会来回抖。
+        if (next - s).abs() < 1e-6 {
+            s = next;
+            break;
+        }
+        s = next;
+    }
+    y_of(s).clamp(0.0, 1.0)
 }
 
 /// 把「已过去的毫秒数」换算成缓动后的进度（0..1）。

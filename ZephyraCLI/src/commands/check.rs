@@ -26,7 +26,8 @@ pub fn run(a: &Args, w: &mut dyn Write) -> Result<ExitCode, CliError> {
         ));
     }
 
-    let paths: Vec<std::path::PathBuf> = a.positional.iter().map(std::path::PathBuf::from).collect();
+    let paths: Vec<std::path::PathBuf> =
+        a.positional.iter().map(std::path::PathBuf::from).collect();
     // ⚠ 读不到文件是**用法错**（退出码 2），不是「样式表有问题」（1）。
     // 两者在 CI 里要能分别处理：前者改流水线/路径，后者改样式表。
     let reports = zstylec::check(&paths)
@@ -71,7 +72,10 @@ fn emit_human(rs: &[zstylec::FileReport], w: &mut dyn Write) {
             w.line(&format!("ok  {} ({} rules)", r.name, r.rules.unwrap_or(0)));
             continue;
         }
-        let has_err = r.diagnostics.iter().any(|d| d.level == zstylec::Level::Error);
+        let has_err = r
+            .diagnostics
+            .iter()
+            .any(|d| d.level == zstylec::Level::Error);
         for d in &r.diagnostics {
             let e = &d.error;
             w.err_line(&format!(
@@ -125,7 +129,11 @@ fn emit_json(rs: &[zstylec::FileReport], w: &mut dyn Write) {
                 e.at.col,
                 esc(&e.headline),
                 esc(&e.hint),
-                if di + 1 == r.diagnostics.len() { "" } else { "," }
+                if di + 1 == r.diagnostics.len() {
+                    ""
+                } else {
+                    ","
+                }
             ));
         }
         w.line("  ]}}");

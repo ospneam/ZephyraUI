@@ -28,11 +28,11 @@ use zephyra_core::context::Context;
 use zephyra_core::core::{Point, Rect};
 use zephyra_core::element::Element;
 use zephyra_core::frame::FrameCache;
+use zephyra_core::hit::{HitResult, HitTestRequest};
 use zephyra_core::id::NodeTag;
 use zephyra_core::paint::{Command, DisplayList};
 use zephyra_core::property::PropertyValue;
 use zephyra_core::props;
-use zephyra_core::hit::{HitResult, HitTestRequest};
 use zephyra_core::text::NullEngine;
 use zephyra_core::theme::{Theme, ThemeVariant};
 
@@ -292,10 +292,7 @@ fn offset_does_not_change_layout_rect() {
             _ => None,
         })
         .unwrap();
-    assert_eq!(
-        rb.y - ra.y, 20.0,
-        "绘制矩形应下移 20"
-    );
+    assert_eq!(rb.y - ra.y, 20.0, "绘制矩形应下移 20");
 }
 
 /// 布局阶段的矩形**真的没变**（与上一条配对的另一半）。

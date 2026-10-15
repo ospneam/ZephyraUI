@@ -118,7 +118,9 @@ impl D3D11 {
     fn new() -> Self {
         let gpu = Gpu::new().expect("应当建得出 D3D11 设备");
         use windows::Win32::Graphics::Direct3D11::*;
-        use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC};
+        use windows::Win32::Graphics::Dxgi::Common::{
+            DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC,
+        };
         let desc = D3D11_TEXTURE2D_DESC {
             Width: SIZE,
             Height: SIZE,
@@ -126,19 +128,28 @@ impl D3D11 {
             ArraySize: 1,
             Format: DXGI_FORMAT_B8G8R8A8_UNORM,
             // ⚠ 必须与 `Renderer` 用的采样数一致。
-            SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+            SampleDesc: DXGI_SAMPLE_DESC {
+                Count: 1,
+                Quality: 0,
+            },
             Usage: D3D11_USAGE_DEFAULT,
             BindFlags: D3D11_BIND_RENDER_TARGET.0 as u32,
             CPUAccessFlags: 0,
             MiscFlags: 0,
         };
         let mut tex = None;
-        unsafe { gpu.device.CreateTexture2D(&desc, None, Some(&mut tex as *mut _)) }
-            .expect("应当能创建离屏纹理");
+        unsafe {
+            gpu.device
+                .CreateTexture2D(&desc, None, Some(&mut tex as *mut _))
+        }
+        .expect("应当能创建离屏纹理");
         let tex = tex.expect("CreateTexture2D 成功时必给纹理");
         let mut rtv = None;
-        unsafe { gpu.device.CreateRenderTargetView(&tex, None, Some(&mut rtv as *mut _)) }
-            .expect("应当能创建离屏 RTV");
+        unsafe {
+            gpu.device
+                .CreateRenderTargetView(&tex, None, Some(&mut rtv as *mut _))
+        }
+        .expect("应当能创建离屏 RTV");
         let rtv = rtv.expect("CreateRenderTargetView 成功时必给视图");
         let renderer = Renderer::new(&gpu.device).expect("渲染器应当能建得出来");
         Self {
@@ -188,13 +199,19 @@ fn read_back(gpu: &Gpu, tex: &windows::Win32::Graphics::Direct3D11::ID3D11Textur
         MiscFlags: 0,
     };
     let mut staging = None;
-    unsafe { gpu.device.CreateTexture2D(&desc, None, Some(&mut staging as *mut _)) }
-        .expect("应当能创建 staging 纹理");
+    unsafe {
+        gpu.device
+            .CreateTexture2D(&desc, None, Some(&mut staging as *mut _))
+    }
+    .expect("应当能创建 staging 纹理");
     let staging = staging.expect("CreateTexture2D 成功时必给纹理");
     unsafe { gpu.context.CopyResource(&staging, tex) };
     let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
-    unsafe { gpu.context.Map(&staging, 0, D3D11_MAP_READ, 0, Some(&mut mapped)) }
-        .expect("应当能映射 staging");
+    unsafe {
+        gpu.context
+            .Map(&staging, 0, D3D11_MAP_READ, 0, Some(&mut mapped))
+    }
+    .expect("应当能映射 staging");
     let bytes = (SIZE * SIZE * 4) as usize;
     let out = unsafe { std::slice::from_raw_parts(mapped.pData.cast::<u8>(), bytes) }.to_vec();
     unsafe { gpu.context.Unmap(&staging, 0) };
@@ -269,7 +286,9 @@ fn bgra_to_rgba(bgra: &[u8]) -> Vec<[u8; 4]> {
 
 /// D3D12 的 `R8G8B8A8_UNORM` → RGBA，**不换通道**。
 fn rgba_as_is(px: &[u8]) -> Vec<[u8; 4]> {
-    px.chunks_exact(4).map(|p| [p[0], p[1], p[2], p[3]]).collect()
+    px.chunks_exact(4)
+        .map(|p| [p[0], p[1], p[2], p[3]])
+        .collect()
 }
 
 /// **全部 29 个模式**逐个对照，不抽样。
@@ -310,9 +329,9 @@ fn all_modes() -> Vec<BlendMode> {
     ]
 }
 
-    // 诊断：换前景色，看 D3D12 的 SoftLight 输出跟不跟着变。
-    // 跟着变 → 真的跑了 PSSoftLight；不变 → 那个 PS 根本没被用上。
-    /// **已知分歧**：这些模式两个后端画出来的不一样，先记在这里。
+// 诊断：换前景色，看 D3D12 的 SoftLight 输出跟不跟着变。
+// 跟着变 → 真的跑了 PSSoftLight；不变 → 那个 PS 根本没被用上。
+/// **已知分歧**：这些模式两个后端画出来的不一样，先记在这里。
 ///
 /// # 为什么不直接删掉这条判据
 ///

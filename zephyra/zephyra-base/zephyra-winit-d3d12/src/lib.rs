@@ -97,20 +97,20 @@ pub mod swapchain;
 
 // 后端无关的那一半在 `zephyra-fx`，不再在本 crate 里留副本。
 // 按原路径再导出，是为了让既有调用点（`zephyra_winit_d3d12::Vertex`）不用改。
+pub use zephyra_fx::layout_tree;
+pub use zephyra_fx::quad::Vertex;
 pub use zephyra_fx::{cpu_only, cpu_raster, pixels, quad, text};
 pub use zephyra_fx::{PixelRead, RenderReport, TextureNames};
-pub use zephyra_fx::quad::Vertex;
-pub use zephyra_fx::layout_tree;
 
 pub use renderer::{RenderCtx, Renderer, TextureTable};
 pub use shader::{ShaderError, Shaders};
 pub use surface::{DebugInfo, DescriptorHeap, Gpu, Offscreen, Staging, SurfaceError};
 // 设备消失 / resize 失败的「这一帧该不该画」判据。见 `host::should_draw_frame`
 // 与 `tests/device_lost_gate.rs`：它是纯函数，所以能在没有 GPU 的机器上门禁。
+pub use host::{run_with, HostWindow};
 pub use host::{should_draw_frame, SwapState};
 pub use swapchain::Swapchain;
-pub use host::{run_with, HostWindow};
-pub use zephyra_fx::{Frame, InputState, View, Z_INDEX};
 pub use winit;
+pub use zephyra_fx::{Frame, InputState, View, Z_INDEX};
 
 pub use zephyra_fx;

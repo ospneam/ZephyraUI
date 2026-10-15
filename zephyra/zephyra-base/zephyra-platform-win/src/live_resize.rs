@@ -110,7 +110,12 @@ pub fn wm_size_skipped() -> u64 {
 ///
 /// 由 [`install`] 把它设到窗口上，且由 [`restore`] 在销毁前摘掉。
 /// 除了 `WM_SIZE` 之外一律转给原过程，所以原过程的返回值语义不变。
-unsafe extern "system" fn live_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+unsafe extern "system" fn live_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
     if msg == WM_SIZE {
         WM_SIZE_SEEN.fetch_add(1, Ordering::Relaxed);
         // 拖动期间模态循环会把一串 `WM_SIZE` 依次交给这里，所以这一段是**热路径**。
@@ -235,7 +240,9 @@ pub enum LiveResizeError {
 impl std::fmt::Display for LiveResizeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            LiveResizeError::SetWindowLong(e) => write!(f, "SetWindowLongPtrW(GWLP_WNDPROC) 失败，GetLastError={e}"),
+            LiveResizeError::SetWindowLong(e) => {
+                write!(f, "SetWindowLongPtrW(GWLP_WNDPROC) 失败，GetLastError={e}")
+            }
         }
     }
 }

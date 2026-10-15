@@ -101,10 +101,7 @@ fn diag_bitmap() -> AtlasRaster {
 
 fn atlas_of(raster: AtlasRaster) -> GlyphAtlas {
     let mut atlas = GlyphAtlas::new();
-    let mut src = OneGlyph {
-        font_id: 7,
-        raster,
-    };
+    let mut src = OneGlyph { font_id: 7, raster };
     let entry = atlas
         .get_or_insert(src.font_id(), 1, 16, src.rasterize(1, 16))
         .expect("图集不该在第一个字形上就满");
@@ -133,7 +130,8 @@ fn coverage_原样落进图集_不因_offset_而移位() {
             let want = raster.coverage[(sy * raster.width + sx) as usize];
             let got = alpha_at(&atlas, ox + sx, oy + sy);
             assert_eq!(
-                got, want,
+                got,
+                want,
                 "coverage({sx},{sy}) 应落在图集 ({}, {})，但读到 {got}，期望 {want}",
                 ox + sx,
                 oy + sy
@@ -190,8 +188,7 @@ fn later_glyph_insert_does_not_erase_existing_ones() {
 
     // 满图**最后一行**仍在。
     let last_row_y = by + 63;
-    let still_there = (bx..bx + 64)
-        .all(|x| alpha_at(&atlas, x, last_row_y) == 200);
+    let still_there = (bx..bx + 64).all(|x| alpha_at(&atlas, x, last_row_y) == 200);
     assert!(
         still_there,
         "第二个字形插入后，第一个字形的最后一行被擦了 —— 透明像素不该覆盖已有内容"
@@ -243,7 +240,11 @@ fn reinserting_same_glyph_hits_cache() {
     let n = atlas.stats().glyphs;
     let b = atlas.get_or_insert(7, 1, 16, Some(raster)).unwrap();
     assert_eq!(a.uv, b.uv, "同一键两次插入返回了不同的位置");
-    assert_eq!(atlas.stats().glyphs, n, "第二次插入新增了条目 —— 缓存没命中");
+    assert_eq!(
+        atlas.stats().glyphs,
+        n,
+        "第二次插入新增了条目 —— 缓存没命中"
+    );
 }
 
 /// 字号不同 ⇒ 不同位图。
@@ -268,10 +269,7 @@ fn different_font_sizes_are_distinct_entries() {
 #[test]
 fn shaping_to_rasterization_chain_runs_end_to_end() {
     let raster = diag_bitmap();
-    let src = OneGlyph {
-        font_id: 3,
-        raster,
-    };
+    let src = OneGlyph { font_id: 3, raster };
     let mut stack = TextStack::new(src);
     let shaped = TextEngine::shape(
         &mut stack,

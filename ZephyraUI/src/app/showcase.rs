@@ -42,28 +42,95 @@ pub fn showcase(g: &Gallery, page: &str) -> Element {
     let body: Vec<Element> = match page {
         // ---------------- Basic input ----------------
         "Button" => vec![row_of(vec![
-            button("sc:btn-std", "Standard", None, "standard", g.hovers("sc:btn-std"), g.holds("sc:btn-std")),
-            button("sc:btn-acc", "Accent", None, "accent", g.hovers("sc:btn-acc"), g.holds("sc:btn-acc")),
-            button("sc:btn-sub", "Subtle", None, "subtle", g.hovers("sc:btn-sub"), g.holds("sc:btn-sub")),
+            button(
+                "sc:btn-std",
+                "Standard",
+                None,
+                "standard",
+                g.hovers("sc:btn-std"),
+                g.holds("sc:btn-std"),
+            ),
+            button(
+                "sc:btn-acc",
+                "Accent",
+                None,
+                "accent",
+                g.hovers("sc:btn-acc"),
+                g.holds("sc:btn-acc"),
+            ),
+            button(
+                "sc:btn-sub",
+                "Subtle",
+                None,
+                "subtle",
+                g.hovers("sc:btn-sub"),
+                g.holds("sc:btn-sub"),
+            ),
         ])],
         "CheckBox" => vec![stack_of(vec![
-            check_box("sc:cb1", "Option A", g.checked[0], g.hovers("sc:cb1"), g.holds("sc:cb1")),
-            check_box("sc:cb2", "Option B", g.checked[1], g.hovers("sc:cb2"), g.holds("sc:cb2")),
-            check_box("sc:cb3", "Option C", g.checked[2], g.hovers("sc:cb3"), g.holds("sc:cb3")),
+            check_box(
+                "sc:cb1",
+                "Option A",
+                g.checked[0],
+                g.hovers("sc:cb1"),
+                g.holds("sc:cb1"),
+            ),
+            check_box(
+                "sc:cb2",
+                "Option B",
+                g.checked[1],
+                g.hovers("sc:cb2"),
+                g.holds("sc:cb2"),
+            ),
+            check_box(
+                "sc:cb3",
+                "Option C",
+                g.checked[2],
+                g.hovers("sc:cb3"),
+                g.holds("sc:cb3"),
+            ),
         ])],
         "RadioButton" => vec![stack_of(vec![
-            radio_button("sc:r1", "Choice A", g.round_on, g.hovers("sc:r1"), g.holds("sc:r1")),
-            radio_button("sc:r2", "Choice B", !g.round_on, g.hovers("sc:r2"), g.holds("sc:r2")),
+            radio_button(
+                "sc:r1",
+                "Choice A",
+                g.round_on,
+                g.hovers("sc:r1"),
+                g.holds("sc:r1"),
+            ),
+            radio_button(
+                "sc:r2",
+                "Choice B",
+                !g.round_on,
+                g.hovers("sc:r2"),
+                g.holds("sc:r2"),
+            ),
         ])],
         "Switch" => vec![stack_of(vec![
             toggle_switch("sc:sw1", g.switch_on, g.hovers("sc:sw1"), g.holds("sc:sw1")),
-            toggle_switch("sc:sw2", !g.switch_on, g.hovers("sc:sw2"), g.holds("sc:sw2")),
+            toggle_switch(
+                "sc:sw2",
+                !g.switch_on,
+                g.hovers("sc:sw2"),
+                g.holds("sc:sw2"),
+            ),
         ])],
         "ToggleButton" => vec![row_of(vec![pill_button(
-            "sc:tg", "Toggle me", None, g.round_on, g.hovers("sc:tg"), g.holds("sc:tg"),
+            "sc:tg",
+            "Toggle me",
+            None,
+            g.round_on,
+            g.hovers("sc:tg"),
+            g.holds("sc:tg"),
         )])],
         "Slider" => vec![stack_of(vec![
-            slider("sc:sl1", g.volume, Some("Volume"), g.hovers("sc:sl1"), g.holds("sc:sl1")),
+            slider(
+                "sc:sl1",
+                g.volume,
+                Some("Volume"),
+                g.hovers("sc:sl1"),
+                g.holds("sc:sl1"),
+            ),
             slider("sc:sl2", 0.25, None, g.hovers("sc:sl2"), g.holds("sc:sl2")),
         ])],
         "ComboBox" => vec![row_of(vec![combo_box(
@@ -73,32 +140,84 @@ pub fn showcase(g: &Gallery, page: &str) -> Element {
             g.holds("sc:cbx"),
         )])],
         "SpinBox" => vec![row_of(vec![spin_box(
-            "sc:spin", "42", g.hovers("sc:spin"), g.holds("sc:spin"),
-            g.hovers("sc:spin:up"), g.holds("sc:spin:up"),
-            g.hovers("sc:spin:down"), g.holds("sc:spin:down"),
+            "sc:spin",
+            "42",
+            g.hovers("sc:spin"),
+            g.holds("sc:spin"),
+            g.hovers("sc:spin:up"),
+            g.holds("sc:spin:up"),
+            g.hovers("sc:spin:down"),
+            g.holds("sc:spin:down"),
         )])],
         "ColorPicker" => vec![color_picker("sc:color", 0)],
         "Hyperlink" => vec![row_of(vec![hyperlink(
-            "sc:link", "ZephyraUI docs", "", g.hovers("sc:link"),
+            "sc:link",
+            "ZephyraUI docs",
+            "",
+            g.hovers("sc:link"),
         )])],
         "DropDownButton" => vec![row_of(vec![drop_down_button(
-            "sc:dd", "Actions", None, g.dd_open, g.hovers("sc:dd"), g.holds("sc:dd"),
+            "sc:dd",
+            "Actions",
+            None,
+            g.dd_open,
+            g.hovers("sc:dd"),
+            g.holds("sc:dd"),
         )])],
         "PillButton" => vec![row_of(vec![
-            pill_button("sc:pill1", "Recent", Some("home"), true, g.hovers("sc:pill1"), g.holds("sc:pill1")),
-            pill_button("sc:pill2", "Favorite", Some("star"), false, g.hovers("sc:pill2"), g.holds("sc:pill2")),
+            pill_button(
+                "sc:pill1",
+                "Recent",
+                Some("home"),
+                true,
+                g.hovers("sc:pill1"),
+                g.holds("sc:pill1"),
+            ),
+            pill_button(
+                "sc:pill2",
+                "Favorite",
+                Some("star"),
+                false,
+                g.hovers("sc:pill2"),
+                g.holds("sc:pill2"),
+            ),
         ])],
         "RoundButton" => vec![row_of(vec![round_button(
-            "sc:round", "Add", Some("pen"), g.round_on, g.hovers("sc:round"), g.holds("sc:round"),
+            "sc:round",
+            "Add",
+            Some("pen"),
+            g.round_on,
+            g.hovers("sc:round"),
+            g.holds("sc:round"),
         )])],
         // ---------------- Text ----------------
         "TextField" => vec![stack_of(vec![
-            text_field("sc:tf1", Some("ZephyraUI"), "Type here", true, g.hovers("sc:tf1"), g.holds("sc:tf1")),
-            text_field("sc:tf2", None, "Placeholder only", false, g.hovers("sc:tf2"), g.holds("sc:tf2")),
+            text_field(
+                "sc:tf1",
+                Some("ZephyraUI"),
+                "Type here",
+                true,
+                g.hovers("sc:tf1"),
+                g.holds("sc:tf1"),
+            ),
+            text_field(
+                "sc:tf2",
+                None,
+                "Placeholder only",
+                false,
+                g.hovers("sc:tf2"),
+                g.holds("sc:tf2"),
+            ),
         ])],
         "TextArea" => vec![text_area("sc:ta", AREA_LINES)],
         "AutoSuggestBox" => vec![auto_suggest_box(
-            "sc:asb", None, "Search controls", SUGGESTIONS, 0, true, g.hovers("sc:asb"),
+            "sc:asb",
+            None,
+            "Search controls",
+            SUGGESTIONS,
+            0,
+            true,
+            g.hovers("sc:asb"),
         )],
         // ---------------- Status & info ----------------
         "InfoBadge" => vec![row_of(vec![
@@ -122,9 +241,20 @@ pub fn showcase(g: &Gallery, page: &str) -> Element {
         ])],
         "PageIndicator" => vec![page_indicator("sc:pi", 5, 2)],
         "ToolTip" => vec![tool_tip("sc:tip", "A tooltip with a short hint.")],
-        "Toast" => vec![toast("sc:toast", "Saved", "Your changes are live.", "success")],
+        "Toast" => vec![toast(
+            "sc:toast",
+            "Saved",
+            "Your changes are live.",
+            "success",
+        )],
         // ---------------- Collections ----------------
-        "ListView" => vec![list_view("sc:lv", LIST_ITEMS, Some("Alpha"), g.hovered_name(), g.pressed_name())],
+        "ListView" => vec![list_view(
+            "sc:lv",
+            LIST_ITEMS,
+            Some("Alpha"),
+            g.hovered_name(),
+            g.pressed_name(),
+        )],
         "TableView" => vec![table_view("sc:tv", TABLE_HEADS, TABLE_ROWS)],
         "SwipeView" => vec![swipe_view("sc:sv", SWIPE_PAGES, 0)],
         // ---------------- Menus & toolbars ----------------
@@ -132,25 +262,70 @@ pub fn showcase(g: &Gallery, page: &str) -> Element {
         "MenuBar" => vec![menu_bar("sc:mb", MENU_BAR_ITEMS, None)],
         // ---------------- Navigation ----------------
         "NavigationView" => vec![stack_of(vec![
-            nav_item("sc:nav1", "Home", "home", true, g.hovers("sc:nav1"), g.holds("sc:nav1"), false),
-            nav_item("sc:nav2", "Settings", "settings", false, g.hovers("sc:nav2"), g.holds("sc:nav2"), false),
+            nav_item(
+                "sc:nav1",
+                "Home",
+                "home",
+                true,
+                g.hovers("sc:nav1"),
+                g.holds("sc:nav1"),
+                false,
+            ),
+            nav_item(
+                "sc:nav2",
+                "Settings",
+                "settings",
+                false,
+                g.hovers("sc:nav2"),
+                g.holds("sc:nav2"),
+                false,
+            ),
         ])],
-        "SelectorBar" => vec![selector_bar("sc:sb", SELECTOR_ITEMS, Some("nav"), g.hovered_name(), g.pressed_name())],
+        "SelectorBar" => vec![selector_bar(
+            "sc:sb",
+            SELECTOR_ITEMS,
+            Some("nav"),
+            g.hovered_name(),
+            g.pressed_name(),
+        )],
         // ---------------- Dialogs ----------------
         "Dialog" => vec![dialog(
-            "sc:dialog", "Delete file?", "This cannot be undone.",
-            DIALOG_BUTTONS, g.hovered_name(), g.pressed_name(),
+            "sc:dialog",
+            "Delete file?",
+            "This cannot be undone.",
+            DIALOG_BUTTONS,
+            g.hovered_name(),
+            g.pressed_name(),
         )],
         // ---------------- Settings ----------------
         "SettingCard" => vec![setting_card(
-            "sc:sc1", "Notifications", "Get notified about updates",
-            toggle_switch("sc:sc1:sw", true, g.hovers("sc:sc1:sw"), g.holds("sc:sc1:sw")),
+            "sc:sc1",
+            "Notifications",
+            "Get notified about updates",
+            toggle_switch(
+                "sc:sc1:sw",
+                true,
+                g.hovers("sc:sc1:sw"),
+                g.holds("sc:sc1:sw"),
+            ),
         )],
         "SettingExpander" => vec![expander(
-            "sc:se", "Advanced", g.expanded,
-            vec![text_label("sc:se:body", "Less common settings live here.", "text-body")],
+            "sc:se",
+            "Advanced",
+            g.expanded,
+            vec![text_label(
+                "sc:se:body",
+                "Less common settings live here.",
+                "text-body",
+            )],
         )],
-        "Segmented" => vec![segmented("sc:seg", SEG_ITEMS, Some("day"), g.hovered_name(), g.pressed_name())],
+        "Segmented" => vec![segmented(
+            "sc:seg",
+            SEG_ITEMS,
+            Some("day"),
+            g.hovered_name(),
+            g.pressed_name(),
+        )],
         // ---------------- Date & time ----------------
         "DatePicker" => vec![date_picker("sc:dp", MONTH_CELLS, 12)],
         "TimePicker" => vec![time_picker("sc:tp", HOURS, "10:00", MINUTES, "30")],
@@ -165,8 +340,12 @@ pub fn showcase(g: &Gallery, page: &str) -> Element {
             text_label("sc-why", downgrade_reason(page), "text-body"),
             // 放一个真控件，证明页面是活的（不是渲染坏了）。
             row_of(vec![button(
-                "sc-ok", "This button really works", None, "standard",
-                g.hovers("sc-ok"), g.holds("sc-ok"),
+                "sc-ok",
+                "This button really works",
+                None,
+                "standard",
+                g.hovers("sc-ok"),
+                g.holds("sc-ok"),
             )]),
         ],
     };
@@ -224,7 +403,11 @@ const AREA_LINES: &[&str] = &[
 
 const SUGGESTIONS: &[&str] = &["Button", "CheckBox", "Slider", "ComboBox"];
 
-const LIST_ITEMS: &[(&str, &str)] = &[("Alpha", "lv:alpha"), ("Beta", "lv:beta"), ("Gamma", "lv:gamma")];
+const LIST_ITEMS: &[(&str, &str)] = &[
+    ("Alpha", "lv:alpha"),
+    ("Beta", "lv:beta"),
+    ("Gamma", "lv:gamma"),
+];
 
 const TABLE_HEADS: &[&str] = &["Control", "Size", "Note"];
 const TABLE_ROWS: &[&[&str]] = &[
@@ -244,7 +427,8 @@ const MENU_BAR_ITEMS: &[&str] = &["File", "Edit", "View"];
 
 const SELECTOR_ITEMS: &[(&str, &str)] = &[("nav", "Home"), ("tabs", "Tabs")];
 
-const DIALOG_BUTTONS: &[(&str, &str, bool)] = &[("Cancel", "d:cancel", false), ("Delete", "d:ok", true)];
+const DIALOG_BUTTONS: &[(&str, &str, bool)] =
+    &[("Cancel", "d:cancel", false), ("Delete", "d:ok", true)];
 
 const SEG_ITEMS: &[(&str, &str)] = &[("day", "Day"), ("week", "Week"), ("month", "Month")];
 
@@ -253,9 +437,37 @@ const MINUTES: &[(&str, &str)] = &[("00", "00"), ("30", "30"), ("45", "45")];
 
 /// 月历格子：`None` = 空位（月首偏移），`Some(d)` = 该日。
 const MONTH_CELLS: &[Option<u8>] = &[
-    None, None, Some(1), Some(2), Some(3), Some(4), Some(5),
-    Some(6), Some(7), Some(8), Some(9), Some(10), Some(11), Some(12),
-    Some(13), Some(14), Some(15), Some(16), Some(17), Some(18), Some(19),
-    Some(20), Some(21), Some(22), Some(23), Some(24), Some(25), Some(26),
-    Some(27), Some(28), Some(29), Some(30), Some(31),
+    None,
+    None,
+    Some(1),
+    Some(2),
+    Some(3),
+    Some(4),
+    Some(5),
+    Some(6),
+    Some(7),
+    Some(8),
+    Some(9),
+    Some(10),
+    Some(11),
+    Some(12),
+    Some(13),
+    Some(14),
+    Some(15),
+    Some(16),
+    Some(17),
+    Some(18),
+    Some(19),
+    Some(20),
+    Some(21),
+    Some(22),
+    Some(23),
+    Some(24),
+    Some(25),
+    Some(26),
+    Some(27),
+    Some(28),
+    Some(29),
+    Some(30),
+    Some(31),
 ];

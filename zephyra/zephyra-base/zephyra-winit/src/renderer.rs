@@ -31,26 +31,51 @@ use windows::Win32::Graphics::Direct3D::D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_R16_UINT;
 
 use windows::Win32::Graphics::Direct3D11::{
+    ID3D11BlendState,
+    ID3D11Buffer,
+    ID3D11DepthStencilView,
+    ID3D11Device,
+    ID3D11DeviceContext,
+
+    ID3D11RasterizerState,
+    ID3D11RenderTargetView,
+    ID3D11SamplerState,
+    ID3D11ShaderResourceView,
+    ID3D11Texture2D,
+    D3D11_BIND_FLAG,
+    D3D11_BIND_INDEX_BUFFER,
     // 0.62 把 C 的 `D3D11_FILL_MODE_SOLID` 这类名字**去掉了尾部 `_MODE`** ——
     // 枚举类型是 `D3D11_FILL_MODE`，常量却是 `D3D11_FILL_SOLID`。同理
     // `D3D11_CULL_NONE` / `D3D11_COMPARISON_NEVER` / `D3D11_BLEND_ONE`。
     // 写记忆里的名字会得到"no associated item"错误。
-    D3D11_BIND_VERTEX_BUFFER, D3D11_BIND_FLAG, D3D11_BLEND, D3D11_BLEND_DESC,
-    D3D11_BLEND_DEST_ALPHA, D3D11_BLEND_DEST_COLOR, D3D11_BLEND_INV_DEST_ALPHA, D3D11_BLEND_INV_DEST_COLOR,
-    D3D11_BLEND_INV_SRC_ALPHA, D3D11_BLEND_INV_SRC_COLOR, D3D11_BLEND_ONE,
-    D3D11_BLEND_SRC_ALPHA, D3D11_BLEND_SRC_COLOR, D3D11_BLEND_ZERO,
-    D3D11_BLEND_OP_ADD, D3D11_BUFFER_DESC,
+    D3D11_BIND_VERTEX_BUFFER,
+    D3D11_BLEND,
+    D3D11_BLEND_DESC,
+    D3D11_BLEND_DEST_ALPHA,
+    D3D11_BLEND_DEST_COLOR,
+    D3D11_BLEND_INV_DEST_ALPHA,
+    D3D11_BLEND_INV_DEST_COLOR,
+    D3D11_BLEND_INV_SRC_ALPHA,
+    D3D11_BLEND_INV_SRC_COLOR,
+    D3D11_BLEND_ONE,
+    D3D11_BLEND_OP_ADD,
+    D3D11_BLEND_SRC_ALPHA,
+    D3D11_BLEND_SRC_COLOR,
+    D3D11_BLEND_ZERO,
+    D3D11_BUFFER_DESC,
     D3D11_COLOR_WRITE_ENABLE_ALL,
-    D3D11_COMPARISON_NEVER, D3D11_CULL_NONE, D3D11_FILL_SOLID,
+    D3D11_COMPARISON_NEVER,
+    D3D11_CPU_ACCESS_WRITE,
+    D3D11_CULL_NONE,
+    D3D11_FILL_SOLID,
     D3D11_FILTER_MIN_MAG_MIP_LINEAR,
-    D3D11_BIND_INDEX_BUFFER, D3D11_RASTERIZER_DESC, D3D11_RENDER_TARGET_BLEND_DESC,
+    D3D11_RASTERIZER_DESC,
+    D3D11_RENDER_TARGET_BLEND_DESC,
     D3D11_SAMPLER_DESC,
-    D3D11_CPU_ACCESS_WRITE, D3D11_TEXTURE_ADDRESS_CLAMP, D3D11_USAGE_DEFAULT,
-    D3D11_USAGE_DYNAMIC, D3D11_VIEWPORT,
-    ID3D11BlendState, ID3D11Buffer, ID3D11DepthStencilView, ID3D11Device, ID3D11DeviceContext,
-
-    ID3D11RasterizerState, ID3D11RenderTargetView, ID3D11SamplerState, ID3D11ShaderResourceView,
-    ID3D11Texture2D,
+    D3D11_TEXTURE_ADDRESS_CLAMP,
+    D3D11_USAGE_DEFAULT,
+    D3D11_USAGE_DYNAMIC,
+    D3D11_VIEWPORT,
 };
 
 use zephyra_core::core::Color;
@@ -269,7 +294,6 @@ pub(crate) fn content_translate(pass: &OffscreenPass) -> Point {
     Point::new(pass.translate.0, pass.translate.1)
 }
 
-
 /// 渲染器：持有 D3D11 管线状态与常驻资源，回放 `DisplayList`。
 ///
 /// 设备与上下文**不归**本结构所有，而是由 [`crate::HostWindow`] 持有并按引用传入
@@ -406,7 +430,6 @@ pub struct RenderCtx<'a> {
     pub damage: Damage,
 }
 
-
 /// 目标像素的**单采样**副本。
 ///
 /// # 为什么需要它
@@ -454,8 +477,7 @@ impl SegmentEnv<'_, '_> {
     }
 }
 
-impl SegmentEnv<'_, '_> {
-}
+impl SegmentEnv<'_, '_> {}
 
 /// pass 四边形要的混合状态。
 ///
@@ -491,7 +513,9 @@ impl OffscreenRt {
             D3D11_BIND_RENDER_TARGET, D3D11_BIND_SHADER_RESOURCE, D3D11_TEXTURE2D_DESC,
             D3D11_USAGE_DEFAULT,
         };
-        use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_SAMPLE_DESC};
+        use windows::Win32::Graphics::Dxgi::Common::{
+            DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_SAMPLE_DESC,
+        };
 
         let desc = D3D11_TEXTURE2D_DESC {
             Width: size.0,
@@ -499,7 +523,10 @@ impl OffscreenRt {
             MipLevels: 1,
             ArraySize: 1,
             Format: DXGI_FORMAT_R8G8B8A8_UNORM,
-            SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+            SampleDesc: DXGI_SAMPLE_DESC {
+                Count: 1,
+                Quality: 0,
+            },
             Usage: D3D11_USAGE_DEFAULT,
             // ⚠ 必须**同时**有 RENDER_TARGET 与 SHADER_RESOURCE：前者用来画内容，
             // 后者用来当下一趟的源。只给前者的话绑定采样视图时不会报错，而采样
@@ -521,9 +548,13 @@ impl OffscreenRt {
         // 这里刚好同格式。用错时 `CreateShaderResourceView` 直接失败，而失败被
         // `.ok()` 吞掉后表现为"效果没生效"，不指向真正的原因。
         let srv = crate::texture::create_srv_with_format(device, &tex, desc.Format).ok()?;
-        Some(Self { tex, rtv, srv, size })
+        Some(Self {
+            tex,
+            rtv,
+            srv,
+            size,
+        })
     }
-
 }
 
 /// 只含一条命令的临时 `DisplayList`（离屏 pass 第 1 步用）。
@@ -755,7 +786,12 @@ impl Renderer {
             MultisampleEnable: windows::core::BOOL((samples > 1) as i32),
             AntialiasedLineEnable: windows::core::BOOL(0),
         };
-        let rasterizer = create_state!("RasterizerState", device, CreateRasterizerState, &raster_desc);
+        let rasterizer = create_state!(
+            "RasterizerState",
+            device,
+            CreateRasterizerState,
+            &raster_desc
+        );
 
         // ---- 采样器 ----
         //
@@ -795,9 +831,13 @@ impl Renderer {
         // 而 `Map` 要求自己按驱动的 `RowPitch` 跳行 —— 忘了就是「内容斜着进纹理」
         // 这一整类难查的 bug。详见 `texture::write_rows` 的对照表。
         let atlas_size = zephyra_core::text::atlas::ATLAS_SIZE;
-        let atlas_texture =
-            crate::texture::create_rgba_texture_empty(device, atlas_size, atlas_size, D3D11_USAGE_DEFAULT)
-                .map_err(|e| ShaderError::Create("建字形图集", e))?;
+        let atlas_texture = crate::texture::create_rgba_texture_empty(
+            device,
+            atlas_size,
+            atlas_size,
+            D3D11_USAGE_DEFAULT,
+        )
+        .map_err(|e| ShaderError::Create("建字形图集", e))?;
         let atlas_srv = crate::texture::create_srv(device, &atlas_texture)
             .map_err(|e| ShaderError::Create("建图集采样视图", e))?;
 
@@ -812,12 +852,8 @@ impl Renderer {
         //
         // 初始容量按 256 个四边形给 —— demo 约 139，留一点余量，稳态不扩容。
         let index_capacity = 256u64 * 6 * 2;
-        let index_buffer = create_dynamic_buffer(
-            device,
-            index_capacity,
-            D3D11_BIND_INDEX_BUFFER,
-        )
-        .map_err(|e| ShaderError::Create("建索引缓冲", e))?;
+        let index_buffer = create_dynamic_buffer(device, index_capacity, D3D11_BIND_INDEX_BUFFER)
+            .map_err(|e| ShaderError::Create("建索引缓冲", e))?;
 
         Ok(Self {
             shaders,
@@ -912,7 +948,7 @@ impl Renderer {
         Ok(())
     }
 
-pub fn render(&mut self, ctx: RenderCtx<'_>) -> RenderReport {
+    pub fn render(&mut self, ctx: RenderCtx<'_>) -> RenderReport {
         let RenderCtx {
             context,
             device,
@@ -1235,7 +1271,9 @@ pub fn render(&mut self, ctx: RenderCtx<'_>) -> RenderReport {
                 // `None` = 后面不必再绑 `g_dst`（`PSMain` 不读它）。
                 None => (
                     0usize,
-                    self.blends[mode].clone().unwrap_or_else(|| self.blend.clone()),
+                    self.blends[mode]
+                        .clone()
+                        .unwrap_or_else(|| self.blend.clone()),
                     None,
                 ),
                 // PS 合成模式：需要 `dst` 的副本，绑到 **t1**（`g_dst` 的槽位）。
@@ -1291,10 +1329,7 @@ pub fn render(&mut self, ctx: RenderCtx<'_>) -> RenderReport {
                     run.vertex_count,
                 )
             } else {
-                (
-                    (run.first_vertex / 4) * 6,
-                    (run.vertex_count / 4) * 6,
-                )
+                ((run.first_vertex / 4) * 6, (run.vertex_count / 4) * 6)
             };
             unsafe {
                 context.OMSetBlendState(&blend, None, 0xFFFF_FFFF);
@@ -1432,12 +1467,7 @@ pub fn render(&mut self, ctx: RenderCtx<'_>) -> RenderReport {
     /// `damage` 是**屏幕**坐标系的矩形，而离屏 RT 的原点在 `bounds.x/y` 且尺寸是
     /// `rt_size`。拿屏幕脏区去裁它，两套坐标系求交的结果毫无意义 —— 元素在屏幕
     /// 中央时交集通常是空的，于是**整个离屏 pass 静默什么都不画**。
-    fn bind_offscreen(
-        &self,
-        context: &ID3D11DeviceContext,
-        rt: &OffscreenRt,
-        size: (u32, u32),
-    ) {
+    fn bind_offscreen(&self, context: &ID3D11DeviceContext, rt: &OffscreenRt, size: (u32, u32)) {
         unsafe {
             context.OMSetRenderTargets(
                 Some(&[Some(rt.rtv.clone())]),
@@ -1521,7 +1551,9 @@ pub fn render(&mut self, ctx: RenderCtx<'_>) -> RenderReport {
         if !idx.is_empty() {
             let need = (idx.len() * 2) as u64;
             if need > self.index_capacity {
-                if let Ok(b) = create_dynamic_buffer(device, need.next_power_of_two(), D3D11_BIND_INDEX_BUFFER) {
+                if let Ok(b) =
+                    create_dynamic_buffer(device, need.next_power_of_two(), D3D11_BIND_INDEX_BUFFER)
+                {
                     self.index_buffer = b;
                     self.index_capacity = need.next_power_of_two();
                     rep.reallocated = true;
@@ -1566,10 +1598,7 @@ pub fn render(&mut self, ctx: RenderCtx<'_>) -> RenderReport {
                     run.vertex_count,
                 )
             } else {
-                (
-                    (run.first_vertex / 4) * 6,
-                    (run.vertex_count / 4) * 6,
-                )
+                ((run.first_vertex / 4) * 6, (run.vertex_count / 4) * 6)
             };
             unsafe {
                 context.PSSetShaderResources(0, Some(&[Some(srv)]));
@@ -1605,10 +1634,10 @@ pub fn render(&mut self, ctx: RenderCtx<'_>) -> RenderReport {
         dst_size: (u32, u32),
         blend_slot: BlendSlot,
         // 裁剪矩形。模糊趟写的是**离屏 RT**，必须给"全 RT"（离屏内容不受屏幕脏区
-    // 约束 —— 脏区是屏幕坐标系的，与 RT 的原点/尺寸不在一套坐标系里）；合成趟写
-    // 的是**目标**，必须给与普通图元同一份脏区 scissor，否则局部脏区下会把滤镜
-    // 结果合成到脏区之外，症状是"改了脏区，脏区外却变了"。
-    scissor: RECT,
+        // 约束 —— 脏区是屏幕坐标系的，与 RT 的原点/尺寸不在一套坐标系里）；合成趟写
+        // 的是**目标**，必须给与普通图元同一份脏区 scissor，否则局部脏区下会把滤镜
+        // 结果合成到脏区之外，症状是"改了脏区，脏区外却变了"。
+        scissor: RECT,
     ) {
         let context = env.context;
         let device = env.device;
@@ -1622,7 +1651,9 @@ pub fn render(&mut self, ctx: RenderCtx<'_>) -> RenderReport {
         let idx = quad::expand_indices_with_paths(1, 0).0;
         let need = (idx.len() * 2) as u64;
         if need > self.index_capacity {
-            if let Ok(b) = create_dynamic_buffer(device, need.next_power_of_two(), D3D11_BIND_INDEX_BUFFER) {
+            if let Ok(b) =
+                create_dynamic_buffer(device, need.next_power_of_two(), D3D11_BIND_INDEX_BUFFER)
+            {
                 self.index_buffer = b;
                 self.index_capacity = need.next_power_of_two();
             }
@@ -1692,7 +1723,10 @@ pub fn render(&mut self, ctx: RenderCtx<'_>) -> RenderReport {
             return None;
         }
         let mut slot = self.offscreen.borrow_mut();
-        let need_new = match (slot.as_ref().and_then(|p| p.a.as_ref()), slot.as_ref().and_then(|p| p.b.as_ref())) {
+        let need_new = match (
+            slot.as_ref().and_then(|p| p.a.as_ref()),
+            slot.as_ref().and_then(|p| p.b.as_ref()),
+        ) {
             (Some(a), Some(b)) => a.size != size || b.size != size,
             _ => true,
         };
@@ -1726,8 +1760,6 @@ pub fn render(&mut self, ctx: RenderCtx<'_>) -> RenderReport {
         // 的 `clone` 成本与"多调一次 draw"相比可以忽略。
         Some((slot.as_ref()?.a.clone()?, slot.as_ref()?.b.clone()?))
     }
-
-
 
     /// 把当前 RTT 的内容取到一张可采样纹理，返回它的 SRV。
     ///
@@ -1773,7 +1805,10 @@ pub fn render(&mut self, ctx: RenderCtx<'_>) -> RenderReport {
                 ArraySize: 1,
                 Format: tex_desc.Format,
                 // **必须**单采样：MS 纹理不能当 `CopyDestination`。
-                SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+                SampleDesc: DXGI_SAMPLE_DESC {
+                    Count: 1,
+                    Quality: 0,
+                },
                 Usage: D3D11_USAGE_DEFAULT,
                 BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
                 CPUAccessFlags: 0,
@@ -1876,10 +1911,7 @@ pub fn render(&mut self, ctx: RenderCtx<'_>) -> RenderReport {
         }
         // 缓冲只有一行 ⇒ `RowPitch == ByteWidth`，源与目标都紧密排列 ⇒ 连续拷。
         // 见本函数的文档：跳行那套只对纹理有意义。
-        debug_assert!(
-            bytes.len() as u64 <= capacity,
-            "写入量超过缓冲容量"
-        );
+        debug_assert!(bytes.len() as u64 <= capacity, "写入量超过缓冲容量");
         let mut mapped = windows::Win32::Graphics::Direct3D11::D3D11_MAPPED_SUBRESOURCE::default();
         unsafe {
             context
@@ -1891,13 +1923,8 @@ pub fn render(&mut self, ctx: RenderCtx<'_>) -> RenderReport {
                     Some(&mut mapped as *mut _),
                 )
                 .expect("DYNAMIC 缓冲应当能 Map(WRITE_DISCARD)");
-            std::ptr::copy_nonoverlapping(
-                bytes.as_ptr(),
-                mapped.pData.cast::<u8>(),
-                bytes.len(),
-            );
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), mapped.pData.cast::<u8>(), bytes.len());
             context.Unmap(buffer, 0);
         }
     }
 }
-

@@ -34,7 +34,11 @@ pub fn acrylic_card(key: &'static str, children: Vec<Element>) -> Element {
 }
 
 /// 圆角遮罩容器（RinUI RoundedCornerOverlay）：透明底 + 圆角 + 边。
-pub fn rounded_corner_overlay(key: &'static str, radius_class: &'static str, children: Vec<Element>) -> Element {
+pub fn rounded_corner_overlay(
+    key: &'static str,
+    radius_class: &'static str,
+    children: Vec<Element>,
+) -> Element {
     Element::new(NodeTag::Container)
         .with_key(key)
         .style("corner-overlay")
@@ -92,12 +96,18 @@ pub fn date_picker(key: &'static str, cells: &'static [Option<u8>], selected: u8
     let mut children = vec![Element::new(NodeTag::Container)
         .with_key("heads")
         .style("dp-heads")
-        .with_children(heads.iter().enumerate().map(|(i, h)| {
-            Element::new(NodeTag::Text)
-                .with_key(dp_head_key(i))
-                .with(&props::TEXT, PropertyValue::static_str(h))
-                .style("dp-head")
-        }).collect::<Vec<_>>())];
+        .with_children(
+            heads
+                .iter()
+                .enumerate()
+                .map(|(i, h)| {
+                    Element::new(NodeTag::Text)
+                        .with_key(dp_head_key(i))
+                        .with(&props::TEXT, PropertyValue::static_str(h))
+                        .style("dp-head")
+                })
+                .collect::<Vec<_>>(),
+        )];
     // 35 格（5 行 × 7 列），手排行。
     for (r, week) in cells.chunks(7).enumerate() {
         let row: Vec<Element> = week
@@ -151,16 +161,17 @@ pub fn time_picker(
     minutes: &'static [(&'static str, &'static str)],
     minute: &'static str,
 ) -> Element {
-    let col = |id: &'static str, entries: &'static [(&'static str, &'static str)], sel: &'static str| {
-        let items: Vec<Element> = entries
-            .iter()
-            .map(|(item_key, label)| tp_item(item_key, label, *label == sel))
-            .collect();
-        Element::new(NodeTag::Container)
-            .with_key(id)
-            .style("tp-col")
-            .with_children(items)
-    };
+    let col =
+        |id: &'static str, entries: &'static [(&'static str, &'static str)], sel: &'static str| {
+            let items: Vec<Element> = entries
+                .iter()
+                .map(|(item_key, label)| tp_item(item_key, label, *label == sel))
+                .collect();
+            Element::new(NodeTag::Container)
+                .with_key(id)
+                .style("tp-col")
+                .with_children(items)
+        };
     Element::new(NodeTag::Container)
         .with_key(key)
         .style("time-picker")
@@ -185,7 +196,9 @@ fn tp_item(item_key: &'static str, text: &'static str, selected: bool) -> Elemen
 }
 
 fn dp_head_key(i: usize) -> &'static str {
-    ["dph:0", "dph:1", "dph:2", "dph:3", "dph:4", "dph:5", "dph:6"][i.min(6)]
+    [
+        "dph:0", "dph:1", "dph:2", "dph:3", "dph:4", "dph:5", "dph:6",
+    ][i.min(6)]
 }
 
 fn dp_row_key(r: usize) -> &'static str {

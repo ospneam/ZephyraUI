@@ -80,17 +80,18 @@ fn switching_a_style_name_replaces_it() {
 #[test]
 fn a_key_is_not_a_style_name() {
     let node = Node::from_element(&Element::new(NodeTag::Control).with_key("danger"));
-    assert!(
-        node.style_names().is_empty(),
-        "with_key 不该变成分类名"
-    );
+    assert!(node.style_names().is_empty(), "with_key 不该变成分类名");
     assert!(node.key().is_some(), "但 key 本身还在");
 }
 
 /// 同源同词：key 和 style 都叫 "danger" 时互不干扰。
 #[test]
 fn a_key_and_a_style_with_the_same_word_coexist() {
-    let node = Node::from_element(&Element::new(NodeTag::Control).with_key("danger").style("danger"));
+    let node = Node::from_element(
+        &Element::new(NodeTag::Control)
+            .with_key("danger")
+            .style("danger"),
+    );
     assert_eq!(node.style_names(), &["danger"], "style 那半边在");
     assert!(node.key().is_some(), "key 那半边也在");
 }

@@ -38,10 +38,10 @@
 #![cfg(windows)]
 
 use windows::Win32::Graphics::Direct3D::ID3DBlob;
+use windows::Win32::Graphics::Direct3D12::*;
 use windows::Win32::Graphics::Dxgi::Common::{
     DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_UNKNOWN, DXGI_SAMPLE_DESC,
 };
-use windows::Win32::Graphics::Direct3D12::*;
 use windows::Win32::Graphics::Dxgi::{
     CreateDXGIFactory1, IDXGIAdapter1, DXGI_ADAPTER_DESC, DXGI_ADAPTER_DESC1,
 };
@@ -92,7 +92,9 @@ struct Dev {
 
 fn make_device(adapter: &IDXGIAdapter1) -> Result<Dev, u32> {
     use windows::core::Interface;
-    let dxgi = adapter.cast::<windows::Win32::Graphics::Dxgi::IDXGIAdapter>().map_err(|e| e.code().0 as u32)?;
+    let dxgi = adapter
+        .cast::<windows::Win32::Graphics::Dxgi::IDXGIAdapter>()
+        .map_err(|e| e.code().0 as u32)?;
     let mut dev = None::<ID3D12Device>;
     unsafe {
         windows::Win32::Graphics::Direct3D12::D3D12CreateDevice(
@@ -142,14 +144,25 @@ fn try_committed(
     let mut out = None::<ID3D12Resource>;
     unsafe {
         device
-            .CreateCommittedResource(props, D3D12_HEAP_FLAG_NONE, desc, initial, None, &mut out as *mut _)
+            .CreateCommittedResource(
+                props,
+                D3D12_HEAP_FLAG_NONE,
+                desc,
+                initial,
+                None,
+                &mut out as *mut _,
+            )
             .map_err(|e| e.code().0 as u32)?;
     }
     Ok(())
 }
 
 fn probe(adapter: &IDXGIAdapter1, desc1: &DXGI_ADAPTER_DESC1) {
-    let end = desc1.Description.iter().position(|&c| c == 0).unwrap_or(128);
+    let end = desc1
+        .Description
+        .iter()
+        .position(|&c| c == 0)
+        .unwrap_or(128);
     let name = String::from_utf16_lossy(&desc1.Description[..end]);
     println!("\n╔══ {name}");
 
@@ -216,14 +229,17 @@ fn probe(adapter: &IDXGIAdapter1, desc1: &DXGI_ADAPTER_DESC1) {
     // ---- 4~7. 扫 committed 的各个字段 ----
     println!("║  4. CreateCommittedResource 字段扫描：");
     // ⚠ 枚举名都按 windows-rs 0.62 的实际拼写，不是 D3D12 SDK 文档里的：
-//   内存池是 `L0`/`L1`（不是 `ONE`）；`CPU_PAGE_PROPERTY` 只有
-//   `UNKNOWN`/`NOT_AVAILABLE`/`WRITE_BACK`/`WRITE_COMBINE`（**没有** `NOT_CPU_CACHED`，
-//   那是 Vulkan 的叫法）；纹理布局没有 `OPTIMIZED`（那是 `D3D12_TILE_LAYOUT` 的词）。
-// 名字猜错会编译不过 —— 这本身是好事：拼错的常量进不了二进制。
-let layouts = [
+    //   内存池是 `L0`/`L1`（不是 `ONE`）；`CPU_PAGE_PROPERTY` 只有
+    //   `UNKNOWN`/`NOT_AVAILABLE`/`WRITE_BACK`/`WRITE_COMBINE`（**没有** `NOT_CPU_CACHED`，
+    //   那是 Vulkan 的叫法）；纹理布局没有 `OPTIMIZED`（那是 `D3D12_TILE_LAYOUT` 的词）。
+    // 名字猜错会编译不过 —— 这本身是好事：拼错的常量进不了二进制。
+    let layouts = [
         ("Layout=UNKNOWN", D3D12_TEXTURE_LAYOUT_UNKNOWN),
         ("Layout=ROW_MAJOR", D3D12_TEXTURE_LAYOUT_ROW_MAJOR),
-        ("Layout=64KB_UNDEF_SWIZZLE", D3D12_TEXTURE_LAYOUT_64KB_UNDEFINED_SWIZZLE),
+        (
+            "Layout=64KB_UNDEF_SWIZZLE",
+            D3D12_TEXTURE_LAYOUT_64KB_UNDEFINED_SWIZZLE,
+        ),
     ];
     let pools = [
         ("Pool=UNKNOWN", D3D12_MEMORY_POOL_UNKNOWN),
@@ -233,7 +249,10 @@ let layouts = [
     let cpus = [
         ("CPUPage=UNKNOWN", D3D12_CPU_PAGE_PROPERTY_UNKNOWN),
         ("CPUPage=WRITE_BACK", D3D12_CPU_PAGE_PROPERTY_WRITE_BACK),
-        ("CPUPage=NOT_AVAILABLE", D3D12_CPU_PAGE_PROPERTY_NOT_AVAILABLE),
+        (
+            "CPUPage=NOT_AVAILABLE",
+            D3D12_CPU_PAGE_PROPERTY_NOT_AVAILABLE,
+        ),
     ];
     let masks = [("Mask=1/1", 1u32, 1u32), ("Mask=0/0", 0u32, 0u32)];
     let heap_kinds = [
@@ -274,7 +293,10 @@ let layouts = [
         }
     }
     if !any_ok {
-        println!("║     （以上全部 E_INVALIDARG，共 {} 种组合）", layouts.len()*pools.len()*cpus.len()*masks.len()*heap_kinds.len());
+        println!(
+            "║     （以上全部 E_INVALIDARG，共 {} 种组合）",
+            layouts.len() * pools.len() * cpus.len() * masks.len() * heap_kinds.len()
+        );
     }
 
     // ---- 8. DEFAULT 堆上的纹理 ----
@@ -336,7 +358,12 @@ fn probe_pso(device: &ID3D12Device, _heap: &ID3D12Heap) {
     let mut blob = None::<ID3DBlob>;
     let mut err = None::<ID3DBlob>;
     if unsafe {
-        D3D12SerializeRootSignature(&rsdesc, D3D_ROOT_SIGNATURE_VERSION_1_0, &mut blob, Some(&mut err))
+        D3D12SerializeRootSignature(
+            &rsdesc,
+            D3D_ROOT_SIGNATURE_VERSION_1_0,
+            &mut blob,
+            Some(&mut err),
+        )
     }
     .is_err()
     {
@@ -416,12 +443,16 @@ fn probe_pso(device: &ID3D12Device, _heap: &ID3D12Heap) {
         NumRenderTargets: 1,
         RTVFormats: [DXGI_FORMAT_R8G8B8A8_UNORM; 8],
         DSVFormat: DXGI_FORMAT_UNKNOWN,
-        SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+        SampleDesc: DXGI_SAMPLE_DESC {
+            Count: 1,
+            Quality: 0,
+        },
         NodeMask: 1,
         CachedPSO: D3D12_CACHED_PIPELINE_STATE::default(),
         Flags: D3D12_PIPELINE_STATE_FLAG_NONE,
     };
-    match unsafe { device.CreateGraphicsPipelineState(&desc) } as windows::core::Result<ID3D12PipelineState>
+    match unsafe { device.CreateGraphicsPipelineState(&desc) }
+        as windows::core::Result<ID3D12PipelineState>
     {
         Ok(_) => println!("║ 10. 最小 PSO（平凡着色器 + 空根签名）…… ✅"),
         Err(e) => println!(
@@ -440,13 +471,15 @@ const TRIV_PS: &[u8] = include_bytes!("triv.ps.bin");
 #[test]
 #[ignore = "诊断用：本机 D3D12 的真实边界。看完结果后决定是否去掉 --ignored"]
 fn d3d12_资源创建_逐字段扫描() {
-    let factory: windows::Win32::Graphics::Dxgi::IDXGIFactory4 = unsafe { CreateDXGIFactory1() }
-        .expect("DXGI 工厂");
+    let factory: windows::Win32::Graphics::Dxgi::IDXGIFactory4 =
+        unsafe { CreateDXGIFactory1() }.expect("DXGI 工厂");
     for i in 0..8u32 {
         let Ok(adapter) = (unsafe { factory.EnumAdapters1(i) }) else {
             break;
         };
-        let Ok(desc1) = (unsafe { adapter.GetDesc1() }) else { continue };
+        let Ok(desc1) = (unsafe { adapter.GetDesc1() }) else {
+            continue;
+        };
         probe(&adapter, &desc1);
     }
 }

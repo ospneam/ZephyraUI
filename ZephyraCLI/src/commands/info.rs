@@ -43,7 +43,10 @@ fn zstylec_display() -> String {
 }
 
 fn rustc_version() -> Option<String> {
-    let out = std::process::Command::new("rustc").arg("--version").output().ok()?;
+    let out = std::process::Command::new("rustc")
+        .arg("--version")
+        .output()
+        .ok()?;
     if !out.status.success() {
         return None;
     }

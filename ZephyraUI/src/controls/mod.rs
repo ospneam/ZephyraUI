@@ -41,28 +41,20 @@ pub mod toggle;
 
 pub use badge::{dot_badge, info_badge};
 pub use button::{button, pill_button, tool_button, with_classes};
-pub use collections::{
-    avatar, list_view, setting_expander, setting_item, swipe_view, table_view,
-};
-pub use dialogs::{
-    acrylic_card, date_picker, dialog, rounded_corner_overlay, time_picker,
-};
-pub use forms::{
-    color_picker, combo_box, drop_down_button, hyperlink, round_button, spin_box,
-};
+pub use card::{card, clip_card, expander, setting_card};
+pub use collections::{avatar, list_view, setting_expander, setting_item, swipe_view, table_view};
+pub use dialogs::{acrylic_card, date_picker, dialog, rounded_corner_overlay, time_picker};
+pub use forms::{color_picker, combo_box, drop_down_button, hyperlink, round_button, spin_box};
 pub use menu::{menu, menu_bar, menu_bar_item, menu_item};
+pub use nav::nav_item;
 pub use navigation::{error_page, nav_sub_item, selector_bar};
-pub use status::{
-    busy_indicator, info_bar, page_indicator, progress_ring, toast, tool_tip,
-};
+pub use progress::{progress_bar, slider};
+pub use segmented::segmented;
+pub use status::{busy_indicator, info_bar, page_indicator, progress_ring, toast, tool_tip};
+pub use text::{caption, text_label};
 pub use text_input::{
     auto_suggest_box, scrollable_text_area, text_area, text_field, text_input_menu,
 };
-pub use card::{card, clip_card, expander, setting_card};
-pub use nav::nav_item;
-pub use progress::{progress_bar, slider};
-pub use segmented::segmented;
-pub use text::{caption, text_label};
 pub use toggle::{check_box, radio_button, toggle_switch};
 
 /// hover / pressed → 状态分类名。无状态返回空（基础规则自己给默认长相）。

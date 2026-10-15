@@ -33,9 +33,9 @@
 //! 它证明的是「几何与数据是对的」。
 
 use zephyra_core::core::Point;
-use zephyra_core::paint::{Command, DisplayList, SortKey, Layer};
+use zephyra_core::paint::{Command, DisplayList, Layer, SortKey};
 use zephyra_core::text::atlas::ATLAS_SIZE;
-use zephyra_core::text::{TextRender, TextStyle, TextStack};
+use zephyra_core::text::{TextRender, TextStack, TextStyle};
 
 use zephyra_winit::quad::{self, Vertex};
 use zephyra_winit::text::{from_system_font, AbGlyphSource};
@@ -115,7 +115,8 @@ fn glyphs_line_up_from_rasterization_through_sampling() {
         assert!(
             q.uv.x >= 0.0 && q.uv.y >= 0.0,
             "第 {i} 个字形的 uv 原点 ({}, {}) 为负 —— 归一化时符号搞反了",
-            q.uv.x, q.uv.y
+            q.uv.x,
+            q.uv.y
         );
         assert!(
             q.uv.right() <= 1.0 && q.uv.bottom() <= 1.0,
@@ -123,7 +124,10 @@ fn glyphs_line_up_from_rasterization_through_sampling() {
             q.uv.right(),
             q.uv.bottom()
         );
-        assert!(q.uv.width > 0.0 && q.uv.height > 0.0, "第 {i} 个字形的 uv 面积为零");
+        assert!(
+            q.uv.width > 0.0 && q.uv.height > 0.0,
+            "第 {i} 个字形的 uv 面积为零"
+        );
 
         // uv 反推成像素，应当落在图集内，且尺寸与 dst 一致（uv 与 dst 是同一个位图）。
         let px_w = q.uv.width * ATLAS_SIZE as f32;
@@ -164,7 +168,10 @@ fn glyphs_line_up_from_rasterization_through_sampling() {
         } else {
             eprintln!(
                 "[t] 第 {i} 个字形采样全为 0：uv=({:.4},{:.4})-({:.4},{:.4}) → 像素 ({:.0},{:.0})",
-                ux0, uy0, ux1, uy1,
+                ux0,
+                uy0,
+                ux1,
+                uy1,
                 ux0 * ATLAS_SIZE as f32,
                 uy0 * ATLAS_SIZE as f32
             );
@@ -219,7 +226,10 @@ fn glyphs_line_up_from_rasterization_through_sampling() {
             (a.position[0] - d.position[0]).abs() < 1e-5
                 && (a.position[1] - b.position[1]).abs() < 1e-5,
             "第 {i} 个字形的顶点不是轴对齐矩形：{:?} {:?} {:?} {:?}",
-            a.position, b.position, c.position, d.position
+            a.position,
+            b.position,
+            c.position,
+            d.position
         );
         // kind 必须是 GLYPH，否则片元着色器走错分支。
         assert!(

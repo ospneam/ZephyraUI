@@ -212,14 +212,38 @@ impl Theme {
             control_border_strong: Color::rgba(1.0, 1.0, 1.0, 0.6047),
             divider: Color::rgba(1.0, 1.0, 1.0, 0.0837),
             layer: Color::rgba(0.227, 0.227, 0.227, 0.30),
-            success: Color::rgb(0x6c as f32 / 255.0, 0xcb as f32 / 255.0, 0x5f as f32 / 255.0),
-            caution: Color::rgb(0xfc as f32 / 255.0, 0xe1 as f32 / 255.0, 0.00 as f32 / 255.0),
-            critical: Color::rgb(0xff as f32 / 255.0, 0x99 as f32 / 255.0, 0xa4 as f32 / 255.0),
+            success: Color::rgb(
+                0x6c as f32 / 255.0,
+                0xcb as f32 / 255.0,
+                0x5f as f32 / 255.0,
+            ),
+            caution: Color::rgb(
+                0xfc as f32 / 255.0,
+                0xe1 as f32 / 255.0,
+                0.00 as f32 / 255.0,
+            ),
+            critical: Color::rgb(
+                0xff as f32 / 255.0,
+                0x99 as f32 / 255.0,
+                0xa4 as f32 / 255.0,
+            ),
             // 严重级**背景**档（InfoBar / Toast 的卡片底，RinUI 的
             // system*BackgroundColor）。深色主题是低饱和暗色调。
-            success_bg: Color::rgb(0x39 as f32 / 255.0, 0x3d as f32 / 255.0, 0x1b as f32 / 255.0),
-            caution_bg: Color::rgb(0x43 as f32 / 255.0, 0x35 as f32 / 255.0, 0x19 as f32 / 255.0),
-            critical_bg: Color::rgb(0x44 as f32 / 255.0, 0x27 as f32 / 255.0, 0x26 as f32 / 255.0),
+            success_bg: Color::rgb(
+                0x39 as f32 / 255.0,
+                0x3d as f32 / 255.0,
+                0x1b as f32 / 255.0,
+            ),
+            caution_bg: Color::rgb(
+                0x43 as f32 / 255.0,
+                0x35 as f32 / 255.0,
+                0x19 as f32 / 255.0,
+            ),
+            critical_bg: Color::rgb(
+                0x44 as f32 / 255.0,
+                0x27 as f32 / 255.0,
+                0x26 as f32 / 255.0,
+            ),
             spacing: Spacing::Medium,
         }
     }
@@ -269,14 +293,38 @@ impl Theme {
             control_border_strong: Color::rgba(0.0, 0.0, 0.0, 0.6063),
             divider: Color::rgba(0.0, 0.0, 0.0, 0.0803),
             layer: Color::rgba(1.0, 1.0, 1.0, 0.5),
-            success: Color::rgb(0x0f as f32 / 255.0, 0x7b as f32 / 255.0, 0x0f as f32 / 255.0),
-            caution: Color::rgb(0x9d as f32 / 255.0, 0x5d as f32 / 255.0, 0x00 as f32 / 255.0),
-            critical: Color::rgb(0xc4 as f32 / 255.0, 0x2b as f32 / 255.0, 0x1c as f32 / 255.0),
+            success: Color::rgb(
+                0x0f as f32 / 255.0,
+                0x7b as f32 / 255.0,
+                0x0f as f32 / 255.0,
+            ),
+            caution: Color::rgb(
+                0x9d as f32 / 255.0,
+                0x5d as f32 / 255.0,
+                0x00 as f32 / 255.0,
+            ),
+            critical: Color::rgb(
+                0xc4 as f32 / 255.0,
+                0x2b as f32 / 255.0,
+                0x1c as f32 / 255.0,
+            ),
             // 浅色主题的严重级背景是低饱和亮色调（RinUI light 的
             // system*BackgroundColor）。
-            success_bg: Color::rgb(0xdf as f32 / 255.0, 0xf6 as f32 / 255.0, 0xdd as f32 / 255.0),
-            caution_bg: Color::rgb(0xff as f32 / 255.0, 0xf4 as f32 / 255.0, 0xce as f32 / 255.0),
-            critical_bg: Color::rgb(0xfd as f32 / 255.0, 0xe7 as f32 / 255.0, 0xe9 as f32 / 255.0),
+            success_bg: Color::rgb(
+                0xdf as f32 / 255.0,
+                0xf6 as f32 / 255.0,
+                0xdd as f32 / 255.0,
+            ),
+            caution_bg: Color::rgb(
+                0xff as f32 / 255.0,
+                0xf4 as f32 / 255.0,
+                0xce as f32 / 255.0,
+            ),
+            critical_bg: Color::rgb(
+                0xfd as f32 / 255.0,
+                0xe7 as f32 / 255.0,
+                0xe9 as f32 / 255.0,
+            ),
             spacing: Spacing::Medium,
         }
     }

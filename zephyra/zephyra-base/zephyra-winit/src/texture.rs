@@ -46,10 +46,10 @@ use std::collections::HashMap;
 
 use windows::Win32::Graphics::Direct3D::D3D_SRV_DIMENSION_TEXTURE2D;
 use windows::Win32::Graphics::Direct3D11::{
-    D3D11_BIND_SHADER_RESOURCE, D3D11_SHADER_RESOURCE_VIEW_DESC,
-    D3D11_SHADER_RESOURCE_VIEW_DESC_0, D3D11_SUBRESOURCE_DATA, D3D11_TEX2D_SRV,
-    D3D11_TEXTURE2D_DESC, D3D11_USAGE, D3D11_USAGE_DEFAULT, D3D11_USAGE_STAGING, ID3D11Device,
-    ID3D11DeviceContext, ID3D11ShaderResourceView, ID3D11Texture2D,
+    ID3D11Device, ID3D11DeviceContext, ID3D11ShaderResourceView, ID3D11Texture2D,
+    D3D11_BIND_SHADER_RESOURCE, D3D11_SHADER_RESOURCE_VIEW_DESC, D3D11_SHADER_RESOURCE_VIEW_DESC_0,
+    D3D11_SUBRESOURCE_DATA, D3D11_TEX2D_SRV, D3D11_TEXTURE2D_DESC, D3D11_USAGE,
+    D3D11_USAGE_DEFAULT, D3D11_USAGE_STAGING,
 };
 use windows::Win32::Graphics::Dxgi::Common::{
     DXGI_FORMAT, DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_SAMPLE_DESC,
@@ -95,13 +95,7 @@ impl TextureTable {
     /// 重复登记同一名字是**替换**：旧 `Entry` 随 `HashMap::insert` 一起释放，下一帧
     /// 自动用新的。不需要像 wgpu 那样显式调清理函数 —— 原因见模块文档。
     pub fn insert(&mut self, name: &str, srv: ID3D11ShaderResourceView, tex: ID3D11Texture2D) {
-        self.entries.insert(
-            name.to_string(),
-            Entry {
-                srv,
-                tex,
-            },
-        );
+        self.entries.insert(name.to_string(), Entry { srv, tex });
     }
 
     /// 原地更新一张已注册纹理的像素（尺寸不变）。

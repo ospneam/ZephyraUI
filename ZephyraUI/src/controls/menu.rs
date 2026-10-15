@@ -30,15 +30,7 @@ pub fn menu_bar(key: &'static str, items: &'static [&'static str], open: Option<
     let children: Vec<Element> = items
         .iter()
         .enumerate()
-        .map(|(i, label)| {
-            menu_bar_item(
-                bar_item_key(i),
-                label,
-                open == Some(i),
-                false,
-                false,
-            )
-        })
+        .map(|(i, label)| menu_bar_item(bar_item_key(i), label, open == Some(i), false, false))
         .collect();
     Element::new(NodeTag::Container)
         .with_key(key)

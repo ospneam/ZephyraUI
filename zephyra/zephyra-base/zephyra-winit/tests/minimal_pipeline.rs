@@ -65,14 +65,19 @@ unsafe fn make_texture(
         MipLevels: 1,
         ArraySize: 1,
         Format: DXGI_FORMAT_B8G8R8A8_UNORM,
-        SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+        SampleDesc: DXGI_SAMPLE_DESC {
+            Count: 1,
+            Quality: 0,
+        },
         Usage: usage,
         BindFlags: bind,
         CPUAccessFlags: cpu_access,
         MiscFlags: 0,
     };
     let mut tex = None::<ID3D11Texture2D>;
-    device.CreateTexture2D(&desc, None, Some(&mut tex as *mut _)).expect("建纹理");
+    device
+        .CreateTexture2D(&desc, None, Some(&mut tex as *mut _))
+        .expect("建纹理");
     tex.unwrap()
 }
 
@@ -165,7 +170,8 @@ fn minimal_pipeline_fills_the_viewport() {
 
         gpu.context
             .OMSetRenderTargets(Some(&[Some(rtv.clone())]), None);
-        gpu.context.ClearRenderTargetView(&rtv, &[0.0, 0.0, 1.0, 1.0]);
+        gpu.context
+            .ClearRenderTargetView(&rtv, &[0.0, 0.0, 1.0, 1.0]);
         gpu.context.RSSetViewports(Some(&[D3D11_VIEWPORT {
             TopLeftX: 0.0,
             TopLeftY: 0.0,
@@ -189,18 +195,11 @@ fn minimal_pipeline_fills_the_viewport() {
             (1, SIZE as f32, SIZE as f32),
             "视口没绑上。注意读回的输入值必须是数组容量，不是实际个数"
         );
-        assert_eq!(
-            gpu.device.GetDeviceRemovedReason(),
-            Ok(()),
-            "设备已被移除"
-        );
+        assert_eq!(gpu.device.GetDeviceRemovedReason(), Ok(()), "设备已被移除");
 
         let pixels = read_back(&gpu, &tex);
         let total = (SIZE * SIZE) as usize;
-        let drawn = pixels
-            .chunks_exact(4)
-            .filter(|p| p != &CLEAR_BG)
-            .count();
+        let drawn = pixels.chunks_exact(4).filter(|p| p != &CLEAR_BG).count();
         assert!(
             drawn as f64 >= total as f64 * MIN_COVERAGE,
             "全屏三角形只覆盖了 {drawn}/{total} 个像素 —— \

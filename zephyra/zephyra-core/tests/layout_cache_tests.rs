@@ -23,17 +23,17 @@
 use std::cell::{Cell, RefCell};
 
 use zephyra_core::context::Context;
+use zephyra_core::core::Point;
 use zephyra_core::core::Rect;
 use zephyra_core::element::Element;
 use zephyra_core::id::NodeTag;
 use zephyra_core::layout::{self, Constraints};
 use zephyra_core::node::Node;
+use zephyra_core::paint::{GlyphQuad, TextureRef};
 use zephyra_core::property::PropertyValue;
 use zephyra_core::props;
-use zephyra_core::paint::{GlyphQuad, TextureRef};
 use zephyra_core::text::{NullEngine, ShapedText, TextEngine, TextRender, TextStyle};
 use zephyra_core::theme::{Theme, ThemeVariant};
-use zephyra_core::core::Point;
 
 /// 会数次数的替身。
 struct CountingEngine {
@@ -85,10 +85,7 @@ fn vertical_stack(n: usize) -> Element {
                 .with_key_by_index(i)
                 .with(&props::HEIGHT, PropertyValue::float(40.0))
                 .with(&props::PADDING, PropertyValue::float(4.0))
-                .with(
-                    &props::TEXT,
-                    PropertyValue::static_str("item text here"),
-                )
+                .with(&props::TEXT, PropertyValue::static_str("item text here"))
         })
         .collect();
     Element::new(NodeTag::Container)
@@ -113,7 +110,11 @@ impl Fixture {
         let engine = RefCell::new(CountingEngine::new());
         let theme = Theme::builtin(ThemeVariant::Dark);
         let node = Node::from_element(&vertical_stack(n));
-        Self { engine, theme, node }
+        Self {
+            engine,
+            theme,
+            node,
+        }
     }
 
     /// 跑一趟 layout，返回**这一趟新增的**整形次数。
@@ -123,11 +124,7 @@ impl Fixture {
     fn layout(&mut self, size: (f32, f32)) -> usize {
         let ctx = Context::with_engine(&self.theme, &self.engine);
         let before = self.engine.borrow().shapes.get();
-        crate::layout::layout(
-            &mut self.node,
-            Rect::new(0.0, 0.0, size.0, size.1),
-            ctx,
-        );
+        crate::layout::layout(&mut self.node, Rect::new(0.0, 0.0, size.0, size.1), ctx);
         zephyra_core::node::clear_dirty(&mut self.node);
         self.engine.borrow().shapes.get() - before
     }
@@ -204,7 +201,8 @@ fn cross_axis_is_still_a_finite_constraint() {
     f.layout((800.0, 600.0));
     let child = f.node.children().first().expect("有子项");
     assert_eq!(
-        child.rect().width, 800.0,
+        child.rect().width,
+        800.0,
         "纵向堆叠 + stretch ⇒ 子项应撑满交叉轴（父的宽度）"
     );
 }
@@ -246,6 +244,9 @@ impl TestExt for Element {
     }
     fn style_hint(self, _dir: &'static str) -> Self {
         // 纵向堆叠是 `Stack::default()` 之外的语义，所以这里直接下发方向。
-        self.with(&props::DIRECTION, PropertyValue::direction(zephyra_core::layout::Direction::Vertical))
+        self.with(
+            &props::DIRECTION,
+            PropertyValue::direction(zephyra_core::layout::Direction::Vertical),
+        )
     }
 }

@@ -61,12 +61,14 @@ pub fn run(a: &Args, w: &mut dyn Write) -> Result<ExitCode, CliError> {
 
     let watch = !a.has("no-watch");
     let cargo = cargo;
-    let mut child = match std::process::Command::new(&cargo)
-        .args(&cmd)
-        .spawn()
-    {
+    let mut child = match std::process::Command::new(&cargo).args(&cmd).spawn() {
         Ok(c) => c,
-        Err(e) => return Err(CliError::missing(format!("cannot run {}: {e}", cargo.display()))),
+        Err(e) => {
+            return Err(CliError::missing(format!(
+                "cannot run {}: {e}",
+                cargo.display()
+            )))
+        }
     };
 
     let mut seen = snapshot(&style_dir);
@@ -95,7 +97,11 @@ pub fn run(a: &Args, w: &mut dyn Write) -> Result<ExitCode, CliError> {
 
         // 轮询而不是用通知 API：样式表改动**很**稀疏，而轮询的代价（每 400ms 扫
         // 一次目录）低到可以忽略。用通知 API 反而要处理漏事件、去抖、重连。
-        if last_check.elapsed().map(|d| d >= Duration::from_millis(400)).unwrap_or(false) {
+        if last_check
+            .elapsed()
+            .map(|d| d >= Duration::from_millis(400))
+            .unwrap_or(false)
+        {
             last_check = SystemTime::now();
             let now = snapshot(&style_dir);
             if now != seen {

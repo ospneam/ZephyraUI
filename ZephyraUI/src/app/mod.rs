@@ -14,13 +14,13 @@
 //! （`wants_dark`），宿主每帧对账后执行 `set_theme` —— 于是"想切的"与
 //! "在用的"永远可分开观测，不会出现"点了没反应但也不知道为什么"。
 
+use crate::i18n::{Messages, Preferences, Tag};
 use zephyra_core::id::ElementKey;
 use zephyra_core::{context::Context, element::Element};
 use zephyra_fx::{InputState, View};
-use crate::i18n::{Messages, Preferences, Tag};
 
-pub mod pages;
 pub mod catalog;
+pub mod pages;
 pub mod shell;
 pub mod showcase;
 pub mod testbed;
@@ -105,11 +105,19 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ("en", "action.feedback", "Feedback"),
     ("en", "action.language", "Language"),
     ("en", "set.theme.title", "Dark mode"),
-    ("en", "set.theme.desc", "Switching theme only swaps token values"),
+    (
+        "en",
+        "set.theme.desc",
+        "Switching theme only swaps token values",
+    ),
     ("en", "set.volume.title", "Volume"),
     ("en", "set.volume.desc", "Fill width = value x track width"),
     ("en", "set.notify.title", "Notifications"),
-    ("en", "set.notify.desc", "Selected state travels as a class name"),
+    (
+        "en",
+        "set.notify.desc",
+        "Selected state travels as a class name",
+    ),
     ("en", "set.adv.title", "Advanced"),
     ("en", "set.adv.logging", "Diagnostic logging"),
     ("en", "set.adv.hwaccel", "Hardware acceleration"),
@@ -157,7 +165,11 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ("ja", "action.feedback", "フィードバック"),
     ("ja", "action.language", "言語"),
     ("ja", "set.theme.title", "ダークモード"),
-    ("ja", "set.theme.desc", "テーマを切り替えてもトークンの値だけが変わる"),
+    (
+        "ja",
+        "set.theme.desc",
+        "テーマを切り替えてもトークンの値だけが変わる",
+    ),
     ("ja", "set.volume.title", "音量"),
     ("ja", "set.volume.desc", "塗りの幅 = 値 x トラックの幅"),
     ("ja", "set.notify.title", "通知"),
@@ -632,7 +644,10 @@ impl Gallery {
     /// 当前按住的 key 名字（见 [Self::hovered_name]）。
     /// 当前 hover 的 key 名（无 hover 时提示语）。测试页状态行用。
     pub fn hovered_key(&self) -> &'static str {
-        self.hovered.as_ref().and_then(|k| k.as_name()).unwrap_or("hover anything")
+        self.hovered
+            .as_ref()
+            .and_then(|k| k.as_name())
+            .unwrap_or("hover anything")
     }
     pub fn pressed_name(&self) -> Option<&str> {
         self.pressed.as_ref().and_then(|k| k.as_name())

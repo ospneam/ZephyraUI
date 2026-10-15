@@ -78,7 +78,9 @@ impl Tag {
             match part.len() {
                 // 4 字母 = script；2 字母 = region；3 数字 = region（如 `419`）。
                 4 if valid_script(part) && script.is_none() => script = Some(title_case(part)),
-                2 if valid_region(part) && region.is_none() => region = Some(part.to_ascii_uppercase()),
+                2 if valid_region(part) && region.is_none() => {
+                    region = Some(part.to_ascii_uppercase())
+                }
                 3 if part.chars().all(|c| c.is_ascii_digit()) && region.is_none() => {
                     region = Some(part.to_string());
                 }

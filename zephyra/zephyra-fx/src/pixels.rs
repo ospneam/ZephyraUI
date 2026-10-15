@@ -181,11 +181,7 @@ pub fn write_bmp(path: &str, px: &PixelRead, encode_srgb: bool) -> std::io::Resu
             //
             // 漏掉这一步的 Symptom：半透明的 UI 元素在贴出的图里**发暗** —— 而
             // 几何、alpha、计数全都正常，看起来像"颜色算错了"。
-            let inv = if a8 == 0 {
-                0.0
-            } else {
-                255.0 / a8 as f32
-            };
+            let inv = if a8 == 0 { 0.0 } else { 255.0 / a8 as f32 };
             let un = |c: u8| ((c as f32 * inv).min(255.0)).round() as u8;
             let [r, g, b] = [un(r), un(g), un(b)];
             let [r, g, b] = if encode_srgb {

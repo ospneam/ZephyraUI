@@ -28,13 +28,9 @@
 #![cfg(windows)]
 
 use windows::core::Interface as _;
-use windows::Win32::Graphics::Direct3D::{
-    D3D_DRIVER_TYPE_HARDWARE, D3D_FEATURE_LEVEL_11_0,
-};
+use windows::Win32::Graphics::Direct3D::{D3D_DRIVER_TYPE_HARDWARE, D3D_FEATURE_LEVEL_11_0};
 use windows::Win32::Graphics::Direct3D11::*;
-use windows::Win32::Graphics::Dxgi::Common::{
-    DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_SAMPLE_DESC,
-};
+use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_SAMPLE_DESC};
 
 /// 拉干 `ID3D11InfoQueue`，逐条打印。
 ///
@@ -106,7 +102,13 @@ fn drain(queue: &ID3D11InfoQueue, label: &str) {
                 let rd32 = |o: usize| u32::from_le_bytes([b[o], b[o + 1], b[o + 2], b[o + 3]]);
                 let rd64 = |o: usize| {
                     u64::from_le_bytes([
-                        b[o], b[o + 1], b[o + 2], b[o + 3], b[o + 4], b[o + 5], b[o + 6],
+                        b[o],
+                        b[o + 1],
+                        b[o + 2],
+                        b[o + 3],
+                        b[o + 4],
+                        b[o + 5],
+                        b[o + 6],
                         b[o + 7],
                     ])
                 };
@@ -115,10 +117,7 @@ fn drain(queue: &ID3D11InfoQueue, label: &str) {
                 let id = rd32(8);
                 let desc_ptr = rd64(16);
                 let dlen = rd64(24) as usize;
-                println!(
-                    "    [{i}] got={got}  头 32 字节 = {:02X?}",
-                    &b[..32]
-                );
+                println!("    [{i}] got={got}  头 32 字节 = {:02X?}", &b[..32]);
                 println!(
                     "        Category={cat} Severity={sev} ID={id} pDescription={desc_ptr:#x} DescriptionByteLength={dlen}"
                 );
@@ -136,7 +135,11 @@ fn drain(queue: &ID3D11InfoQueue, label: &str) {
                     }
                 }
             }
-            Err(e) => println!("    [{i}] GetMessage 失败 → {:#X} {}", e.code().0 as u32, e.message()),
+            Err(e) => println!(
+                "    [{i}] GetMessage 失败 → {:#X} {}",
+                e.code().0 as u32,
+                e.message()
+            ),
         }
     }
 }
@@ -162,7 +165,11 @@ fn debug_layer_能不能解释_为什么拒绝动态资源() {
     let dev = match created {
         Ok(()) => dev.expect("设备"),
         Err(e) => {
-            println!("带 DEBUG 标志建设备失败：{:#X} {}", e.code().0 as u32, e.message());
+            println!(
+                "带 DEBUG 标志建设备失败：{:#X} {}",
+                e.code().0 as u32,
+                e.message()
+            );
             println!("（这台机器可能没装 D3D11 调试层的可运行部分 —— 那是 D3D11 SDK 的可选组件）");
             return;
         }
@@ -182,7 +189,10 @@ fn debug_layer_能不能解释_为什么拒绝动态资源() {
         MipLevels: 1,
         ArraySize: 1,
         Format: DXGI_FORMAT_R8G8B8A8_UNORM,
-        SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+        SampleDesc: DXGI_SAMPLE_DESC {
+            Count: 1,
+            Quality: 0,
+        },
         Usage: D3D11_USAGE_DYNAMIC,
         BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
         CPUAccessFlags: 0,
@@ -211,7 +221,9 @@ fn debug_layer_能不能解释_为什么拒绝动态资源() {
         ctx.as_ref().unwrap().RSSetViewports(Some(&want));
         let mut n = 0u32;
         let mut got = [D3D11_VIEWPORT::default(); 1];
-        ctx.as_ref().unwrap().RSGetViewports(&mut n, Some(got.as_mut_ptr()));
+        ctx.as_ref()
+            .unwrap()
+            .RSGetViewports(&mut n, Some(got.as_mut_ptr()));
         println!("  读回个数 {n}，宽高 {}×{}", got[0].Width, got[0].Height);
     }
     drain(&queue, "RSSetViewports 之后");
@@ -225,7 +237,11 @@ fn debug_layer_能不能解释_为什么拒绝动态资源() {
     // 用调试层问，比读文档快 —— 上一轮就是这么查到 `DYNAMIC` 的真实原因的。
     println!("\n→ 试 CreateVertexShader（本仓库的 vs_5_1 字节码）");
     match unsafe {
-        dev.CreateVertexShader(VS_BYTECODE, None, Some(&mut Option::<ID3D11VertexShader>::None as *mut _))
+        dev.CreateVertexShader(
+            VS_BYTECODE,
+            None,
+            Some(&mut Option::<ID3D11VertexShader>::None as *mut _),
+        )
     } {
         Ok(()) => println!("  ✅ 成功"),
         Err(e) => println!("  ❌ {:#X} {}", e.code().0 as u32, e.message()),
@@ -235,10 +251,17 @@ fn debug_layer_能不能解释_为什么拒绝动态资源() {
     // 对照：一对最平凡的着色器（无顶点输入、常量输出）。
     println!("\n→ 对照：平凡着色器（float4 VSMain(uint id : SV_VertexID)）");
     match unsafe {
-        dev.CreateVertexShader(TRIV_VS, None, Some(&mut Option::<ID3D11VertexShader>::None as *mut _))
+        dev.CreateVertexShader(
+            TRIV_VS,
+            None,
+            Some(&mut Option::<ID3D11VertexShader>::None as *mut _),
+        )
     } {
         Ok(()) => println!("  ✅ 平凡着色器成功 ⇒ 是本仓库字节码的问题"),
-        Err(e) => println!("  ❌ 平凡着色器也失败 {:#X} ⇒ 与本仓库字节码无关", e.code().0 as u32),
+        Err(e) => println!(
+            "  ❌ 平凡着色器也失败 {:#X} ⇒ 与本仓库字节码无关",
+            e.code().0 as u32
+        ),
     }
     drain(&queue, "平凡着色器之后");
 

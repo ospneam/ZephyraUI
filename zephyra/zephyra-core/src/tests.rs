@@ -594,7 +594,11 @@ fn render_draws_nothing_when_no_node_has_a_background() {
     // 产出 4 条命令。真实管线必须让空树产出空列表——否则一层透明的容器就会
     // 挡住它下面的一切，而这正是"画面全无"类 bug 的成因。
     let mut node = Node::from_element(&sample());
-    crate::layout::layout(&mut node, Rect::new(0.0, 0.0, 800.0, 600.0), crate::context::dark_context());
+    crate::layout::layout(
+        &mut node,
+        Rect::new(0.0, 0.0, 800.0, 600.0),
+        crate::context::dark_context(),
+    );
 
     let mut list = DisplayList::new();
     render(&node, crate::context::dark_context(), &mut list);
@@ -672,18 +676,18 @@ fn clear_dirty_resets_every_node() {
 /// 用 `NullEngine` 而非真实字体：这里要断言的是"核心是否正确地接线了"，不是
 /// "字形是否好看"。uv 的正确性属于 base 层（要真实光栅化才能验）。
 mod text_pipeline {
-    use crate::core::{Rect, Size};
-    use crate::paint::{Command, DisplayList};
-    use crate::property::PropertyValue;
-    use crate::props;
-    use crate::text::{NullEngine, TextStyle};
-    use crate::theme::Theme;
     use crate::context::Context;
+    use crate::core::{Rect, Size};
     use crate::element::Element;
     use crate::id::NodeTag;
     use crate::layout::layout;
     use crate::node::Node;
     use crate::paint::render;
+    use crate::paint::{Command, DisplayList};
+    use crate::property::PropertyValue;
+    use crate::props;
+    use crate::text::{NullEngine, TextStyle};
+    use crate::theme::Theme;
     use std::cell::RefCell;
 
     /// 固定字宽的引擎，让测量结果可预测。
@@ -795,16 +799,16 @@ mod text_pipeline {
         let glyphs: Vec<Rect> = list
             .iter()
             .filter_map(|i| match &i.command {
-                Command::Text { glyphs, .. } => Some(glyphs.iter().map(|g| g.dst).collect::<Vec<_>>()),
+                Command::Text { glyphs, .. } => {
+                    Some(glyphs.iter().map(|g| g.dst).collect::<Vec<_>>())
+                }
                 _ => None,
             })
             .flatten()
             .collect();
 
-        let distinct_rows: std::collections::BTreeSet<u32> = glyphs
-            .iter()
-            .map(|r| r.y.to_bits())
-            .collect();
+        let distinct_rows: std::collections::BTreeSet<u32> =
+            glyphs.iter().map(|r| r.y.to_bits()).collect();
         assert_eq!(
             distinct_rows.len(),
             2,
@@ -1043,7 +1047,6 @@ fn rect_contains_uses_half_open_intervals() {
     assert!(!rect_contains(r, Point::new(-0.1, 5.0)));
 }
 
-
 // ============================== 效果契约 ==============================
 
 /// 效果从 `props` 一路走到 `Command` 的端到端契约。
@@ -1055,8 +1058,8 @@ mod effect_contract {
     use crate::core::{Color, Point, Rect, Size};
     use crate::element::Element;
     use crate::filter::{BlendMode, Filter, FilterChain};
-    use crate::id::NodeTag;
     use crate::icon::{IconSet, IconSource};
+    use crate::id::NodeTag;
     use crate::layout::layout;
     use crate::node::Node;
     use crate::paint::{render, Command, DisplayList};
@@ -1074,11 +1077,7 @@ mod effect_contract {
         let engine = engine();
         let ctx = Context::with_engine(&theme, &engine);
         let mut node = Node::from_element(element);
-        layout(
-            &mut node,
-            Rect::new(0.0, 0.0, 200.0, 100.0),
-            ctx,
-        );
+        layout(&mut node, Rect::new(0.0, 0.0, 200.0, 100.0), ctx);
         let mut list = DisplayList::new();
         render(&node, ctx, &mut list);
         list
@@ -1122,55 +1121,51 @@ mod effect_contract {
         let engine = engine();
         let ctx = Context::with_engine(&theme, &engine).with_icons(icons);
         let mut node = Node::from_element(element);
-        layout(
-            &mut node,
-            Rect::new(0.0, 0.0, 200.0, 100.0),
-            ctx,
-        );
+        layout(&mut node, Rect::new(0.0, 0.0, 200.0, 100.0), ctx);
         let mut list = DisplayList::new();
         render(&node, ctx, &mut list);
         list
     }
 
     /// `bounds_of_vertices` 的直接单测。
-///
-/// ⚠ 顶点顺序是刻意选的：**首顶点在内部**，后两个才是包围盒的对角。
-///
-/// 为什么端到端那条（`blurred_vector_icon_yields_offscreen_requirement`）替代不了这条：它走真实图标
-/// 的三角化网格，而那个网格的**首顶点恰好是极值角点** —— 于是「忘了更新 max 边」
-/// 这个变异算出来的结果与正确答案**恰好相同**，测试一直显示绿色却什么也没验证。
-/// 这个洞是**变异测试抓出来的**，不是看代码想出来的。
-#[test]
-fn vertex_bounds_when_first_vertex_is_interior() {
-    use crate::paint::{bounds_of_vertices, Vertex};
-    let v = |x: f32, y: f32| Vertex {
-        position: Point::new(x, y),
-        uv: Point::new(0.0, 0.0),
-    };
-    assert_eq!(
-        bounds_of_vertices(&[v(20.0, 30.0), v(10.0, 20.0), v(33.0, 47.0)]),
-        Rect::new(10.0, 20.0, 23.0, 27.0),
-        "min 与 max 必须分别由不同顶点得出；首顶点在内部时这条才有意义"
-    );
-    // x 与 y 刻意不是整数对齐：x/w 与 y/h 必须**分别**来自 min 与 max，混了会露馅
-    assert_eq!(
-        bounds_of_vertices(&[v(20.0, 30.0), v(10.0, 20.0), v(33.0, 47.0)]).width,
-        23.0,
-        "宽 = max.x − min.x，不能取反"
-    );
-    assert_eq!(
-        bounds_of_vertices(&[v(7.0, 9.0)]),
-        Rect::new(7.0, 9.0, 0.0, 0.0),
-        "单顶点 = 零尺寸矩形，原点在该顶点"
-    );
-    assert_eq!(
-        bounds_of_vertices(&[]),
-        Rect::new(0.0, 0.0, 0.0, 0.0),
-        "空列表 = 零尺寸（与 union_of_quads 同一约定，不用 Option）"
-    );
-}
+    ///
+    /// ⚠ 顶点顺序是刻意选的：**首顶点在内部**，后两个才是包围盒的对角。
+    ///
+    /// 为什么端到端那条（`blurred_vector_icon_yields_offscreen_requirement`）替代不了这条：它走真实图标
+    /// 的三角化网格，而那个网格的**首顶点恰好是极值角点** —— 于是「忘了更新 max 边」
+    /// 这个变异算出来的结果与正确答案**恰好相同**，测试一直显示绿色却什么也没验证。
+    /// 这个洞是**变异测试抓出来的**，不是看代码想出来的。
+    #[test]
+    fn vertex_bounds_when_first_vertex_is_interior() {
+        use crate::paint::{bounds_of_vertices, Vertex};
+        let v = |x: f32, y: f32| Vertex {
+            position: Point::new(x, y),
+            uv: Point::new(0.0, 0.0),
+        };
+        assert_eq!(
+            bounds_of_vertices(&[v(20.0, 30.0), v(10.0, 20.0), v(33.0, 47.0)]),
+            Rect::new(10.0, 20.0, 23.0, 27.0),
+            "min 与 max 必须分别由不同顶点得出；首顶点在内部时这条才有意义"
+        );
+        // x 与 y 刻意不是整数对齐：x/w 与 y/h 必须**分别**来自 min 与 max，混了会露馅
+        assert_eq!(
+            bounds_of_vertices(&[v(20.0, 30.0), v(10.0, 20.0), v(33.0, 47.0)]).width,
+            23.0,
+            "宽 = max.x − min.x，不能取反"
+        );
+        assert_eq!(
+            bounds_of_vertices(&[v(7.0, 9.0)]),
+            Rect::new(7.0, 9.0, 0.0, 0.0),
+            "单顶点 = 零尺寸矩形，原点在该顶点"
+        );
+        assert_eq!(
+            bounds_of_vertices(&[]),
+            Rect::new(0.0, 0.0, 0.0, 0.0),
+            "空列表 = 零尺寸（与 union_of_quads 同一约定，不用 Option）"
+        );
+    }
 
-/// blurred_vector_icon_yields_offscreen_requirement。
+    /// blurred_vector_icon_yields_offscreen_requirement。
     ///
     /// 「矢量图标 + 投影/模糊被静默忽略」就是这个缺口：以前 `Path` 分支直接
     /// `continue`，于是图标照常画、只是不开离屏，效果没发生也不报任何错。
@@ -1189,10 +1184,7 @@ fn vertex_bounds_when_first_vertex_is_interior() {
         // 时拿到的是 100×100 而不是声明的 24×24（这个坑我自己踩了一次）。
         let icon = Element::new(NodeTag::Container)
             .with_key("icon")
-            .with(
-                &crate::props::ICON_NAME,
-                PropertyValue::static_str("sq"),
-            )
+            .with(&crate::props::ICON_NAME, PropertyValue::static_str("sq"))
             .with(&crate::props::WIDTH, PropertyValue::float(24.0))
             .with(&crate::props::HEIGHT, PropertyValue::float(24.0))
             .with(&crate::props::FILTER, PropertyValue::filter(chain.clone()));
@@ -1209,7 +1201,11 @@ fn vertex_bounds_when_first_vertex_is_interior() {
                 _ => None,
             })
             .expect("带 ICON_NAME 的元素应产出 Command::Path");
-        assert!(verts.len() >= 3, "三角化至少 3 个顶点，实得 {}", verts.len());
+        assert!(
+            verts.len() >= 3,
+            "三角化至少 3 个顶点，实得 {}",
+            verts.len()
+        );
 
         let reqs = list.offscreen_requirements();
         assert_eq!(
@@ -1259,10 +1255,7 @@ fn vertex_bounds_when_first_vertex_is_interior() {
         ));
         let e = Element::new(NodeTag::Container)
             .with_key("icon")
-            .with(
-                &crate::props::ICON_NAME,
-                PropertyValue::static_str("sq"),
-            )
+            .with(&crate::props::ICON_NAME, PropertyValue::static_str("sq"))
             .with(&crate::props::WIDTH, PropertyValue::float(24.0))
             .with(&crate::props::HEIGHT, PropertyValue::float(24.0));
         let root = Element::new(NodeTag::Container)
@@ -1283,12 +1276,10 @@ fn vertex_bounds_when_first_vertex_is_interior() {
     /// 不设滤镜时是空链 —— 这是零回归的前提（否则每条命令都要开 RT）。
     #[test]
     fn command_without_filter_carries_empty_chain() {
-        let list = render_of(
-            &Element::new(NodeTag::Container).with(
-                &crate::props::BACKGROUND,
-                PropertyValue::color(Color::rgb(1.0, 0.0, 0.0)),
-            ),
-        );
+        let list = render_of(&Element::new(NodeTag::Container).with(
+            &crate::props::BACKGROUND,
+            PropertyValue::color(Color::rgb(1.0, 0.0, 0.0)),
+        ));
         for i in list.iter() {
             if let Command::Quad { filter, .. } = &i.command {
                 assert!(filter.is_identity());
@@ -1315,9 +1306,9 @@ fn vertex_bounds_when_first_vertex_is_interior() {
                 ),
         );
         assert!(list.has_non_default_blend());
-        let has = list.iter().any(|i| {
-            matches!(&i.command, Command::Quad { blend, .. } if *blend == BlendMode::Multiply)
-        });
+        let has = list.iter().any(
+            |i| matches!(&i.command, Command::Quad { blend, .. } if *blend == BlendMode::Multiply),
+        );
         assert!(has, "混合模式必须传下去");
     }
 
@@ -1325,10 +1316,7 @@ fn vertex_bounds_when_first_vertex_is_interior() {
     #[test]
     fn default_blend_mode_is_not_reported() {
         let list = render_of(&blurred_rect(2.0));
-        assert!(
-            !list.has_non_default_blend(),
-            "只设了 blur，不该报混合模式"
-        );
+        assert!(!list.has_non_default_blend(), "只设了 blur，不该报混合模式");
     }
 
     /// 离屏需求能回答"要多大RT"，且与 fx 层的规划一致。
@@ -1361,12 +1349,10 @@ fn vertex_bounds_when_first_vertex_is_interior() {
     /// 这与 `Opacity` 的继承语义相反 —— 半透明叠加天然正确，模糊叠加完全不成立。
     #[test]
     fn filter_is_not_inherited_along_parent_chain() {
-        let child = Element::new(NodeTag::Control)
-            .with_key("child")
-            .with(
-                &crate::props::BACKGROUND,
-                PropertyValue::color(Color::rgb(0.0, 1.0, 0.0)),
-            );
+        let child = Element::new(NodeTag::Control).with_key("child").with(
+            &crate::props::BACKGROUND,
+            PropertyValue::color(Color::rgb(0.0, 1.0, 0.0)),
+        );
         let list = render_of(&blurred_rect(2.0).with_children([child]));
         let blurred = list
             .iter()
@@ -1383,10 +1369,7 @@ fn vertex_bounds_when_first_vertex_is_interior() {
     fn text_command_also_carries_filter() {
         let e = Element::new(NodeTag::Text)
             .with_key("t")
-            .with(
-                &crate::props::TEXT,
-                PropertyValue::static_str("ab"),
-            )
+            .with(&crate::props::TEXT, PropertyValue::static_str("ab"))
             .with(
                 &crate::props::FILTER,
                 PropertyValue::filter(FilterChain::single(Filter::Blur {

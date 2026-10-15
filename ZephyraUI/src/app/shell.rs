@@ -87,14 +87,22 @@ fn search_box() -> Element {
                 .with_key("search-icon")
                 .with(&props::ICON_NAME, PropertyValue::static_str("search"))
                 .style("search-icon"),
-            text_label("search-hint", "Search controls and samples...", "text-caption"),
+            text_label(
+                "search-hint",
+                "Search controls and samples...",
+                "text-caption",
+            ),
         ])
 }
 
 /// 窗口按钮：46×48 三枚。点击是 no-op（宿主没把窗口操作暴露给 View），
 /// 但 hover / pressed 视觉是真的。
 fn caption_buttons(g: &Gallery) -> Element {
-    let caps = [("win:min", "minimize"), ("win:max", "move"), ("win:close", "close")];
+    let caps = [
+        ("win:min", "minimize"),
+        ("win:max", "move"),
+        ("win:close", "close"),
+    ];
     let children: Vec<Element> = caps
         .iter()
         .map(|(key, icon)| {
@@ -221,7 +229,12 @@ fn page_header(g: &Gallery) -> Element {
                 .with_key("header-tools")
                 .style("header-tools")
                 .with_children([
-                    tool_button("theme-toggle", "light", g.hovers("theme-toggle"), g.holds("theme-toggle")),
+                    tool_button(
+                        "theme-toggle",
+                        "light",
+                        g.hovers("theme-toggle"),
+                        g.holds("theme-toggle"),
+                    ),
                     button(
                         "feedback",
                         g.tr("action.feedback"),

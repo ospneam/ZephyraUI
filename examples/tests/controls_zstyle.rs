@@ -13,8 +13,8 @@
 //! `.with(...)`，两边的差会立刻暴露，而不是等到有人肉眼看出按钮变样。
 
 use zephyra_core::core::Color;
-use zephyra_core::id::NodeTag;
 use zephyra_core::element::Element;
+use zephyra_core::id::NodeTag;
 use zephyra_core::node::Node;
 use zephyra_core::property::{PropertyValue, ValueSource};
 use zephyra_core::props;
@@ -29,7 +29,9 @@ const EXPECTED: &[(&zephyra_core::property::PropertyKey, PropertyValue)] = &[
 ];
 
 /// 造一个 Control 节点，施加样式表，回读某个属性的（值, 来源）。
-fn styled(key: &'static zephyra_core::property::PropertyKey) -> (Option<PropertyValue>, ValueSource) {
+fn styled(
+    key: &'static zephyra_core::property::PropertyKey,
+) -> (Option<PropertyValue>, ValueSource) {
     styled_named(key, &[])
 }
 
@@ -38,15 +40,17 @@ fn styled_named(
     key: &'static zephyra_core::property::PropertyKey,
     names: &[&'static str],
 ) -> (Option<PropertyValue>, ValueSource) {
-    let css = std::fs::read_to_string(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/controls.zstyle"
-    ))
-    .expect("controls.zstyle must exist");
+    let css = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/controls.zstyle"))
+        .expect("controls.zstyle must exist");
     let parsed = zstylec::parse("controls.zstyle", &css);
-    assert!(parsed.is_ok(), "controls.zstyle must parse: {:?}", parsed.errors);
+    assert!(
+        parsed.is_ok(),
+        "controls.zstyle must parse: {:?}",
+        parsed.errors
+    );
 
-    let mut node = Node::from_element(&Element::new(NodeTag::Control).styles(names.iter().copied()));
+    let mut node =
+        Node::from_element(&Element::new(NodeTag::Control).styles(names.iter().copied()));
     let mut styler = SheetStyler(std::sync::Arc::new(parsed.sheet));
     zephyra_core::styler::Styler::apply(&mut styler, &mut node);
 
@@ -81,7 +85,8 @@ fn the_stylesheet_gives_the_button_its_colours_from_tokens() {
     // That is what makes theme switching free.
     let (bg, source) = styled(&props::BACKGROUND);
     assert_eq!(
-        bg.as_ref().and_then(|v| v.resource_key().map(|s| s.to_string())),
+        bg.as_ref()
+            .and_then(|v| v.resource_key().map(|s| s.to_string())),
         Some("control_fill".into()),
         "background must be the @control_fill token, not a baked-in colour"
     );
@@ -89,7 +94,9 @@ fn the_stylesheet_gives_the_button_its_colours_from_tokens() {
 
     let (stroke, _) = styled(&props::BORDER_COLOR);
     assert_eq!(
-        stroke.as_ref().and_then(|v| v.resource_key().map(|s| s.to_string())),
+        stroke
+            .as_ref()
+            .and_then(|v| v.resource_key().map(|s| s.to_string())),
         Some("stroke".into()),
         "border-color must be the @stroke token"
     );
@@ -117,11 +124,8 @@ fn the_stylesheet_sets_the_layout_props_the_button_needs() {
 /// matching everything.
 #[test]
 fn other_element_types_are_left_alone() {
-    let css = std::fs::read_to_string(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/controls.zstyle"
-    ))
-    .expect("controls.zstyle must exist");
+    let css = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/controls.zstyle"))
+        .expect("controls.zstyle must exist");
     let parsed = zstylec::parse("controls.zstyle", &css);
     assert!(parsed.is_ok());
 

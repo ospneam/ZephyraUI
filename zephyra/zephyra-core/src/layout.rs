@@ -21,8 +21,8 @@
 //! 一次间接调用与一次胖指针解引用消失。代价是无法在运行时混排不同布局容器
 //! ——而这本来也不需要（一个容器的子项布局由它自己决定）。
 
-use crate::core::{Point, Rect, Size, Thickness};
 use crate::context::Context;
+use crate::core::{Point, Rect, Size, Thickness};
 use crate::node::{Dirty, Node};
 
 /// 布局约束。
@@ -253,7 +253,7 @@ impl Stack {
         }
     }
 
-/// 主轴起点与间距（`main_offsets` 的规则本体）。
+    /// 主轴起点与间距（`main_offsets` 的规则本体）。
     ///
     /// # 为什么要抽出来
     ///
@@ -345,7 +345,7 @@ impl Stack {
         offsets
     }
 
-/// 给**子项**的约束：堆叠轴无穷，交叉轴保持原值。
+    /// 给**子项**的约束：堆叠轴无穷，交叉轴保持原值。
     ///
     /// # 为什么只放开一根轴
     ///
@@ -404,9 +404,10 @@ impl Stack {
                 let (cross_pos, cross_extent) = match (self.direction, cross_align) {
                     (Direction::Horizontal, AlignItems::Stretch) => (origin.y, available_cross),
                     (Direction::Horizontal, AlignItems::Start) => (origin.y, size.height),
-                    (Direction::Horizontal, AlignItems::Center) => {
-                        (origin.y + (available_cross - size.height) * 0.5, size.height)
-                    }
+                    (Direction::Horizontal, AlignItems::Center) => (
+                        origin.y + (available_cross - size.height) * 0.5,
+                        size.height,
+                    ),
                     (Direction::Horizontal, AlignItems::End) => {
                         (origin.y + available_cross - size.height, size.height)
                     }
@@ -423,12 +424,9 @@ impl Stack {
                     Direction::Horizontal => {
                         Rect::new(origin.x + offset_main, cross_pos, size.width, cross_extent)
                     }
-                    Direction::Vertical => Rect::new(
-                        cross_pos,
-                        origin.y + offset_main,
-                        cross_extent,
-                        size.height,
-                    ),
+                    Direction::Vertical => {
+                        Rect::new(cross_pos, origin.y + offset_main, cross_extent, size.height)
+                    }
                 }
             })
             .collect()
@@ -488,7 +486,7 @@ pub fn measure(node: &mut Node, constraints: Constraints, ctx: Context<'_>) -> S
         return size;
     }
     let padding = node.padding(ctx);
-// 堆叠轴给子项**无穷**约束；交叉轴保持有限（stretch 依赖它）。
+    // 堆叠轴给子项**无穷**约束；交叉轴保持有限（stretch 依赖它）。
     //
     // 官方依据（microsoft-ui-xaml 的 dxaml/xcp/core/core/elements/StackPanel.cpp:24-30）：
     //
@@ -530,7 +528,7 @@ pub fn measure(node: &mut Node, constraints: Constraints, ctx: Context<'_>) -> S
         }
     };
 
-// 文本节点自己贡献内容尺寸。
+    // 文本节点自己贡献内容尺寸。
     //
     // 必须在 `content_size` **之后**做这件事，而不是把文本当成一个子项：文本是
     // 叶节点，没有自己的 `Node`，所以子项列表里根本没有它。若不单独补，内容尺寸
@@ -621,9 +619,10 @@ pub fn arrange(node: &mut Node, bounds: Rect, ctx: Context<'_>) {
         let (cross_pos, cross_extent) = match (stack.direction, cross_align) {
             (Direction::Horizontal, AlignItems::Stretch) => (origin.y, available_cross),
             (Direction::Horizontal, AlignItems::Start) => (origin.y, size.height),
-            (Direction::Horizontal, AlignItems::Center) => {
-                (origin.y + (available_cross - size.height) * 0.5, size.height)
-            }
+            (Direction::Horizontal, AlignItems::Center) => (
+                origin.y + (available_cross - size.height) * 0.5,
+                size.height,
+            ),
             (Direction::Horizontal, AlignItems::End) => {
                 (origin.y + available_cross - size.height, size.height)
             }

@@ -18,9 +18,7 @@
 //! —— Linux 上没 Mica、没 DWM 是常态。把它做成 panic，等于逼着上层到处写
 //! `cfg` 绕过抽象，而那正是本层要消灭的东西。
 
-use crate::{
-    ApplyOutcome, Capabilities, Platform, ThemePreference, WindowChrome, WindowHandle,
-};
+use crate::{ApplyOutcome, Capabilities, Platform, ThemePreference, WindowChrome, WindowHandle};
 
 /// 空实现。
 #[derive(Debug, Clone, Copy, Default)]

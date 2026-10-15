@@ -14,10 +14,9 @@
 
 use crate::core::{Point, Rect};
 use crate::geom::{
-    abs_area, area_of, cross, crossings, flatten, inside, is_self_intersecting,
-    point_in_triangle, stroke_outline, tessellate, transform_segments, triangulate,
-    winding_number, LineCap, LineJoin, Contour, StrokeStyle, TriMesh, TriMeshError, POINT_EPS,
-    TOLERANCE,
+    abs_area, area_of, cross, crossings, flatten, inside, is_self_intersecting, point_in_triangle,
+    stroke_outline, tessellate, transform_segments, triangulate, winding_number, Contour, LineCap,
+    LineJoin, StrokeStyle, TriMesh, TriMeshError, POINT_EPS, TOLERANCE,
 };
 use crate::icon::{parse_path_data, FillRule, Segment};
 
@@ -41,9 +40,18 @@ fn mesh_area(mesh: &TriMesh) -> f32 {
         .chunks_exact(3)
         .map(|t| {
             let (a, b, c) = (
-                Point { x: t[0].position.x, y: t[0].position.y },
-                Point { x: t[1].position.x, y: t[1].position.y },
-                Point { x: t[2].position.x, y: t[2].position.y },
+                Point {
+                    x: t[0].position.x,
+                    y: t[0].position.y,
+                },
+                Point {
+                    x: t[1].position.x,
+                    y: t[1].position.y,
+                },
+                Point {
+                    x: t[2].position.x,
+                    y: t[2].position.y,
+                },
             );
             cross(a, b, c).abs() * 0.5
         })
@@ -66,9 +74,18 @@ fn coverage(mesh: &TriMesh, bounds: Rect, n: usize) -> f32 {
         .chunks_exact(3)
         .map(|t| {
             (
-                Point { x: t[0].position.x, y: t[0].position.y },
-                Point { x: t[1].position.x, y: t[1].position.y },
-                Point { x: t[2].position.x, y: t[2].position.y },
+                Point {
+                    x: t[0].position.x,
+                    y: t[0].position.y,
+                },
+                Point {
+                    x: t[1].position.x,
+                    y: t[1].position.y,
+                },
+                Point {
+                    x: t[2].position.x,
+                    y: t[2].position.y,
+                },
             )
         })
         .collect();
@@ -133,14 +150,7 @@ fn semicircle_sagitta_error_within_tolerance() {
     let k = 0.5522847498307933_f32;
     let segs = vec![
         Segment::MoveTo(0.0, 10.0),
-        Segment::CubicTo(
-            0.0,
-            10.0 - 10.0 * k,
-            10.0 * k,
-            0.0,
-            10.0,
-            0.0,
-        ),
+        Segment::CubicTo(0.0, 10.0 - 10.0 * k, 10.0 * k, 0.0, 10.0, 0.0),
         Segment::CubicTo(10.0 + 10.0 * k, 0.0, 10.0, 10.0 - 10.0 * k, 10.0, 10.0),
     ];
     let out = flatten(&segs, TOLERANCE);
@@ -155,8 +165,10 @@ fn semicircle_sagitta_error_within_tolerance() {
         for k in 0..=8 {
             let t = k as f32 / 8.0;
             // 二次贝塞尔（圆弧段可用二次近似足够）
-            let px = (1.0 - t).powi(2) * a.x + 2.0 * (1.0 - t) * t * (a.x + b.x) * 0.5 + t * t * b.x;
-            let py = (1.0 - t).powi(2) * a.y + 2.0 * (1.0 - t) * t * (a.y + b.y) * 0.5 + t * t * b.y;
+            let px =
+                (1.0 - t).powi(2) * a.x + 2.0 * (1.0 - t) * t * (a.x + b.x) * 0.5 + t * t * b.x;
+            let py =
+                (1.0 - t).powi(2) * a.y + 2.0 * (1.0 - t) * t * (a.y + b.y) * 0.5 + t * t * b.y;
             let dx = b.x - a.x;
             let dy = b.y - a.y;
             let len = (dx * dx + dy * dy).sqrt();
@@ -295,10 +307,7 @@ fn reversed_nesting_cuts_hole_under_nonzero_rule() {
     assert!(!inside(p(5.0, 5.0), &contours, FillRule::NonZero));
     let mesh = triangulate(&contours, FillRule::NonZero).unwrap();
     let cov = coverage(&mesh, Rect::new(0.0, 0.0, 10.0, 10.0), 120);
-    assert!(
-        (cov - 84.0).abs() < 0.6,
-        "反向嵌套应挖空到 84，实得 {cov}"
-    );
+    assert!((cov - 84.0).abs() < 0.6, "反向嵌套应挖空到 84，实得 {cov}");
 }
 
 #[test]
@@ -359,10 +368,7 @@ fn all_holes_are_cut_out() {
     // 300 − 16 − 16 = 268
     let mesh = triangulate(&contours, FillRule::NonZero).unwrap();
     let cov = coverage(&mesh, Rect::new(0.0, 0.0, 30.0, 10.0), 300);
-    assert!(
-        (cov - 268.0).abs() < 1.2,
-        "两孔覆盖率 {cov} 应约为 268"
-    );
+    assert!((cov - 268.0).abs() < 1.2, "两孔覆盖率 {cov} 应约为 268");
 }
 
 // ----------------------------------------------------------------自交
@@ -383,7 +389,14 @@ fn simple_polygon_is_not_mistaken_for_self_intersecting() {
 #[test]
 fn shared_endpoint_between_adjacent_edges_is_not_self_intersection() {
     // L 形：相邻边在顶点处接触，合法
-    let c = contour(&[(0.0, 0.0), (10.0, 0.0), (10.0, 4.0), (4.0, 4.0), (4.0, 10.0), (0.0, 10.0)]);
+    let c = contour(&[
+        (0.0, 0.0),
+        (10.0, 0.0),
+        (10.0, 4.0),
+        (4.0, 4.0),
+        (4.0, 10.0),
+        (0.0, 10.0),
+    ]);
     assert!(!is_self_intersecting(c.points()));
 }
 
@@ -425,8 +438,14 @@ fn closed_stroke_yields_outer_and_inner() {
     let outer_area = abs_area(rings[0].points());
     let inner_area = abs_area(rings[1].points());
     //外圈 12×12=144，内圈 8×8=64
-    assert!((outer_area - 144.0).abs() < 1e-2, "外轮廓应约 144，实得 {outer_area}");
-    assert!((inner_area - 64.0).abs() < 1e-2, "内孔应约 64，实得 {inner_area}");
+    assert!(
+        (outer_area - 144.0).abs() < 1e-2,
+        "外轮廓应约 144，实得 {outer_area}"
+    );
+    assert!(
+        (inner_area - 64.0).abs() < 1e-2,
+        "内孔应约 64，实得 {inner_area}"
+    );
     // 绕向必须相反，否则非零规则会把它填实
     assert!(
         rings[0].signed_area2() * rings[1].signed_area2() < 0.0,
@@ -520,7 +539,10 @@ fn clamped_miter_falls_back_to_bevel() {
     assert!(!rings.is_empty());
     for r in &rings {
         for q in r.points() {
-            assert!(q.x.is_finite() && q.y.is_finite(), "miter 不得产生非有限坐标");
+            assert!(
+                q.x.is_finite() && q.y.is_finite(),
+                "miter 不得产生非有限坐标"
+            );
         }
     }
 }
@@ -553,7 +575,11 @@ fn round_join_outset_limited_to_half_stroke_width() {
 #[test]
 fn viewbox等比缩放并居中() {
     // viewBox 24×24 映射到 48×48：线性放大 2 倍
-    let segs = vec![Segment::MoveTo(0.0, 0.0), Segment::LineTo(24.0, 0.0), Segment::LineTo(24.0, 24.0)];
+    let segs = vec![
+        Segment::MoveTo(0.0, 0.0),
+        Segment::LineTo(24.0, 0.0),
+        Segment::LineTo(24.0, 24.0),
+    ];
     let dst = Rect::new(0.0, 0.0, 48.0, 48.0);
     let t = transform_segments(&segs, (0.0, 0.0, 24.0, 24.0), dst);
     match t[2] {
@@ -571,7 +597,10 @@ fn viewbox偏移被正确扣除() {
     let dst = Rect::new(0.0, 0.0, 10.0, 10.0);
     let t = transform_segments(&segs, (10.0, 10.0, 10.0, 10.0), dst);
     match t[0] {
-        Segment::MoveTo(x, y) => assert!(x.abs() < 1e-3 && y.abs() < 1e-3, "viewBox 原点应映射到 dst 原点"),
+        Segment::MoveTo(x, y) => assert!(
+            x.abs() < 1e-3 && y.abs() < 1e-3,
+            "viewBox 原点应映射到 dst 原点"
+        ),
         _ => panic!("期望 MoveTo"),
     }
 }
@@ -628,10 +657,7 @@ fn real_icon_triangulation_area_is_sane() {
 
     // 附带确认它确实是个"稀疏齿形"而不是实心方块 —— 防止哪天解析面积本身出错时
     // 上面的相等断言因为两边一起错而仍然通过。
-    assert!(
-        actual < 576.0 * 0.4,
-        "齿轮填充率 {actual}/576 不应是实心的"
-    );
+    assert!(actual < 576.0 * 0.4, "齿轮填充率 {actual}/576 不应是实心的");
 }
 
 #[test]
@@ -648,7 +674,8 @@ fn all_builtin_icons_are_non_empty() {
             crate::icon::IconSource::Svg(s) => s,
             crate::icon::IconSource::Path(_) => continue,
         };
-        let icon = crate::icon::parse_svg(text).unwrap_or_else(|e| panic!("图标 {name} 解析失败: {e}"));
+        let icon =
+            crate::icon::parse_svg(text).unwrap_or_else(|e| panic!("图标 {name} 解析失败: {e}"));
         assert!(
             !icon.is_empty(),
             "内置图标 {name} 解析成了空图标（无路径段或填充为 none）"

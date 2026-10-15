@@ -56,13 +56,12 @@ use windows::core::Interface;
 use windows::Win32::Foundation::{E_FAIL, HMODULE, HWND};
 use windows::Win32::Graphics::Direct3D::{D3D_DRIVER_TYPE_HARDWARE, D3D_FEATURE_LEVEL_11_0};
 use windows::Win32::Graphics::Direct3D11::{
-    D3D11_BIND_RENDER_TARGET,    D3D11_CREATE_DEVICE_BGRA_SUPPORT,
-    D3D11_CREATE_DEVICE_DEBUG,
-    D3D11_CREATE_DEVICE_FLAG, D3D11_SDK_VERSION, ID3D11Device, ID3D11DeviceContext,
-    ID3D11RenderTargetView, ID3D11Texture2D,
+    ID3D11Device, ID3D11DeviceContext, ID3D11RenderTargetView, ID3D11Texture2D,
+    D3D11_BIND_RENDER_TARGET, D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_CREATE_DEVICE_DEBUG,
+    D3D11_CREATE_DEVICE_FLAG, D3D11_SDK_VERSION,
 };
 use windows::Win32::Graphics::Dxgi::{
-    CreateDXGIFactory2, IDXGIFactory2, IDXGIAdapter, IDXGISwapChain1, IDXGISwapChain3,
+    CreateDXGIFactory2, IDXGIAdapter, IDXGIFactory2, IDXGISwapChain1, IDXGISwapChain3,
     DXGI_CREATE_FACTORY_FLAGS, DXGI_SWAP_CHAIN_DESC1, DXGI_SWAP_CHAIN_FLAG,
     DXGI_SWAP_EFFECT_FLIP_DISCARD,
 };
@@ -118,8 +117,8 @@ pub const MSAA_SAMPLES: u32 = 4;
 /// ⚠ 调用方必须让**纹理与 PSO 用同一个返回值**。`MultisampleEnable=1` 而绑单采样
 /// RTV 时 D3D11 会解除渲染目标绑定，症状是「一帧什么都不画且零 HRESULT 错误」。
 pub fn msaa_samples(device: &ID3D11Device) -> u32 {
-    let levels =
-        unsafe { device.CheckMultisampleQualityLevels(BACKBUFFER_FORMAT, MSAA_SAMPLES) }.unwrap_or(0);
+    let levels = unsafe { device.CheckMultisampleQualityLevels(BACKBUFFER_FORMAT, MSAA_SAMPLES) }
+        .unwrap_or(0);
     if levels > 0 {
         MSAA_SAMPLES
     } else {
@@ -359,7 +358,9 @@ impl Surface {
 pub fn info_queue(
     device: &ID3D11Device,
 ) -> Option<windows::Win32::Graphics::Direct3D11::ID3D11InfoQueue> {
-    device.cast::<windows::Win32::Graphics::Direct3D11::ID3D11InfoQueue>().ok()
+    device
+        .cast::<windows::Win32::Graphics::Direct3D11::ID3D11InfoQueue>()
+        .ok()
 }
 
 /// 把队列里积累的消息全部打到 stderr。
@@ -368,9 +369,7 @@ pub fn info_queue(
 ///
 /// 队列里**信息级**的消息常常才是根因（"注意：此处无绑定"、"像素格式不支持
 /// sRGB"），而错误级往往只是它的后果。只打错误会正好错过真正有用的那一条。
-pub fn dump_queue_messages(
-    queue: Option<&windows::Win32::Graphics::Direct3D11::ID3D11InfoQueue>,
-) {
+pub fn dump_queue_messages(queue: Option<&windows::Win32::Graphics::Direct3D11::ID3D11InfoQueue>) {
     use windows::Win32::Graphics::Direct3D11::D3D11_MESSAGE;
     let Some(queue) = queue else {
         if std::env::var("ZEPHYRA_D3D_DEBUG").as_deref() == Ok("1") {
@@ -438,8 +437,7 @@ pub fn dump_queue_messages(
         };
         eprintln!("[d3d] {:?} #{:?} {}", msg.Severity, msg.ID, desc);
     }
-
-    }
+}
 /// 一张多重采样颜色目标：纹理本体 + 它的渲染目标视图。
 ///
 /// # 两个字段缺一不可
@@ -576,7 +574,9 @@ impl Surface {
 
         // flip model 不接受 0 宽/高，但**最小化**时 winit 报的正是 0×0。上面钳成 1
         // 就够 DXGI 接受（实测 800×600 与 1×1 都成功），所以这里不再多问尺寸。
-        let device = Gpu::unknown(&gpu.device).map_err(|e| SurfaceError::new(SurfaceErrorKind::SwapChain(e)).at("QI IUnknown(D3D11Device)"))?;
+        let device = Gpu::unknown(&gpu.device).map_err(|e| {
+            SurfaceError::new(SurfaceErrorKind::SwapChain(e)).at("QI IUnknown(D3D11Device)")
+        })?;
 
         let swapchain = if use_dcomp {
             create_composition_swapchain(&device, (width, height), &SwapchainDesc::default())
@@ -588,23 +588,26 @@ impl Surface {
             create_hwnd_swapchain(&device, hwnd, (width, height))
                 .map_err(|e| e.at("CreateSwapChainForHwnd"))?
         };
-        let swapchain3: IDXGISwapChain3 = swapchain
-            .cast()
-            .map_err(|e| {
-                SurfaceError::new(SurfaceErrorKind::SwapChain(e)).at("QI IDXGISwapChain3")
-            })?;
+        let swapchain3: IDXGISwapChain3 = swapchain.cast().map_err(|e| {
+            SurfaceError::new(SurfaceErrorKind::SwapChain(e)).at("QI IDXGISwapChain3")
+        })?;
 
         let compositor = if use_dcomp {
             // 硬约束 #2：走 `new_from_rendering_device`。它第一级就是 IDXGIDevice
             // 路线（D3D11 device QI 得动，实测成功），后两级是保险。
-            let mut c = DcompCompositor::new_from_rendering_device(hwnd, Some(&device))
-                .map_err(|e| SurfaceError::new(SurfaceErrorKind::Win32(e)).at("DCompositionCreateDevice"))?;
-            let visual = c.add_visual_on_top()
-                .map_err(|e| SurfaceError::new(SurfaceErrorKind::Win32(e)).at("CreateVisual + AddVisual"))?;
-            c.set_content_swapchain(&visual, &swapchain)
-                .map_err(|e| SurfaceError::new(SurfaceErrorKind::Win32(e)).at("SetContent(swapchain)"))?;
-            c.commit()
-                .map_err(|e| SurfaceError::new(SurfaceErrorKind::Win32(e)).at("Commit(DComp 建树)"))?;
+            let mut c =
+                DcompCompositor::new_from_rendering_device(hwnd, Some(&device)).map_err(|e| {
+                    SurfaceError::new(SurfaceErrorKind::Win32(e)).at("DCompositionCreateDevice")
+                })?;
+            let visual = c.add_visual_on_top().map_err(|e| {
+                SurfaceError::new(SurfaceErrorKind::Win32(e)).at("CreateVisual + AddVisual")
+            })?;
+            c.set_content_swapchain(&visual, &swapchain).map_err(|e| {
+                SurfaceError::new(SurfaceErrorKind::Win32(e)).at("SetContent(swapchain)")
+            })?;
+            c.commit().map_err(|e| {
+                SurfaceError::new(SurfaceErrorKind::Win32(e)).at("Commit(DComp 建树)")
+            })?;
             Some(c)
         } else {
             None
@@ -648,14 +651,18 @@ impl Surface {
                 MiscFlags: 0,
             };
             let mut tex = None;
-            unsafe { gpu.device.CreateTexture2D(&desc, None, Some(&mut tex as *mut _)) }
-                .map_err(|e| SurfaceError::new(SurfaceErrorKind::RenderTarget(e)).at("建离屏纹理"))?;
+            unsafe {
+                gpu.device
+                    .CreateTexture2D(&desc, None, Some(&mut tex as *mut _))
+            }
+            .map_err(|e| SurfaceError::new(SurfaceErrorKind::RenderTarget(e)).at("建离屏纹理"))?;
             let tex = tex.expect("CreateTexture2D 成功时必给纹理");
             let mut rtv = None;
-            unsafe { gpu.device.CreateRenderTargetView(&tex, None, Some(&mut rtv as *mut _)) }
-                .map_err(|e| {
-                    SurfaceError::new(SurfaceErrorKind::RenderTarget(e)).at("离屏 RTV")
-                })?;
+            unsafe {
+                gpu.device
+                    .CreateRenderTargetView(&tex, None, Some(&mut rtv as *mut _))
+            }
+            .map_err(|e| SurfaceError::new(SurfaceErrorKind::RenderTarget(e)).at("离屏 RTV"))?;
             eprintln!("[zephyra] 诊断：渲染目标改为离屏纹理 {width}x{height}");
             rtv
         } else {
@@ -756,19 +763,14 @@ impl Surface {
         let idx = unsafe { self.swapchain3.GetCurrentBackBufferIndex() } as usize;
         let i = idx.min(self.rtvs.len().saturating_sub(1));
         let Some(dst) = self.backbuffers.get(i) else {
-            return Err(SurfaceError::new(
-                SurfaceErrorKind::RenderTarget(windows::core::Error::new(E_FAIL, "后缓冲索引越界")),
-            )
+            return Err(SurfaceError::new(SurfaceErrorKind::RenderTarget(
+                windows::core::Error::new(E_FAIL, "后缓冲索引越界"),
+            ))
             .at("ResolveSubresource(取目标)"));
         };
         unsafe {
-            self.context.ResolveSubresource(
-                dst,
-                0,
-                &m.tex,
-                0,
-                BACKBUFFER_FORMAT,
-            );
+            self.context
+                .ResolveSubresource(dst, 0, &m.tex, 0, BACKBUFFER_FORMAT);
         }
         Ok(())
     }
@@ -777,7 +779,7 @@ impl Surface {
     ///
     /// `sync_interval` 传 1（等一次垂直同步）。传 0 会让渲染跑在合成器之前，
     /// 表现为撕裂。
-        /// 复制当前后缓冲到 CPU 可读缓冲。
+    /// 复制当前后缓冲到 CPU 可读缓冲。
     ///
     /// # 为什么需要 STAGING 纹理
     ///
@@ -840,7 +842,9 @@ impl Surface {
                 None => {
                     // 单采样路径：沿用原来的「current_rtv 反查」—— 它同时覆盖了
                     // 离屏诊断模式（那里 RTV 不是后缓冲）。
-                    self.current_rtv()?.GetResource()?.cast::<ID3D11Texture2D>()?
+                    self.current_rtv()?
+                        .GetResource()?
+                        .cast::<ID3D11Texture2D>()?
                 }
             };
 
@@ -852,9 +856,8 @@ impl Surface {
             //
             // 这个值同时用于：① 建 STAGING 纹理（尺寸错了就斜着读）、② 在报告里
             // 与声明尺寸对比。
-            let mut td = std::mem::zeroed::<
-                windows::Win32::Graphics::Direct3D11::D3D11_TEXTURE2D_DESC,
-            >();
+            let mut td =
+                std::mem::zeroed::<windows::Win32::Graphics::Direct3D11::D3D11_TEXTURE2D_DESC>();
             src.GetDesc(&mut td);
             let actual_w = td.Width;
             let actual_h = td.Height;
@@ -879,7 +882,7 @@ impl Surface {
                     Some(&mut mapped as *mut _),
                 )
                 .map_err(|e| windows::core::Error::new(E_FAIL, format!("Map(READ) 失败: {e}")))?;
-            
+
             let row_pitch = mapped.RowPitch as usize;
             // 行数取**真实**高度，不是 [`Self::size`] —— 尺寸不一致时按声明高度
             // 读会越界（staging 只有 `actual_h` 行）。
@@ -914,8 +917,9 @@ impl Surface {
                 .map_err(|e| SurfaceError::new(SurfaceErrorKind::Win32(e)).at("Present1"))?;
         }
         if let Some(c) = &self._compositor {
-            c.commit()
-                .map_err(|e| SurfaceError::new(SurfaceErrorKind::Win32(e)).at("Commit(present 后)"))?;
+            c.commit().map_err(|e| {
+                SurfaceError::new(SurfaceErrorKind::Win32(e)).at("Commit(present 后)")
+            })?;
         }
         Ok(())
     }
@@ -1043,9 +1047,10 @@ fn build_backbuffers(
         // 而不是让 `current_rtv` 在第一帧返回 `Err`（那时机已经过了，
         // 症状是"窗口永远空白"）。
         return Err(
-            SurfaceError::new(SurfaceErrorKind::RenderTarget(
-                windows::core::Error::new(E_FAIL, "一个后缓冲都用不了"),
-            ))
+            SurfaceError::new(SurfaceErrorKind::RenderTarget(windows::core::Error::new(
+                E_FAIL,
+                "一个后缓冲都用不了",
+            )))
             .at("GetBuffer/CreateRenderTargetView")
             .with_hint(format!(
                 "GetDesc1 报告 {reported} 个缓冲，但索引 0 就建不出视图。"
@@ -1070,8 +1075,7 @@ fn create_hwnd_swapchain(
     hwnd: HWND,
     size: (u32, u32),
 ) -> Result<IDXGISwapChain1, SurfaceError> {
-    let factory: IDXGIFactory2 =
-        unsafe { CreateDXGIFactory2(DXGI_CREATE_FACTORY_FLAGS(0)) }
+    let factory: IDXGIFactory2 = unsafe { CreateDXGIFactory2(DXGI_CREATE_FACTORY_FLAGS(0)) }
         .map_err(|e| SurfaceError::new(SurfaceErrorKind::SwapChain(e)).at("CreateDXGIFactory2"))?;
     let desc = DXGI_SWAP_CHAIN_DESC1 {
         Width: size.0,
@@ -1136,9 +1140,7 @@ fn create_hwnd_swapchain(
             None::<&windows::Win32::Graphics::Dxgi::IDXGIOutput>,
         )
     }
-    .map_err(|e| {
-        SurfaceError::new(SurfaceErrorKind::SwapChain(e)).at("CreateSwapChainForHwnd")
-    })?;
+    .map_err(|e| SurfaceError::new(SurfaceErrorKind::SwapChain(e)).at("CreateSwapChainForHwnd"))?;
     Ok(sc)
 }
 

@@ -51,11 +51,11 @@
 #![cfg(windows)]
 
 use windows::Win32::Graphics::Direct3D11::{
-    D3D11_INPUT_CLASSIFICATION, D3D11_INPUT_ELEMENT_DESC, D3D11_INPUT_PER_VERTEX_DATA,
     ID3D11Device, ID3D11InputLayout, ID3D11PixelShader, ID3D11VertexShader,
+    D3D11_INPUT_CLASSIFICATION, D3D11_INPUT_ELEMENT_DESC, D3D11_INPUT_PER_VERTEX_DATA,
 };
 use windows::Win32::Graphics::Dxgi::Common::{
-    DXGI_FORMAT, DXGI_FORMAT_R32_FLOAT, DXGI_FORMAT_R32G32B32A32_FLOAT, DXGI_FORMAT_R32G32_FLOAT,
+    DXGI_FORMAT, DXGI_FORMAT_R32G32B32A32_FLOAT, DXGI_FORMAT_R32G32_FLOAT, DXGI_FORMAT_R32_FLOAT,
 };
 
 use crate::quad::Vertex;
@@ -83,23 +83,71 @@ pub const VS_BYTECODE: &[u8] = include_bytes!("../shaders/zephyra.vs.bin");
 /// 最后 3 个是效果执行用的：`PSBlurH` / `PSBlurV` / `PSComposite`。
 pub const PS_VARIANTS: [(&str, &[u8]); 18] = [
     ("PSMain", include_bytes!("../shaders/zephyra.PSMain.ps.bin")),
-    ("PSOverlay", include_bytes!("../shaders/zephyra.PSOverlay.ps.bin")),
-    ("PSDarken", include_bytes!("../shaders/zephyra.PSDarken.ps.bin")),
-    ("PSLighten", include_bytes!("../shaders/zephyra.PSLighten.ps.bin")),
-    ("PSColorDodge", include_bytes!("../shaders/zephyra.PSColorDodge.ps.bin")),
-    ("PSColorBurn", include_bytes!("../shaders/zephyra.PSColorBurn.ps.bin")),
-    ("PSHardLight", include_bytes!("../shaders/zephyra.PSHardLight.ps.bin")),
-    ("PSSoftLight", include_bytes!("../shaders/zephyra.PSSoftLight.ps.bin")),
-    ("PSDifference", include_bytes!("../shaders/zephyra.PSDifference.ps.bin")),
-    ("PSExclusion", include_bytes!("../shaders/zephyra.PSExclusion.ps.bin")),
-    ("PSMultiply", include_bytes!("../shaders/zephyra.PSMultiply.ps.bin")),
+    (
+        "PSOverlay",
+        include_bytes!("../shaders/zephyra.PSOverlay.ps.bin"),
+    ),
+    (
+        "PSDarken",
+        include_bytes!("../shaders/zephyra.PSDarken.ps.bin"),
+    ),
+    (
+        "PSLighten",
+        include_bytes!("../shaders/zephyra.PSLighten.ps.bin"),
+    ),
+    (
+        "PSColorDodge",
+        include_bytes!("../shaders/zephyra.PSColorDodge.ps.bin"),
+    ),
+    (
+        "PSColorBurn",
+        include_bytes!("../shaders/zephyra.PSColorBurn.ps.bin"),
+    ),
+    (
+        "PSHardLight",
+        include_bytes!("../shaders/zephyra.PSHardLight.ps.bin"),
+    ),
+    (
+        "PSSoftLight",
+        include_bytes!("../shaders/zephyra.PSSoftLight.ps.bin"),
+    ),
+    (
+        "PSDifference",
+        include_bytes!("../shaders/zephyra.PSDifference.ps.bin"),
+    ),
+    (
+        "PSExclusion",
+        include_bytes!("../shaders/zephyra.PSExclusion.ps.bin"),
+    ),
+    (
+        "PSMultiply",
+        include_bytes!("../shaders/zephyra.PSMultiply.ps.bin"),
+    ),
     ("PSHue", include_bytes!("../shaders/zephyra.PSHue.ps.bin")),
-    ("PSSaturation", include_bytes!("../shaders/zephyra.PSSaturation.ps.bin")),
-    ("PSColor", include_bytes!("../shaders/zephyra.PSColor.ps.bin")),
-    ("PSLuminosity", include_bytes!("../shaders/zephyra.PSLuminosity.ps.bin")),
-    ("PSBlurH", include_bytes!("../shaders/zephyra.PSBlurH.ps.bin")),
-    ("PSBlurV", include_bytes!("../shaders/zephyra.PSBlurV.ps.bin")),
-    ("PSComposite", include_bytes!("../shaders/zephyra.PSComposite.ps.bin")),
+    (
+        "PSSaturation",
+        include_bytes!("../shaders/zephyra.PSSaturation.ps.bin"),
+    ),
+    (
+        "PSColor",
+        include_bytes!("../shaders/zephyra.PSColor.ps.bin"),
+    ),
+    (
+        "PSLuminosity",
+        include_bytes!("../shaders/zephyra.PSLuminosity.ps.bin"),
+    ),
+    (
+        "PSBlurH",
+        include_bytes!("../shaders/zephyra.PSBlurH.ps.bin"),
+    ),
+    (
+        "PSBlurV",
+        include_bytes!("../shaders/zephyra.PSBlurV.ps.bin"),
+    ),
+    (
+        "PSComposite",
+        include_bytes!("../shaders/zephyra.PSComposite.ps.bin"),
+    ),
 ];
 
 /// 第 `i` 个混合模式该用哪个 PS 变体。
@@ -160,13 +208,13 @@ pub const PS_COMPOSITE: usize = 17;
 /// 代价只是多占一个 `TEXCOORD` 索引。位置是顶点缓冲里偏移 0 的那两个 f32，
 /// 用哪个语义名都只是一段字符串。
 pub const VERTEX_LAYOUT: [(&str, u32, DXGI_FORMAT, u32); 7] = [
-    ("TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0),          // position
-    ("TEXCOORD", 2, DXGI_FORMAT_R32G32_FLOAT, 8),          // local
-    ("TEXCOORD", 4, DXGI_FORMAT_R32G32_FLOAT, 16),         // uv
-    ("COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 24),      // color
-    ("TEXCOORD", 6, DXGI_FORMAT_R32G32_FLOAT, 40),         // corner
-    ("TEXCOORD", 8, DXGI_FORMAT_R32G32_FLOAT, 48),         // half_size
-    ("TEXCOORD", 10, DXGI_FORMAT_R32_FLOAT, 56),          // kind
+    ("TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0), // position
+    ("TEXCOORD", 2, DXGI_FORMAT_R32G32_FLOAT, 8), // local
+    ("TEXCOORD", 4, DXGI_FORMAT_R32G32_FLOAT, 16), // uv
+    ("COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 24), // color
+    ("TEXCOORD", 6, DXGI_FORMAT_R32G32_FLOAT, 40), // corner
+    ("TEXCOORD", 8, DXGI_FORMAT_R32G32_FLOAT, 48), // half_size
+    ("TEXCOORD", 10, DXGI_FORMAT_R32_FLOAT, 56),  // kind
 ];
 
 /// 编译期错误。
@@ -274,15 +322,13 @@ impl Shaders {
         // 差别在于 D3D 需要从字节码的 chunk 表里定位并校验，而裸 ISGN 缺少
         // `DXBC` 头 —— 校验直接判为非法。
         let mut input_layout = None;
-        unsafe {
-            device.CreateInputLayout(&descs, VS_BYTECODE, Some(&mut input_layout as *mut _))
-        }
-        .map_err(|e| {
-            ShaderError::Create(
-                "CreateInputLayout（多半是 VERTEX_LAYOUT 的语义名/格式与 HLSL 的 VSIn 对不上）",
-                e,
-            )
-        })?;
+        unsafe { device.CreateInputLayout(&descs, VS_BYTECODE, Some(&mut input_layout as *mut _)) }
+            .map_err(|e| {
+                ShaderError::Create(
+                    "CreateInputLayout（多半是 VERTEX_LAYOUT 的语义名/格式与 HLSL 的 VSIn 对不上）",
+                    e,
+                )
+            })?;
 
         Ok(Self {
             vs,
@@ -390,7 +436,11 @@ fn input_signature(container: &[u8]) -> Result<Vec<u8>, ShaderError> {
     }
     let count = rd_u32(28) as usize;
     let table_end = HEADER_LEN
-        .checked_add(count.checked_mul(4).ok_or(ShaderError::Malformed("chunk 数溢出"))?)
+        .checked_add(
+            count
+                .checked_mul(4)
+                .ok_or(ShaderError::Malformed("chunk 数溢出"))?,
+        )
         .ok_or(ShaderError::Malformed("偏移表长度溢出"))?;
     if table_end > container.len() {
         return Err(ShaderError::Malformed("chunk 偏移表越界"));
@@ -467,7 +517,11 @@ pub fn parse_input_signature(isgn: &[u8]) -> Result<Vec<SignatureEntry>, ShaderE
     //   - 32 → 8 + 6×32 = 200 > 152
     const RECORD_LEN: usize = 24;
     let records_end = records
-        .checked_add(count.checked_mul(RECORD_LEN).ok_or(ShaderError::Malformed("元素数溢出"))?)
+        .checked_add(
+            count
+                .checked_mul(RECORD_LEN)
+                .ok_or(ShaderError::Malformed("元素数溢出"))?,
+        )
         .ok_or(ShaderError::Malformed("记录区末尾溢出"))?;
     if records_end > isgn.len() {
         return Err(ShaderError::Malformed("ISGN 元素记录区越界"));

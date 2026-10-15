@@ -10,22 +10,22 @@
 //! - 移出后不清 hover → 高亮粘在旧按钮上；
 //! - press 视觉不跟随 capture → 按下后拖出控件，界面还停在按下态。
 
+use zephyra_core::context::Context;
 use zephyra_core::core::{Rect, UvRect};
+use zephyra_core::diff::diff;
+use zephyra_core::element::Element;
+use zephyra_core::id::{ElementKey, NodeTag};
 use zephyra_core::input::{
     InputRouter, PointerEvent, PointerPhase, PointerSource, RoutedEvent, RoutedEvents,
 };
+use zephyra_core::layout::layout;
 use zephyra_core::layout::{AlignItems, Direction};
+use zephyra_core::node::{clear_dirty, Node};
+use zephyra_core::paint::render;
 use zephyra_core::paint::{Command, DisplayList};
 use zephyra_core::property::PropertyValue;
 use zephyra_core::props;
 use zephyra_core::theme::{roles, Theme};
-use zephyra_core::context::Context;
-use zephyra_core::diff::diff;
-use zephyra_core::element::Element;
-use zephyra_core::id::{ElementKey, NodeTag};
-use zephyra_core::layout::layout;
-use zephyra_core::node::{clear_dirty, Node};
-use zephyra_core::paint::render;
 
 /// 降级成命令列表（只取命令，不取排序键）。
 fn commands(node: &Node) -> Vec<Command> {
@@ -42,7 +42,11 @@ const H: f32 = 200.0;
 const BUTTONS: [&str; 3] = ["menu", "pen", "eraser"];
 
 /// 一个工具栏按钮。外观与 `examples/demo.rs` 的同名函数一致。
-fn button(name: &'static str, hovered: Option<&ElementKey>, pressed: Option<&ElementKey>) -> Element {
+fn button(
+    name: &'static str,
+    hovered: Option<&ElementKey>,
+    pressed: Option<&ElementKey>,
+) -> Element {
     let key = ElementKey::from(name);
     let is_hover = hovered == Some(&key);
     let is_pressed = pressed == Some(&key);
@@ -82,8 +86,14 @@ fn view(hovered: Option<&ElementKey>, pressed: Option<&ElementKey>) -> Element {
         )
         .with(&props::PADDING, PropertyValue::float(PAD_DIP))
         .with(&props::SPACING, PropertyValue::float(SPACING_DIP))
-        .with(&props::DIRECTION, PropertyValue::direction(Direction::Horizontal))
-        .with(&props::CROSS_ALIGN, PropertyValue::cross_align(AlignItems::Center))
+        .with(
+            &props::DIRECTION,
+            PropertyValue::direction(Direction::Horizontal),
+        )
+        .with(
+            &props::CROSS_ALIGN,
+            PropertyValue::cross_align(AlignItems::Center),
+        )
         .with_children(
             BUTTONS
                 .iter()
@@ -316,10 +326,7 @@ fn theme_switch_changes_colors_without_touching_the_tree() {
 
     // 关键：换主题不产生任何布局需求 —— 颜色不影响几何
     let stats = diff(&mut h.node, &view(None, None));
-    assert!(
-        stats.is_noop(),
-        "切主题不应让元素树变样：{stats:?}"
-    );
+    assert!(stats.is_noop(), "切主题不应让元素树变样：{stats:?}");
 }
 
 /// 一个图像节点，`src` 可选。尺寸固定，好断言目标矩形没被 uv 影响。
@@ -339,7 +346,10 @@ fn cropping_an_image_changes_only_the_command_not_the_geometry() {
     // 端到端走一遍：属性 → diff → 布局 → 命令。uv 是纹理坐标，与节点矩形无关，
     // 所以布局必须命中缓存、矩形必须逐字段相同。
     let mut root = Element::new(NodeTag::Container)
-        .with(&props::DIRECTION, PropertyValue::direction(Direction::Horizontal))
+        .with(
+            &props::DIRECTION,
+            PropertyValue::direction(Direction::Horizontal),
+        )
         .with_children([image_node(None)]);
 
     let theme = Theme::dark();
@@ -353,13 +363,13 @@ fn cropping_an_image_changes_only_the_command_not_the_geometry() {
 
     // 换成图集右半边。
     root = Element::new(NodeTag::Container)
-        .with(&props::DIRECTION, PropertyValue::direction(Direction::Horizontal))
+        .with(
+            &props::DIRECTION,
+            PropertyValue::direction(Direction::Horizontal),
+        )
         .with_children([image_node(Some(UvRect::new(0.5, 0.0, 0.5, 1.0)))]);
     let stats = diff(&mut node, &root);
-    assert!(
-        stats.dirtied > 0,
-        "换 uv 应被检出为重绘，实得 {stats:?}"
-    );
+    assert!(stats.dirtied > 0, "换 uv 应被检出为重绘，实得 {stats:?}");
     assert!(
         !stats.needs_layout(),
         "换 uv 不应要求重排，否则改一个纹理坐标会让整表重排"
@@ -378,8 +388,7 @@ fn cropping_an_image_changes_only_the_command_not_the_geometry() {
     );
 
     let src_of = |cmds: &[Command]| -> Vec<Option<UvRect>> {
-        cmds
-            .iter()
+        cmds.iter()
             .filter_map(|c| match c {
                 Command::Image { src, .. } => Some(*src),
                 _ => None,

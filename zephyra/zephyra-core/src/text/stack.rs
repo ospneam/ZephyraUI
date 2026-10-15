@@ -189,12 +189,7 @@ impl<S: GlyphSource> TextStack<S> {
 
 impl<S: GlyphSource> TextStack<S> {
     /// 排版并填好基线。
-    fn shape_impl(
-        &mut self,
-        text: &str,
-        style: &TextStyle,
-        max_width: Option<f32>,
-    ) -> ShapedText {
+    fn shape_impl(&mut self, text: &str, style: &TextStyle, max_width: Option<f32>) -> ShapedText {
         if self.disabled {
             return ShapedText {
                 size: Size::new(0.0, 0.0),

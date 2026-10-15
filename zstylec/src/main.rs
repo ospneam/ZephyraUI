@@ -192,16 +192,16 @@ fn render(file: &str, d: &Diag) {
     }
     eprintln!(
         "{}:{}:{}: {}: {}",
-        file,
-        e.at.line,
-        e.at.col,
-        d.level,
-        e.headline
+        file, e.at.line, e.at.col, d.level, e.headline
     );
     if !e.line_text.is_empty() {
         eprintln!("  {}", e.line_text);
         let caret = e.underline_len.max(1);
-        eprintln!("  {}{}", " ".repeat(e.at.col.saturating_sub(1)), "^".repeat(caret));
+        eprintln!(
+            "  {}{}",
+            " ".repeat(e.at.col.saturating_sub(1)),
+            "^".repeat(caret)
+        );
     }
     if !e.near.is_empty() {
         for (what, where_) in &e.near {
@@ -235,7 +235,11 @@ fn emit_json(reports: &[FileReport]) {
                 e.at.col,
                 json_str(&e.headline),
                 json_str(&e.hint),
-                if di + 1 == r.diagnostics.len() { "" } else { "," }
+                if di + 1 == r.diagnostics.len() {
+                    ""
+                } else {
+                    ","
+                }
             );
         }
         println!("  ]}}");

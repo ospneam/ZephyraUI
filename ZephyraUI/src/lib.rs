@@ -23,10 +23,10 @@
 //! 交互走保留式的 hover/press/click，布局用 core 的单趟 flex。
 //! 对照表在 `README.md`。
 
-pub mod controls;
-pub mod app;
 /// 动画地基 —— 缓动曲线、时钟、档位。数字全部取自官方动效规范，见 `docs/animation.md`。
 pub mod anim;
+pub mod app;
+pub mod controls;
 /// i18n —— BCP 47 标签、偏好协商、回退链。模型照抄浏览器，见 `docs/i18n.md`。
 pub mod i18n;
 /// 响应式与触控判据 —— 断点、触摸目标、列数。数字全部带出处，

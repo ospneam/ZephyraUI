@@ -18,8 +18,8 @@
 //! | 3 | 环境缺失（找不到 cargo、目录已存在…） |
 
 pub mod args;
-pub mod entry;
 pub mod commands;
+pub mod entry;
 
 pub use args::{Args, ParseOutcome};
 pub use commands::COMMANDS;
@@ -35,7 +35,10 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// —— 无论它是 cargo 传的还是用户传的，剥掉之后 `zephyra dev` 与
 /// `cargo zephyra dev` 走到完全相同的位置。
 pub fn strip_cargo_subcommand(argv: &mut Vec<String>) {
-    if argv.first().is_some_and(|a| a == "zephyra" || a.ends_with("cargo-zephyra")) {
+    if argv
+        .first()
+        .is_some_and(|a| a == "zephyra" || a.ends_with("cargo-zephyra"))
+    {
         argv.remove(0);
     }
 }

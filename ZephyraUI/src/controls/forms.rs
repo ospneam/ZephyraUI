@@ -100,7 +100,12 @@ pub fn round_button(
 ///
 /// 下划线是常驻子节点（1px 直棒）：hover 时颜色加深由样式表说，源码不发值。
 /// `url` 是数据（[`HYPERLINK_URL`]），不是样式。
-pub fn hyperlink(key: &'static str, text: &'static str, url: &'static str, hovered: bool) -> Element {
+pub fn hyperlink(
+    key: &'static str,
+    text: &'static str,
+    url: &'static str,
+    hovered: bool,
+) -> Element {
     let classes = state(hovered, false);
     with_classes(
         Element::new(NodeTag::Control)
@@ -117,7 +122,9 @@ pub fn hyperlink(key: &'static str, text: &'static str, url: &'static str, hover
                 )
                 .style("hyperlink-label"),
                 with_classes(
-                    Element::new(NodeTag::Container).with_key("underline").style("link-underline"),
+                    Element::new(NodeTag::Container)
+                        .with_key("underline")
+                        .style("link-underline"),
                     &classes,
                 ),
             ]),
@@ -180,12 +187,7 @@ pub fn drop_down_button(
 /// `value` 由**宿主**把下标映射成文字后给出（`&'static`）：控件不持有选项表，
 /// 也就不会为了显示当前值去 `format!` —— `view()` 每帧跑一次，那会是每帧泄漏。
 /// 下拉选项本身是**内容**，样式表碰不到。
-pub fn combo_box(
-    key: &'static str,
-    value: &'static str,
-    hovered: bool,
-    pressed: bool,
-) -> Element {
+pub fn combo_box(key: &'static str, value: &'static str, hovered: bool, pressed: bool) -> Element {
     let el = with_classes(
         Element::new(NodeTag::Control)
             .with_key(key)
@@ -300,9 +302,22 @@ fn row_key(r: usize) -> &'static str {
 /// 色格的 key（纯身份，不参与路由）。
 fn gen_swatch_key(i: usize) -> &'static str {
     const KEYS: [&str; 16] = [
-        "swatch:0", "swatch:1", "swatch:2", "swatch:3", "swatch:4", "swatch:5", "swatch:6",
-        "swatch:7", "swatch:8", "swatch:9", "swatch:10", "swatch:11", "swatch:12", "swatch:13",
-        "swatch:14", "swatch:15",
+        "swatch:0",
+        "swatch:1",
+        "swatch:2",
+        "swatch:3",
+        "swatch:4",
+        "swatch:5",
+        "swatch:6",
+        "swatch:7",
+        "swatch:8",
+        "swatch:9",
+        "swatch:10",
+        "swatch:11",
+        "swatch:12",
+        "swatch:13",
+        "swatch:14",
+        "swatch:15",
     ];
     KEYS[i.min(15)]
 }

@@ -34,15 +34,20 @@
 
 use windows::core::Interface as _;
 use windows::Win32::Graphics::Direct3D11::*;
-use windows::Win32::Graphics::Dxgi::{
-    CreateDXGIFactory1, IDXGIAdapter1, DXGI_ADAPTER_DESC,
-};
+use windows::Win32::Graphics::Dxgi::{CreateDXGIFactory1, IDXGIAdapter1, DXGI_ADAPTER_DESC};
 
 /// 在指定适配器上建设备，测视口往返，清一张纹理看像素。
 fn probe(adapter: &IDXGIAdapter1, desc: &DXGI_ADAPTER_DESC, is_default: bool) {
     let end = desc.Description.iter().position(|&c| c == 0).unwrap_or(128);
     let name = String::from_utf16_lossy(&desc.Description[..end]);
-    println!("\n=== {name}{} ===", if is_default { " ← 当前代码用的这块" } else { "" });
+    println!(
+        "\n=== {name}{} ===",
+        if is_default {
+            " ← 当前代码用的这块"
+        } else {
+            ""
+        }
+    );
     println!(
         "  厂商/设备 {:#06x}/{:#06x}  独显 {} MiB",
         desc.VendorId,
@@ -51,9 +56,9 @@ fn probe(adapter: &IDXGIAdapter1, desc: &DXGI_ADAPTER_DESC, is_default: bool) {
     );
 
     // 必须传 `IDXGIAdapter`（不是 `IUnknown`）：`D3D11CreateDevice` 的第一个参数类型
-// 是 `Option<&IDXGIAdapter>`，windows-rs 没有泛型化它 —— 而 DXGI 的适配器接口本身
-// 就继承自 `IUnknown`，所以直接 cast 到 `IDXGIAdapter` 即可。
-let Ok(dxgi) = adapter.cast::<windows::Win32::Graphics::Dxgi::IDXGIAdapter>() else {
+    // 是 `Option<&IDXGIAdapter>`，windows-rs 没有泛型化它 —— 而 DXGI 的适配器接口本身
+    // 就继承自 `IUnknown`，所以直接 cast 到 `IDXGIAdapter` 即可。
+    let Ok(dxgi) = adapter.cast::<windows::Win32::Graphics::Dxgi::IDXGIAdapter>() else {
         println!("  转 IDXGIAdapter 失败");
         return;
     };
@@ -145,10 +150,8 @@ let Ok(dxgi) = adapter.cast::<windows::Win32::Graphics::Dxgi::IDXGIAdapter>() el
     let staged = staged.unwrap();
     unsafe { context.CopyResource(&staged, &tex) };
     let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
-    let ok = unsafe {
-        context.Map(&staged, 0, D3D11_MAP_READ, 0, Some(&mut mapped as *mut _))
-    }
-    .is_ok();
+    let ok =
+        unsafe { context.Map(&staged, 0, D3D11_MAP_READ, 0, Some(&mut mapped as *mut _)) }.is_ok();
     if !ok {
         println!("  ❌ 读回映射失败");
         return;
@@ -156,8 +159,15 @@ let Ok(dxgi) = adapter.cast::<windows::Win32::Graphics::Dxgi::IDXGIAdapter>() el
     let px = unsafe { (mapped.pData as *const [u8; 4]).read() };
     println!(
         "  清屏像素 = [{}, {}, {}, {}]  {}",
-        px[0], px[1], px[2], px[3],
-        if px[0] > 100 && px[2] < 50 { "✅ 清屏生效" } else { "❌ 没清上" }
+        px[0],
+        px[1],
+        px[2],
+        px[3],
+        if px[0] > 100 && px[2] < 50 {
+            "✅ 清屏生效"
+        } else {
+            "❌ 没清上"
+        }
     );
     unsafe { context.Unmap(&staged, 0) };
 }

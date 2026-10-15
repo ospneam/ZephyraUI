@@ -73,8 +73,8 @@ pub mod input;
 pub mod layout;
 pub mod node;
 pub mod paint;
-pub mod props;
 pub mod property;
+pub mod props;
 pub mod style;
 pub mod styler;
 pub mod text;
@@ -92,9 +92,9 @@ mod icon_tests;
 #[cfg(test)]
 mod input_tests;
 #[cfg(test)]
-mod layout_tests;
-#[cfg(test)]
 mod layout_classification_tests;
+#[cfg(test)]
+mod layout_tests;
 #[cfg(test)]
 mod paint_tests;
 #[cfg(test)]

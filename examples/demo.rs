@@ -30,16 +30,18 @@
 //! ZEPHYRA_TRACE=1 cargo run -p zephyra-foundation --bin demo   # 每帧统计
 //! ```
 
-use zephyra_core::core::UvRect;
-use zephyra_core::property::{PropertyKey, PropertyValue};
-use zephyra_core::props;
 use zephyra_core::context::Context;
+use zephyra_core::core::UvRect;
 use zephyra_core::element::Element;
 use zephyra_core::id::{ElementKey, NodeTag};
+use zephyra_core::property::{PropertyKey, PropertyValue};
+use zephyra_core::props;
 
 /// 分配计数探针（诊断用，不是产品代码 —— 见该文件头的警告）。
 mod alloc_probe;
 
+#[cfg(all(feature = "d3d11", not(feature = "d3d12")))]
+use zephyra_winit::{HostWindow, InputState, View, Z_INDEX};
 /// 宿主后端。
 ///
 /// 由**特性开关**决定编哪个后端进来，而不是运行时切换：同一个二进制里只有一个后端被
@@ -52,8 +54,6 @@ mod alloc_probe;
 /// - 无：只跑 `--dump-cpu`（不开窗口），适合无显示器的环境。
 #[cfg(feature = "d3d12")]
 use zephyra_winit_d3d12::{HostWindow, InputState, View, Z_INDEX};
-#[cfg(all(feature = "d3d11", not(feature = "d3d12")))]
-use zephyra_winit::{HostWindow, InputState, View, Z_INDEX};
 
 /// 工具栏按钮的语义名。同时是元素 key —— 所以必须是 `&'static str`。
 const BUTTONS: [&str; 8] = [
@@ -102,13 +102,13 @@ impl View for Demo {
             // 会产出空的 DisplayList。背景本身在 demo.zstyle 的 `Container.root`。
             .style("root")
             .with_children([
-            toolbar(self),
-            icons(),
-            content(),
-            src_crops(),
-            effects(),
-            status_bar(self),
-        ])
+                toolbar(self),
+                icons(),
+                content(),
+                src_crops(),
+                effects(),
+                status_bar(self),
+            ])
             .with(&NOTE, PropertyValue::static_str("demo"))
             .with(&Z_INDEX, PropertyValue::int(0))
     }
@@ -148,7 +148,6 @@ fn button(name: &'static str, demo: &Demo) -> Element {
         .styles(pressed.then_some("pressed"))
         // NOTE: width / height / corner-radius / background / direction /
         // main-align / cross-align / spacing all moved to controls.zstyle.
-
         .with_children([
             // 图标位：真矢量图标，走 core 的「图标名 → 展平 → 三角化 → Path」。
             //
@@ -161,16 +160,27 @@ fn button(name: &'static str, demo: &Demo) -> Element {
             // `ICON_COLOR`，它不继承（见该属性的文档），所以必须显式给。
             Element::new(NodeTag::Container)
                 .with_key("glyph")
-                .with(&props::ICON_NAME, PropertyValue::static_str(icon_name(name)))
+                .with(
+                    &props::ICON_NAME,
+                    PropertyValue::static_str(icon_name(name)),
+                )
                 .style("glyph")
                 // 悬停与按下是**分类名**，不是值。颜色本身在 demo.zstyle 的
                 // `Container.glyph` / `.hovered` / `.pressed` 三条规定。
-                .styles(pressed.then_some("pressed").or_else(|| hovered.then_some("hovered"))),
+                .styles(
+                    pressed
+                        .then_some("pressed")
+                        .or_else(|| hovered.then_some("hovered")),
+                ),
             Element::new(NodeTag::Text)
                 .with_key("label")
                 .with(&props::TEXT, PropertyValue::static_str(name))
                 .style("label")
-                .styles(pressed.then_some("pressed").or_else(|| hovered.then_some("hovered")))
+                .styles(
+                    pressed
+                        .then_some("pressed")
+                        .or_else(|| hovered.then_some("hovered")),
+                )
                 // 名字长的用小一档字号 —— 判断「名字长不长」是源码的事（它知道名字），
                 // 用哪一档是样式表的事（demo.zstyle 的 `Text.label.compact`）。
                 .styles((name.len() > 6).then_some("compact")),
@@ -337,26 +347,24 @@ fn content() -> Element {
     Element::new(NodeTag::Container)
         .with_key("content")
         .style("content")
-        .with_children([
-            Element::new(NodeTag::Container)
-                .with_key("hero")
-                .style("hero")
-                .with_children(
-                    (0..LINES)
-                        .map(|i| {
-                            // 真实文本：核心按 Text 属性排版，宿主提供引擎。
-                            //
-                            // 之前这里是"用色块示意文字位置"—— 那是 `Command::Text`
-                            // 零生产者时的权宜之计。现在文本层通了，字号、行高、宽度
-                            // 全是真算出来的。
-                            Element::new(NodeTag::Text)
-                                .with_key(line_key(i))
-                                .with(&props::TEXT, PropertyValue::static_str(line_text(i)))
-                                .style("hero-line")
-                        })
-                        .collect::<Vec<_>>(),
-                ),
-        ])
+        .with_children([Element::new(NodeTag::Container)
+            .with_key("hero")
+            .style("hero")
+            .with_children(
+                (0..LINES)
+                    .map(|i| {
+                        // 真实文本：核心按 Text 属性排版，宿主提供引擎。
+                        //
+                        // 之前这里是"用色块示意文字位置"—— 那是 `Command::Text`
+                        // 零生产者时的权宜之计。现在文本层通了，字号、行高、宽度
+                        // 全是真算出来的。
+                        Element::new(NodeTag::Text)
+                            .with_key(line_key(i))
+                            .with(&props::TEXT, PropertyValue::static_str(line_text(i)))
+                            .style("hero-line")
+                    })
+                    .collect::<Vec<_>>(),
+            )])
 }
 
 /// 一个效果样本：深色底板 + 半透明色块，色块带自己的滤镜 / 混合模式。
@@ -429,61 +437,77 @@ fn effects() -> Element {
 
     // 三趟同参数的高斯 ≈ 一趟 σ=2.83，所以过渡带明显更宽 —— 这就是判据。
     let triple = FilterChain::new([
-        Filter::Blur { sigma_x: 2.0, sigma_y: 2.0 },
-        Filter::Blur { sigma_x: 2.0, sigma_y: 2.0 },
-        Filter::Blur { sigma_x: 2.0, sigma_y: 2.0 },
+        Filter::Blur {
+            sigma_x: 2.0,
+            sigma_y: 2.0,
+        },
+        Filter::Blur {
+            sigma_x: 2.0,
+            sigma_y: 2.0,
+        },
+        Filter::Blur {
+            sigma_x: 2.0,
+            sigma_y: 2.0,
+        },
     ]);
 
     Element::new(NodeTag::Container)
         .with_key("effects")
         .style("effects")
-        .with_children([
-            Element::new(NodeTag::Container)
-                .with_key("effects-row")
-                .style("effects-row")
-                .with_children([
-                    effect_swatch(
-                        "fx-none",
-                        "对照",
-                        "accent",
-                        FilterChain::none(),
-                        BlendMode::SrcOver,
-                    ),
-                    effect_swatch(
-                        "fx-blur",
-                        "模糊 σ3",
-                        "accent",
-                        FilterChain::single(Filter::Blur { sigma_x: 3.0, sigma_y: 3.0 }),
-                        BlendMode::SrcOver,
-                    ),
-                    effect_swatch(
-                        "fx-shadow",
-                        "投影 σ3",
-                        "accent",
-                        FilterChain::single(Filter::DropShadow {
-                            color: Color::rgba(0.0, 0.0, 0.0, 0.85),
-                            offset: Point::new(6.0, 6.0),
-                            sigma: 3.0,
-                        }),
-                        BlendMode::SrcOver,
-                    ),
-                    effect_swatch("fx-triple", "三级模糊", "accent", triple, BlendMode::SrcOver),
-                    effect_swatch(
-                        "fx-multiply",
-                        "Multiply",
-                        "warm",
-                        FilterChain::none(),
-                        BlendMode::Multiply,
-                    ),
-                    effect_swatch(
-                        "fx-screen",
-                        "Screen",
-                        "warm",
-                        FilterChain::none(),
-                        BlendMode::Screen,
-                    ),
-                ]),
-        ])
+        .with_children([Element::new(NodeTag::Container)
+            .with_key("effects-row")
+            .style("effects-row")
+            .with_children([
+                effect_swatch(
+                    "fx-none",
+                    "对照",
+                    "accent",
+                    FilterChain::none(),
+                    BlendMode::SrcOver,
+                ),
+                effect_swatch(
+                    "fx-blur",
+                    "模糊 σ3",
+                    "accent",
+                    FilterChain::single(Filter::Blur {
+                        sigma_x: 3.0,
+                        sigma_y: 3.0,
+                    }),
+                    BlendMode::SrcOver,
+                ),
+                effect_swatch(
+                    "fx-shadow",
+                    "投影 σ3",
+                    "accent",
+                    FilterChain::single(Filter::DropShadow {
+                        color: Color::rgba(0.0, 0.0, 0.0, 0.85),
+                        offset: Point::new(6.0, 6.0),
+                        sigma: 3.0,
+                    }),
+                    BlendMode::SrcOver,
+                ),
+                effect_swatch(
+                    "fx-triple",
+                    "三级模糊",
+                    "accent",
+                    triple,
+                    BlendMode::SrcOver,
+                ),
+                effect_swatch(
+                    "fx-multiply",
+                    "Multiply",
+                    "warm",
+                    FilterChain::none(),
+                    BlendMode::Multiply,
+                ),
+                effect_swatch(
+                    "fx-screen",
+                    "Screen",
+                    "warm",
+                    FilterChain::none(),
+                    BlendMode::Screen,
+                ),
+            ])])
 }
 
 /// 状态栏。右侧那块的宽度反映 hover 目标 —— 没有文字层的替代指示。
@@ -493,7 +517,9 @@ fn status_bar(demo: &Demo) -> Element {
         .style("status")
         .with_children([
             // 焦点环样式的圆点：切主题时它跟着 `FOCUS_RING` 变（demo.zstyle）。
-            Element::new(NodeTag::Container).with_key("focus").style("dot"),
+            Element::new(NodeTag::Container)
+                .with_key("focus")
+                .style("dot"),
             // hover 目标：真实文字。
             //
             // 之前这里是"用色块宽度编码目标序号"—— 那是 `Command::Text` 零生产者
@@ -511,11 +537,7 @@ fn status_bar(demo: &Demo) -> Element {
 /// hover 目标的名字；无目标时给一句提示。
 fn hover_caption(demo: &Demo) -> &'static str {
     match demo.hovered.as_ref().and_then(|k| k.as_name()) {
-        Some(name) => BUTTONS
-            .iter()
-            .find(|b| **b == name)
-            .copied()
-            .unwrap_or("?"),
+        Some(name) => BUTTONS.iter().find(|b| **b == name).copied().unwrap_or("?"),
         None => "hover a button",
     }
 }
@@ -628,8 +650,7 @@ fn main() {
     // 所以这里不用 `（已移除）`（它需要 sync 上下文，而建窗必须在 loop 回调里）。
     // 正确形态是一个自举的应用类型：在 `resumed` 里用 （已移除） 跑完 async 初始化，
     // 然后把建好的宿主存进自己。
-    let event_loop =
-        winit::event_loop::EventLoop::new().expect("EventLoop::new");
+    let event_loop = winit::event_loop::EventLoop::new().expect("EventLoop::new");
     let mut app = Bootstrap {
         inner: None,
         view: Some(Demo::default()),
@@ -688,10 +709,7 @@ fn dump_cpu() {
     }
     let plans = zephyra_fx::offscreen::plan_offscreens(host.list());
     if !plans.is_empty() {
-        println!(
-            "[dump] 离屏规划：{} 张 RT",
-            plans.len()
-        );
+        println!("[dump] 离屏规划：{} 张 RT", plans.len());
         for p in &plans {
             println!(
                 "[dump]   RT {:>4.0}×{:<4.0}  内容 {:?}  滤镜 {} 项",
@@ -889,9 +907,7 @@ fn bench_cpu() {
         } else {
             med as f64 / total as f64 * 100.0
         };
-        println!(
-            "[bench] {name:<8} 中位 {med:>6} µs  最大 {max:>6} µs  占比 {pct:>5.1}%"
-        );
+        println!("[bench] {name:<8} 中位 {med:>6} µs  最大 {max:>6} µs  占比 {pct:>5.1}%");
     }
 
     let frame = last.expect("FRAMES > 0");
@@ -908,7 +924,13 @@ fn bench_cpu() {
     // 计时**（计时点之间漏了代码），那时"占比"这列数字会误导 —— 所以直接印出来。
     let sum: u64 = samples
         .iter()
-        .map(|s| s.view_us as u64 + s.diff_us as u64 + s.layout_us as u64 + s.paint_us as u64 + s.expand_us as u64)
+        .map(|s| {
+            s.view_us as u64
+                + s.diff_us as u64
+                + s.layout_us as u64
+                + s.paint_us as u64
+                + s.expand_us as u64
+        })
         .sum();
     let sum_total: u64 = samples.iter().map(|s| s.total_us as u64).sum();
     let accounted = if sum_total == 0 {
@@ -921,31 +943,11 @@ fn bench_cpu() {
         samples.iter().map(|s| s.total_us).collect(),
         sum_total,
     );
-    report(
-        "view",
-        samples.iter().map(|s| s.view_us).collect(),
-        sum,
-    );
-    report(
-        "diff",
-        samples.iter().map(|s| s.diff_us).collect(),
-        sum,
-    );
-    report(
-        "layout",
-        samples.iter().map(|s| s.layout_us).collect(),
-        sum,
-    );
-    report(
-        "paint",
-        samples.iter().map(|s| s.paint_us).collect(),
-        sum,
-    );
-    report(
-        "expand",
-        samples.iter().map(|s| s.expand_us).collect(),
-        sum,
-    );
+    report("view", samples.iter().map(|s| s.view_us).collect(), sum);
+    report("diff", samples.iter().map(|s| s.diff_us).collect(), sum);
+    report("layout", samples.iter().map(|s| s.layout_us).collect(), sum);
+    report("paint", samples.iter().map(|s| s.paint_us).collect(), sum);
+    report("expand", samples.iter().map(|s| s.expand_us).collect(), sum);
     println!(
         "[bench] 各阶段之和 / 合计 = {accounted:.1}%（应当 ≈100%；明显小于 100 说明有代码没被计时）"
     );

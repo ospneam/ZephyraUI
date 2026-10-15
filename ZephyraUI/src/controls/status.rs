@@ -87,7 +87,10 @@ pub fn info_bar(
         .with_children([
             Element::new(NodeTag::Container)
                 .with_key("bar-icon")
-                .with(&props::ICON_NAME, PropertyValue::static_str(icon_for(severity)))
+                .with(
+                    &props::ICON_NAME,
+                    PropertyValue::static_str(icon_for(severity)),
+                )
                 .style("bar-icon")
                 .style(severity),
             Element::new(NodeTag::Container)
@@ -111,7 +114,12 @@ pub fn info_bar(
 ///
 /// 白字是**分类名**下发给两个文本子节点（选择器没有后代组合器，
 /// 子的颜色只能由自己的类说）。
-pub fn toast(key: &'static str, title: &'static str, text: &'static str, severity: &'static str) -> Element {
+pub fn toast(
+    key: &'static str,
+    title: &'static str,
+    text: &'static str,
+    severity: &'static str,
+) -> Element {
     let title_el = with_classes(
         Element::new(NodeTag::Text)
             .with_key("title")
@@ -133,7 +141,10 @@ pub fn toast(key: &'static str, title: &'static str, text: &'static str, severit
         .with_children([
             Element::new(NodeTag::Container)
                 .with_key("toast-icon")
-                .with(&props::ICON_NAME, PropertyValue::static_str(icon_for(severity)))
+                .with(
+                    &props::ICON_NAME,
+                    PropertyValue::static_str(icon_for(severity)),
+                )
                 .style("bar-icon")
                 .style(severity),
             Element::new(NodeTag::Container)

@@ -42,8 +42,8 @@
 //! 尺寸把 DIP 映射到 NDC，于是同一个 `DisplayList` 在 100% 与 200% 缩放下
 //! 尺寸相同、内容清晰 —— 因为栅格化发生在物理像素上。
 
-use zephyra_core::core::{Color, Point, Rect, UvRect};
 use std::rc::Rc;
+use zephyra_core::core::{Color, Point, Rect, UvRect};
 use zephyra_core::paint::{Command, DisplayList};
 
 /// 每顶点 52 字节：位置(2) + 局部(2) + uv(2) + 颜色(4) + 圆角描边(2) + 类型(1) 个 f32。
@@ -280,11 +280,7 @@ pub fn expand_indices_with_paths(quads: usize, path_tris: usize) -> (Vec<u16>, u
 ///
 /// 目标缓冲会被**清空后重填**（不是追加）—— 调用点想要"追加"时自己接一次即可，
 /// 这里不留歧义。
-pub fn expand_indices_with_paths_into(
-    quads: usize,
-    path_tris: usize,
-    out: &mut Vec<u16>,
-) -> u32 {
+pub fn expand_indices_with_paths_into(quads: usize, path_tris: usize, out: &mut Vec<u16>) -> u32 {
     out.clear();
     // 一次性 `reserve` 到位，免得循环里反复判断容量（那条分支在稳态下永远不成立，
     // 但每次迭代都要判）。
@@ -311,15 +307,7 @@ impl Vertex {
     /// `local` 携带的是**像素空间**的局部坐标 —— SDF 需要知道片元离边角多远，
     /// 而这只有在知道目标物理尺寸时才算得出来。
     pub fn from_rect(rect: Rect, px: (f32, f32), color: [f32; 4], corner: [f32; 2]) -> [Vertex; 4] {
-        Self::quad(
-            rect,
-            px,
-            color,
-            corner,
-            [0.0; 2],
-            [0.0, 1.0],
-            kind::RECT,
-        )
+        Self::quad(rect, px, color, corner, [0.0; 2], [0.0, 1.0], kind::RECT)
     }
 
     /// 纹理采样的四个顶点（字形 / 图像）。`uv` 是纹理内的归一化坐标。
@@ -886,7 +874,14 @@ pub struct Scratch {
     /// ⚠ 它存 `(String, …)`，所以复用 Vec **不等于**复用那些 `String` 的堆内存。
     /// 那部分（每帧两三个几十字节的小分配）留在原地，不为了它把句柄改成
     /// `Rc<str>` —— 那是契约改动，收益与风险不成比例。
-    image_quads: Vec<(Rc<str>, Rect, UvRect, Color, f32, zephyra_core::filter::BlendMode)>,
+    image_quads: Vec<(
+        Rc<str>,
+        Rect,
+        UvRect,
+        Color,
+        f32,
+        zephyra_core::filter::BlendMode,
+    )>,
     /// 分段记录，三份分开是因为它们在**遍历过程中交错**产生（`solid` 与 `paths`
     /// 来自同一次命令遍历，`images` 来自其后的分批循环），而合并流要求
     /// `solid` → `images` → `paths` 的顺序。分开记，末尾统一加基址即可。
@@ -947,7 +942,8 @@ impl Scratch {
         let rc: Rc<str> = Rc::from(name);
         self.names.push(rc.clone());
         rc
-    }    pub fn new() -> Self {
+    }
+    pub fn new() -> Self {
         Self::default()
     }
 
@@ -1417,11 +1413,7 @@ pub fn expand_range_translated_into(
                     // 但 `path_triangles` 计数会偏）。
                     None => {
                         for tri in vertices.chunks_exact(3) {
-                            let t = [
-                                tri[0].position,
-                                tri[1].position,
-                                tri[2].position,
-                            ];
+                            let t = [tri[0].position, tri[1].position, tri[2].position];
                             if zephyra_core::geom::signed_area2(&t).abs() < 1e-12 {
                                 continue;
                             }
@@ -1434,11 +1426,7 @@ pub fn expand_range_translated_into(
                     Some(clip_rect) => {
                         for tri in vertices.chunks_exact(3) {
                             let poly = crate::geom_clip::geom_clip(
-                                &[
-                                    tri[0].position,
-                                    tri[1].position,
-                                    tri[2].position,
-                                ],
+                                &[tri[0].position, tri[1].position, tri[2].position],
                                 Some(clip_rect),
                             );
                             for fan in crate::geom_clip::fan_triangulate(&poly) {
@@ -1646,56 +1634,55 @@ pub fn shrink(r: Rect, inset: f32) -> Rect {
 mod tests;
 
 /// 顶点色必须是**预乘**的：rgb 已经乘过自己的 alpha。
-    ///
-    /// # 为什么这条必须有测试
-    ///
-    /// `a == 1` 时预乘是恒等 —— 而 demo 与绝大多数测试都用不透明颜色，于是
-    /// "预乘了" 与 "没预乘" 在全部现有断言下**完全一样**。真正暴露问题的是
-    /// 半透明：GPU 上会双重预乘，整片偏暗，而几何、alpha、计数器全部正常。
-    ///
-    /// 也就是说：这条不测，E4.1 的混合因子表就是建在一个没人验证过的不变量上。
-    #[test]
-    fn vertex_color_is_premultiplied() {
-        let q = Vertex::from_rect(
-            Rect::new(0.0, 0.0, 10.0, 10.0),
-            (100.0, 100.0),
-            [0.4, 0.2, 0.8, 0.5],
-            [0.0, 0.0],
+///
+/// # 为什么这条必须有测试
+///
+/// `a == 1` 时预乘是恒等 —— 而 demo 与绝大多数测试都用不透明颜色，于是
+/// "预乘了" 与 "没预乘" 在全部现有断言下**完全一样**。真正暴露问题的是
+/// 半透明：GPU 上会双重预乘，整片偏暗，而几何、alpha、计数器全部正常。
+///
+/// 也就是说：这条不测，E4.1 的混合因子表就是建在一个没人验证过的不变量上。
+#[test]
+fn vertex_color_is_premultiplied() {
+    let q = Vertex::from_rect(
+        Rect::new(0.0, 0.0, 10.0, 10.0),
+        (100.0, 100.0),
+        [0.4, 0.2, 0.8, 0.5],
+        [0.0, 0.0],
+    );
+    for v in &q {
+        assert!(
+            (v.color[0] - 0.2).abs() < 1e-6
+                && (v.color[1] - 0.1).abs() < 1e-6
+                && (v.color[2] - 0.4).abs() < 1e-6,
+            "rgb 必须已乘 alpha（0.4/0.2/0.8 × 0.5 = 0.2/0.1/0.4），实得 {:?}",
+            v.color
         );
-        for v in &q {
-            assert!(
-                (v.color[0] - 0.2).abs() < 1e-6
-                    && (v.color[1] - 0.1).abs() < 1e-6
-                    && (v.color[2] - 0.4).abs() < 1e-6,
-                "rgb 必须已乘 alpha（0.4/0.2/0.8 × 0.5 = 0.2/0.1/0.4），实得 {:?}",
-                v.color
-            );
-            assert!(
-                (v.color[3] - 0.5).abs() < 1e-6,
-                "alpha 本身不能被乘：{:?}",
-                v.color
-            );
-        }
-        // 不透明时必须是恒等，否则这一层会把所有不透明图元也改掉。
-        let o = Vertex::from_rect(
-            Rect::new(0.0, 0.0, 10.0, 10.0),
-            (100.0, 100.0),
-            [0.4, 0.2, 0.8, 1.0],
-            [0.0, 0.0],
+        assert!(
+            (v.color[3] - 0.5).abs() < 1e-6,
+            "alpha 本身不能被乘：{:?}",
+            v.color
         );
-        assert!((o[0].color[0] - 0.4).abs() < 1e-6, "a=1 时 rgb 不变");
     }
+    // 不透明时必须是恒等，否则这一层会把所有不透明图元也改掉。
+    let o = Vertex::from_rect(
+        Rect::new(0.0, 0.0, 10.0, 10.0),
+        (100.0, 100.0),
+        [0.4, 0.2, 0.8, 1.0],
+        [0.0, 0.0],
+    );
+    assert!((o[0].color[0] - 0.4).abs() < 1e-6, "a=1 时 rgb 不变");
+}
 
-    /// [`Vertex::path`] 也必须预乘 —— 它不走 [`Vertex::quad`]，是**另一份**实现。
-    #[test]
-    fn path_vertex_color_is_premultiplied() {
-        let v = Vertex::path([0.0, 0.0], [0.4, 0.2, 0.8, 0.5]);
-        assert!((v.color[0] - 0.2).abs() < 1e-6, "实得 {:?}", v.color);
-        assert!((v.color[1] - 0.1).abs() < 1e-6);
-        assert!((v.color[2] - 0.4).abs() < 1e-6);
-        assert!((v.color[3] - 0.5).abs() < 1e-6);
-    }
-
+/// [`Vertex::path`] 也必须预乘 —— 它不走 [`Vertex::quad`]，是**另一份**实现。
+#[test]
+fn path_vertex_color_is_premultiplied() {
+    let v = Vertex::path([0.0, 0.0], [0.4, 0.2, 0.8, 0.5]);
+    assert!((v.color[0] - 0.2).abs() < 1e-6, "实得 {:?}", v.color);
+    assert!((v.color[1] - 0.1).abs() < 1e-6);
+    assert!((v.color[2] - 0.4).abs() < 1e-6);
+    assert!((v.color[3] - 0.5).abs() < 1e-6);
+}
 
 /// `kind` 落在着色器划定的**哪个分支** —— 也就是"这块像素会被画成什么"。
 ///

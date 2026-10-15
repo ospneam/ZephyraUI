@@ -152,7 +152,10 @@ fn d3d12_最小资源能不能建出来() {
             )
         };
         if let Err(e) = created {
-            println!("[{i}] {name}: 设备建不出来（{:#X}），跳过", e.code().0 as u32);
+            println!(
+                "[{i}] {name}: 设备建不出来（{:#X}），跳过",
+                e.code().0 as u32
+            );
             continue;
         }
         let dev = dev.unwrap();

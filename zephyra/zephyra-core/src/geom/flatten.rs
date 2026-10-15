@@ -43,7 +43,11 @@ pub type FlatPath = Vec<Contour>;
 ///   所以这里也生成闭合轮廓；
 /// - 落在一个点上的子路径（`MoveTo` 后无任何绘制命令）被丢弃 —— 它没有面积。
 pub fn flatten(segments: &[Segment], tolerance: f32) -> FlatPath {
-    let tol = if tolerance > 0.0 { tolerance } else { TOLERANCE };
+    let tol = if tolerance > 0.0 {
+        tolerance
+    } else {
+        TOLERANCE
+    };
     let mut out: FlatPath = Vec::new();
     let mut cur: Vec<Point> = Vec::new();
     let mut cursor = Point::default();
@@ -72,7 +76,15 @@ pub fn flatten(segments: &[Segment], tolerance: f32) -> FlatPath {
                     cur.push(sub_start);
                 }
                 let p3 = Point { x, y };
-                flatten_cubic(cursor, Point { x: c1x, y: c1y }, Point { x: c2x, y: c2y }, p3, tol, 0, &mut cur);
+                flatten_cubic(
+                    cursor,
+                    Point { x: c1x, y: c1y },
+                    Point { x: c2x, y: c2y },
+                    p3,
+                    tol,
+                    0,
+                    &mut cur,
+                );
                 cursor = p3;
             }
             Segment::QuadraticTo(cx, cy, x, y) => {
@@ -145,14 +157,7 @@ fn flatten_cubic(
 ///
 /// 提升为三次再递归：提权公式 `c1 = p0 + 2/3 (c - p0)`、`c2 = p2 + 2/3 (c - p2)`
 /// 是精确的（不是近似），所以比单独写一套二次递归更短且误差界一致。
-fn flatten_quadratic(
-    p0: Point,
-    c: Point,
-    p2: Point,
-    tol: f32,
-    depth: u32,
-    out: &mut Vec<Point>,
-) {
+fn flatten_quadratic(p0: Point, c: Point, p2: Point, tol: f32, depth: u32, out: &mut Vec<Point>) {
     let c1 = Point {
         x: p0.x + (2.0 / 3.0) * (c.x - p0.x),
         y: p0.y + (2.0 / 3.0) * (c.y - p0.y),

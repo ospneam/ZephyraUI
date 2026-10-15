@@ -87,18 +87,29 @@ fn empty_root_signature(device: &ID3D12Device) -> ID3D12RootSignature {
     let mut blob = None::<ID3DBlob>;
     let mut err = None::<ID3DBlob>;
     unsafe {
-        D3D12SerializeRootSignature(&rsdesc, D3D_ROOT_SIGNATURE_VERSION_1_0, &mut blob, Some(&mut err))
+        D3D12SerializeRootSignature(
+            &rsdesc,
+            D3D_ROOT_SIGNATURE_VERSION_1_0,
+            &mut blob,
+            Some(&mut err),
+        )
     }
     .expect("序列化空根签名");
     let blob = blob.expect("blob");
-    let bytes =
-        unsafe { std::slice::from_raw_parts(blob.GetBufferPointer().cast::<u8>(), blob.GetBufferSize()) }
-            .to_vec();
+    let bytes = unsafe {
+        std::slice::from_raw_parts(blob.GetBufferPointer().cast::<u8>(), blob.GetBufferSize())
+    }
+    .to_vec();
     unsafe { device.CreateRootSignature(0, &bytes) }.expect("空根签名")
 }
 
 /// 逐步加料并报告。
-fn step(device: &ID3D12Device, _root: &ID3D12RootSignature, name: &str, desc: &D3D12_GRAPHICS_PIPELINE_STATE_DESC) -> bool {
+fn step(
+    device: &ID3D12Device,
+    _root: &ID3D12RootSignature,
+    name: &str,
+    desc: &D3D12_GRAPHICS_PIPELINE_STATE_DESC,
+) -> bool {
     let r: windows::core::Result<ID3D12PipelineState> =
         unsafe { device.CreateGraphicsPipelineState(desc) };
     match r {
@@ -163,14 +174,21 @@ fn d3d12_管线状态描述符逐字段二分() {
     let mut blob = None::<ID3DBlob>;
     let mut err = None::<ID3DBlob>;
     unsafe {
-        D3D12SerializeRootSignature(&rsdesc, D3D_ROOT_SIGNATURE_VERSION_1_0, &mut blob, Some(&mut err))
+        D3D12SerializeRootSignature(
+            &rsdesc,
+            D3D_ROOT_SIGNATURE_VERSION_1_0,
+            &mut blob,
+            Some(&mut err),
+        )
     }
     .expect("序列化根签名");
     let blob = blob.expect("blob");
-    let bytes =
-        unsafe { std::slice::from_raw_parts(blob.GetBufferPointer().cast::<u8>(), blob.GetBufferSize()) }
-            .to_vec();
-    let root: ID3D12RootSignature = unsafe { gpu.device.CreateRootSignature(0, &bytes) }.expect("根签名");
+    let bytes = unsafe {
+        std::slice::from_raw_parts(blob.GetBufferPointer().cast::<u8>(), blob.GetBufferSize())
+    }
+    .to_vec();
+    let root: ID3D12RootSignature =
+        unsafe { gpu.device.CreateRootSignature(0, &bytes) }.expect("根签名");
     println!("根签名建成");
 
     let shaders = Shaders::new().expect("Shaders");
@@ -250,7 +268,10 @@ fn d3d12_管线状态描述符逐字段二分() {
         NumRenderTargets: 1,
         RTVFormats: [DXGI_FORMAT_R8G8B8A8_UNORM; 8],
         DSVFormat: DXGI_FORMAT_UNKNOWN,
-        SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+        SampleDesc: DXGI_SAMPLE_DESC {
+            Count: 1,
+            Quality: 0,
+        },
         NodeMask: 1,
         CachedPSO: D3D12_CACHED_PIPELINE_STATE::default(),
         Flags: D3D12_PIPELINE_STATE_FLAG_NONE,
@@ -308,7 +329,10 @@ fn d3d12_管线状态描述符逐字段二分() {
         NumRenderTargets: 1,
         RTVFormats: [DXGI_FORMAT_R8G8B8A8_UNORM; 8],
         DSVFormat: DXGI_FORMAT_UNKNOWN,
-        SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+        SampleDesc: DXGI_SAMPLE_DESC {
+            Count: 1,
+            Quality: 0,
+        },
         NodeMask: 1,
         CachedPSO: D3D12_CACHED_PIPELINE_STATE::default(),
         Flags: D3D12_PIPELINE_STATE_FLAG_NONE,
@@ -334,7 +358,12 @@ fn d3d12_管线状态描述符逐字段二分() {
         ..trivial
     };
     t3.pRootSignature = std::mem::ManuallyDrop::new(Some(empty_root.clone()));
-    let _ = step(&gpu.device, &empty_root, "生产着色器 + 空根签名（预期失败）", &t3);
+    let _ = step(
+        &gpu.device,
+        &empty_root,
+        "生产着色器 + 空根签名（预期失败）",
+        &t3,
+    );
 
     println!("\n=== 生产组合逐项加料 ===");
     let mut d = base;
@@ -359,12 +388,44 @@ fn d3d12_管线状态描述符逐字段二分() {
     let ok2 = step(&gpu.device, &root, "2. + alpha 混合", &d);
 
     d.DepthStencilState = D3D12_DEPTH_STENCIL_DESC::default();
-    let ok3 = step(&gpu.device, &root, "3. + DepthStencil::default()（= 生产用的）", &d);
+    let ok3 = step(
+        &gpu.device,
+        &root,
+        "3. + DepthStencil::default()（= 生产用的）",
+        &d,
+    );
 
     println!("\n=== 结论 ===");
-    println!("  平凡着色器 + 空根签名     : {}", if ok_trivial { "✅" } else { "❌ ← 设备/驱动层面" });
-    println!("  平凡着色器 + 生产根签名   : {}", if ok_trivial_prod_root { "✅" } else { "❌ ← 根签名本身" });
-    println!("  生产着色器 + 输入布局     : {}", if ok1 { "✅" } else { "❌ ← 字节码/输入布局" });
-    println!("  + alpha 混合             : {}", if ok2 { "✅" } else { "❌ ← 混合描述" });
-    println!("  + DepthStencil::default(): {}", if ok3 { "✅" } else { "❌ ← 深度模板" });
+    println!(
+        "  平凡着色器 + 空根签名     : {}",
+        if ok_trivial {
+            "✅"
+        } else {
+            "❌ ← 设备/驱动层面"
+        }
+    );
+    println!(
+        "  平凡着色器 + 生产根签名   : {}",
+        if ok_trivial_prod_root {
+            "✅"
+        } else {
+            "❌ ← 根签名本身"
+        }
+    );
+    println!(
+        "  生产着色器 + 输入布局     : {}",
+        if ok1 {
+            "✅"
+        } else {
+            "❌ ← 字节码/输入布局"
+        }
+    );
+    println!(
+        "  + alpha 混合             : {}",
+        if ok2 { "✅" } else { "❌ ← 混合描述" }
+    );
+    println!(
+        "  + DepthStencil::default(): {}",
+        if ok3 { "✅" } else { "❌ ← 深度模板" }
+    );
 }

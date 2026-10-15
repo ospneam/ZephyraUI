@@ -295,7 +295,10 @@ impl Node {
     /// 返回被拆下的键，供测试与诊断用。**只有真的拆下了东西才标脏** ——
     /// `apply` 每帧都跑一遍，写同值不算变化（见 [`Self::set_styled_prop`]），
     /// 拆不存在的东西也必须同样安静，否则静止界面会永远在重绘。
-    pub fn retain_styled_props(&mut self, keep: impl Fn(&'static PropertyKey) -> bool) -> Vec<&'static PropertyKey> {
+    pub fn retain_styled_props(
+        &mut self,
+        keep: impl Fn(&'static PropertyKey) -> bool,
+    ) -> Vec<&'static PropertyKey> {
         let removed = self.props.retain_styled(keep);
         for key in &removed {
             self.dirty = self.dirty.merged(if key.affects_layout() {
@@ -369,7 +372,7 @@ impl Node {
     /// 测量缓存里的尺寸（`None` = 没测过或已失效）。
     ///
     /// 排列趟用它复用刚测出的结果，而不是重跑一遍测量。
-/// 测量趟存下来的**排版结果**（`None` = 没测过 / 本节点无文本 / 缓存已失效）。
+    /// 测量趟存下来的**排版结果**（`None` = 没测过 / 本节点无文本 / 缓存已失效）。
     ///
     /// 绘制趟用它避免每帧重排一次文字 —— 见
     /// [`crate::paint::text_command`] 里那段实测数字。
@@ -377,7 +380,9 @@ impl Node {
     /// 借出引用而不是克隆：绘制趟只读，而 `ShapedText` 里是 `Vec<Line>`，
     /// 克隆一次是一整棵树的分配。
     pub(crate) fn cached_shaped(&self) -> Option<&crate::text::ShapedText> {
-        self.measure_cache.as_ref().and_then(|(_, r)| r.shaped.as_ref())
+        self.measure_cache
+            .as_ref()
+            .and_then(|(_, r)| r.shaped.as_ref())
     }
 
     /// 测量缓存里的尺寸（`None` = 没测过或已失效）。

@@ -312,7 +312,11 @@ impl TextEngine for NullEngine {
             Some(max) if cw > 0.0 && max > 0.0 => ((max / cw).floor() as usize).max(1),
             _ => count,
         };
-        let line_count = if per_line == 0 { 0 } else { count.div_ceil(per_line) };
+        let line_count = if per_line == 0 {
+            0
+        } else {
+            count.div_ceil(per_line)
+        };
 
         let chars: Vec<char> = text.chars().collect();
         let mut lines = Vec::with_capacity(line_count);
@@ -404,11 +408,7 @@ impl TextRender for NullEngine {
     ) -> Option<(TextureRef, Vec<GlyphQuad>)> {
         let cw = self.char_width;
         let quads = quads_from_shaped(shaped, origin, |_, _, _| {
-            Some((
-                UvRect::FULL,
-                Point::new(0.0, 0.0),
-                Size::new(cw, 1.0),
-            ))
+            Some((UvRect::FULL, Point::new(0.0, 0.0), Size::new(cw, 1.0)))
         });
         Some((TextureRef::new(NULL_ATLAS), quads))
     }

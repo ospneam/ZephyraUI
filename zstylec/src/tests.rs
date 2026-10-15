@@ -59,14 +59,22 @@ fn bad(css: &str) -> String {
 fn a_bare_type_selector_parses() {
     let r = ok("Control { width: 40px; }");
     assert_eq!(r.sheet.rules().len(), 1);
-    assert_eq!(r.sheet.rules()[0].selector.specificity(), 0, "纯类型没有权重");
+    assert_eq!(
+        r.sheet.rules()[0].selector.specificity(),
+        0,
+        "纯类型没有权重"
+    );
 }
 
 #[test]
 fn a_class_selector_parses() {
     let r = ok(".danger { background: #ff0000; }");
     assert_eq!(r.sheet.rules().len(), 1);
-    assert_eq!(r.sheet.rules()[0].selector.specificity(), 1, "一个分类名算 1");
+    assert_eq!(
+        r.sheet.rules()[0].selector.specificity(),
+        1,
+        "一个分类名算 1"
+    );
 }
 
 #[test]
@@ -288,7 +296,10 @@ fn errors_carry_the_full_spec() {
 #[test]
 fn several_errors_are_all_reported_at_once() {
     // 一次只报一个的话，开发者要反复「改一处→编译→再报下一处」。
-    let r = parse("t.zstyle", "Contorl { coner-radius: 1px; }\nButon { width: 2px; }");
+    let r = parse(
+        "t.zstyle",
+        "Contorl { coner-radius: 1px; }\nButon { width: 2px; }",
+    );
     assert!(
         r.errors.len() >= 2,
         "两个独立的错要一次全报，实得 {} 个",

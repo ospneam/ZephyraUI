@@ -52,7 +52,7 @@ impl Nv12Planes {
             let u_val = self.uv[uv_index * 2] as i32 - 128;
             let v_val = self.uv[uv_index * 2 + 1] as i32 - 128;
             let yy = (y_val - 16) * 298; // ≈255/219*256
-            // 整数近似（右移 8 位），与浮点公式偏差 ≤1
+                                         // 整数近似（右移 8 位），与浮点公式偏差 ≤1
             px[0] = ((yy + 409 * v_val) >> 8).clamp(0, 255) as u8;
             px[1] = ((yy - 100 * u_val - 208 * v_val) >> 8).clamp(0, 255) as u8;
             px[2] = ((yy + 516 * u_val) >> 8).clamp(0, 255) as u8;

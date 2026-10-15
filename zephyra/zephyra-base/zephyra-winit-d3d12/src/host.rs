@@ -25,11 +25,11 @@
 
 use std::sync::Arc;
 
+use windows::Win32::Foundation::HWND;
+use winit::event::ElementState;
 use winit::event::WindowEvent as WEvent;
 use winit::event_loop::{ActiveEventLoop, EventLoop};
-use winit::event::ElementState;
 use winit::window::{Window, WindowId};
-use windows::Win32::Foundation::HWND;
 
 use windows::core::Interface;
 
@@ -156,7 +156,8 @@ pub const DEFAULT_WINDOW_SIZE: (u32, u32) = (1100, 700);
 /// `Failed` 被原来的 `bool` 和 `Same` 混为同一个 `false`，于是宿主照旧画 + present ——
 /// DComp 把**旧尺寸**的内容拉进**新**窗口，那就是「窗口一直闪 / 内容被拉伸」。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SwapState {    /// 尺寸没变，什么都没做。
+pub enum SwapState {
+    /// 尺寸没变，什么都没做。
     Same,
     /// resize 成功，链已与客户区一致。
     Synced,
@@ -252,8 +253,13 @@ impl<V: View> HostWindow<V> {
             buffer_count: 2,
             format: windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_R8G8B8A8_UNORM,
         };
-        let chain = Swapchain::new(&gpu, (size.width, size.height), &desc, crate::swapchain::msaa_samples())
-            .expect("创建 composition swapchain");
+        let chain = Swapchain::new(
+            &gpu,
+            (size.width, size.height),
+            &desc,
+            crate::swapchain::msaa_samples(),
+        )
+        .expect("创建 composition swapchain");
 
         // composition swapchain **必须**挂在 visual 上才会被合成，否则窗口是黑的。
         // 所以这里失败要如实说出来，不能只打一行 warn 就继续跑。
@@ -285,7 +291,11 @@ impl<V: View> HostWindow<V> {
             .expect("建根签名 / PSO / 描述符堆");
         eprintln!(
             "[zephyra-d3d12] MSAA: {}×",
-            if chain.samples() > 1 { "开" } else { "关（无多重采样目标）" }
+            if chain.samples() > 1 {
+                "开"
+            } else {
+                "关（无多重采样目标）"
+            }
         );
         // 二分开关必须**自己打出来**：跑完一轮二分，回头看日志时如果分不清
         // 「关掉 MSAA 之后不挂了」和「那次根本没设环境变量」，这轮二分就白做。
@@ -466,12 +476,12 @@ impl<V: View> HostWindow<V> {
         // 复用本文件已有的句柄提取（`raw_window_handle` 路径），不重复造轮子。
         // 拿不到（理论上只在非 Windows 上）⇒ 0 号句柄 ⇒ 平台层静默跳过。
         let raw = hwnd_of(self.window.as_ref()).unwrap_or(0) as usize;
-        let outcome =
-            zephyra_platform_win::current()
-                .apply_window_chrome(zephyra_platform::WindowHandle::from_raw(raw), chrome);
+        let outcome = zephyra_platform_win::current()
+            .apply_window_chrome(zephyra_platform::WindowHandle::from_raw(raw), chrome);
         // 记下「材质是否真的生效」：它决定 clear 用不用透明色（见 `render_pass`）。
         // 请求 Mica 但平台不支持 ⇒ 仍是实色 clear，不能当成已生效。
-        self.backdrop_active = outcome.backdrop && chrome.backdrop != zephyra_platform::BackdropKind::None;
+        self.backdrop_active =
+            outcome.backdrop && chrome.backdrop != zephyra_platform::BackdropKind::None;
         if trace_enabled() {
             // 「界面全对、就是标题栏没变暗」这类问题只有这一行能查。
             eprintln!("[trace] 窗口外观 {chrome:?} -> {outcome}");
@@ -541,8 +551,8 @@ impl<V: View> HostWindow<V> {
             // 经 `include_str!`），零运行时准备成本，且 `OnceLock` 只解析一次。
             // 应用自己的图标库应当自己建一个 `IconSet` 再挂进来 —— 那是宿主的事，
             // 与纹理句柄同一层。
-            let ctx = Context::with_engine(theme, &self.engine)
-                .with_icons(zephyra_core::icon::builtin());
+            let ctx =
+                Context::with_engine(theme, &self.engine).with_icons(zephyra_core::icon::builtin());
             let element = self.view.view(&ctx);
             let size = self.client_size();
 
@@ -564,7 +574,10 @@ impl<V: View> HostWindow<V> {
 
             // 「这一帧画什么」由核心里唯一的那份判据决定，见
             // `zephyra_core::frame::FrameCache`。
-            match self.cache.frame(&element, ctx, (size.0 as f32, size.1 as f32)) {
+            match self
+                .cache
+                .frame(&element, ctx, (size.0 as f32, size.1 as f32))
+            {
                 FrameOutcome::Unchanged => (DiffStats::default(), Damage::Full, false),
                 FrameOutcome::Updated { stats, damage, .. } => (stats, damage, true),
             }
@@ -993,7 +1006,10 @@ impl<V: View> HostWindow<V> {
         let before = self.chain.size();
         if let Err(e) = self.chain.resize(&self.gpu, (w, h)) {
             self.resize_failures = self.resize_failures.saturating_add(1);
-            eprintln!("[zephyra-d3d12] 调整交换链容量到 {w}×{h} 失败（第 {} 次）：{e}", self.resize_failures);
+            eprintln!(
+                "[zephyra-d3d12] 调整交换链容量到 {w}×{h} 失败（第 {} 次）：{e}",
+                self.resize_failures
+            );
             return SwapState::Failed;
         }
         if self.chain.was_recreated() {
@@ -1056,30 +1072,30 @@ impl<V: View> HostWindow<V> {
     }
 
     /// 把上一帧的顶点流按 `kind` 归类（0 矩形 / 1 字形 / 2 图像），逐个返回。
-///
-/// 只给 `trace` 用 —— 它要重跑一次 `quad::expand`，不该进稳态路径。
-fn list_kind_histogram(&self) -> Vec<usize> {
-    use zephyra_fx::quad::{self, kind};
-    let size = self.chain.size();
-    let batch = quad::expand(self.cache.list(), size, |n| self.textures.contains(n));
-    batch
-        .solid
-        .iter()
-        .chain(batch.images.iter())
-        .step_by(4)
-        .map(|v| {
-            if (v.kind - kind::GLYPH).abs() < 0.01 {
-                1
-            } else if v.kind > 1.5 {
-                2
-            } else {
-                0
-            }
-        })
-        .collect()
-}
+    ///
+    /// 只给 `trace` 用 —— 它要重跑一次 `quad::expand`，不该进稳态路径。
+    fn list_kind_histogram(&self) -> Vec<usize> {
+        use zephyra_fx::quad::{self, kind};
+        let size = self.chain.size();
+        let batch = quad::expand(self.cache.list(), size, |n| self.textures.contains(n));
+        batch
+            .solid
+            .iter()
+            .chain(batch.images.iter())
+            .step_by(4)
+            .map(|v| {
+                if (v.kind - kind::GLYPH).abs() < 0.01 {
+                    1
+                } else if v.kind > 1.5 {
+                    2
+                } else {
+                    0
+                }
+            })
+            .collect()
+    }
 
-/// 把新输入状态推给视图（每帧开头一次）。
+    /// 把新输入状态推给视图（每帧开头一次）。
     pub fn sync_input(&mut self) {
         // 视口、缩放比与帧间隔一起推给视图：断点判定要**有效像素**（除 scale），
         // 列数计算要**布局宽**（本仓即物理像素），动画时钟要**真实 dt**。
@@ -1194,7 +1210,9 @@ fn list_kind_histogram(&self) -> Vec<usize> {
             // 画面永远是对的，命中偏了也只有这一行能看出来。
             eprintln!(
                 "[trace] ptr_of ({:.0}, {:.0}) → {:?}",
-                self.pointer_pos.0, self.pointer_pos.1, self.router.hovered()
+                self.pointer_pos.0,
+                self.pointer_pos.1,
+                self.router.hovered()
             );
         }
         changed
@@ -1211,7 +1229,11 @@ fn list_kind_histogram(&self) -> Vec<usize> {
 /// 交换链各是多大」，否则每次都得靠「截屏 → 肉眼 → 猜」。
 fn trace_enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("ZEPHYRA_D3D12_TRACE").map(|v| v != "0").unwrap_or(false))
+    *ON.get_or_init(|| {
+        std::env::var("ZEPHYRA_D3D12_TRACE")
+            .map(|v| v != "0")
+            .unwrap_or(false)
+    })
 }
 
 /// 建 DComp target / visual 并把交换链挂上去。
@@ -1286,12 +1308,7 @@ impl<V: View + 'static> winit::application::ApplicationHandler for HostWindow<V>
         }
     }
 
-    fn window_event(
-        &mut self,
-        event_loop: &ActiveEventLoop,
-        _id: WindowId,
-        event: WEvent,
-    ) {
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WEvent) {
         match event {
             WEvent::CloseRequested => {
                 event_loop.exit();

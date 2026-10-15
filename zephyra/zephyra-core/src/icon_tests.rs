@@ -21,10 +21,7 @@ fn every_builtin_asset_parses() {
     assert_eq!(names.len(), assets::REGISTRY.len());
     for name in names {
         let icon = set.get(name);
-        assert!(
-            !icon.is_empty(),
-            "内置图标 {name} 解析后没有任何可填充内容"
-        );
+        assert!(!icon.is_empty(), "内置图标 {name} 解析后没有任何可填充内容");
         assert!(
             icon.view_box.2 > 0.0 && icon.view_box.3 > 0.0,
             "内置图标 {name} 的 viewBox 宽高必须为正：{:?}",
@@ -95,9 +92,8 @@ fn an_unknown_name_falls_back_to_the_shared_empty_icon() {
 fn an_empty_icon_is_reported_as_empty() {
     // `fill="none"` 的图标与未知名字都必须走"不画"而不是"画一块空白纹理"。
     // 判据收敛到一个函数上，免得渲染端各写一套。
-    let set: &'static IconSet = Box::leak(Box::new(
-        IconSet::new().with("blank", IconSource::Path("")),
-    ));
+    let set: &'static IconSet =
+        Box::leak(Box::new(IconSet::new().with("blank", IconSource::Path(""))));
     assert!(set.get("blank").is_empty());
 }
 
@@ -119,7 +115,8 @@ fn a_broken_icon_panics_rather_than_vanishing() {
     // 后果是"某个图标不显示"，而没有任何其他症状会指向解析器——那是最难查的一类
     // 故障。注册表是编译期常量，解析失败意味着某个写死的资源坏了，属于必须
     // 当场暴露的构建缺陷。
-    let set: &'static IconSet =
-        Box::leak(Box::new(IconSet::new().with("broken", IconSource::Path("M0 0 Q"))));
+    let set: &'static IconSet = Box::leak(Box::new(
+        IconSet::new().with("broken", IconSource::Path("M0 0 Q")),
+    ));
     let _ = set.get("broken");
 }
