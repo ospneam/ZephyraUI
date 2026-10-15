@@ -6,7 +6,7 @@
 //! （`docs/animation.md` §1）。本组钉住这两件事在 core 侧的语义：
 //!
 //! 1. **不透明度落到每一种绘制**：背景、描边、文字、图像、图标；
-//! 2. **不透明度沿父子链相乘**（不是"取最近一个"）；
+//! 2. **opacity_multiplies_along_parent_chain**（不是"取最近一个"）；
 //! 3. **偏移落到四类几何**：Quad / Image / Path / Text；
 //! 4. **偏移不影响布局盒与命中测试** —— 否则控件在动画期间点不中；
 //! 5. **静止时零开销**：位移为零 ⇒ 顶点数组原样返回（同一块内存）。
@@ -136,7 +136,7 @@ fn first_quad_stroke(list: &[Command]) -> Option<zephyra_core::core::Color> {
 ///
 /// 这条在修好之前是红的：`fill` 当时直接取 `node.background(ctx)`，没乘因子。
 #[test]
-fn 容器不透明度乘到背景上() {
+fn container_opacity_applies_to_background() {
     let mut inner = box_el("inner");
     inner = inner.with(&props::OPACITY, PropertyValue::float(0.5));
 
@@ -152,7 +152,7 @@ fn 容器不透明度乘到背景上() {
 ///
 /// 描边与背景是同一个 `Command::Quad` 的两个字段，只测背景会漏掉描边没乘因子。
 #[test]
-fn 容器不透明度乘到描边上() {
+fn container_opacity_applies_to_stroke() {
     let mut inner = box_el("inner");
     inner = inner.with(&props::OPACITY, PropertyValue::float(0.5));
 
@@ -170,7 +170,7 @@ fn 容器不透明度乘到描边上() {
 /// 没有任何"每字形不透明度"的机制，所以事后回填做不到（`paint.rs::text_command`
 /// 的文档说明了这一点）。
 #[test]
-fn 容器不透明度乘到文字上() {
+fn container_opacity_applies_to_text() {
     let theme = Theme::builtin(ThemeVariant::Dark);
     let engine = null_engine();
     let ctx = Context::with_engine(&theme, &engine);
@@ -211,7 +211,7 @@ fn 容器不透明度乘到文字上() {
 /// `node.opacity()` 存在，但 `property::resolve` 没人传 `inherited`，于是取的是
 /// "最近一个定义" —— 单层看着对，嵌套就错，而单层正是人会手测的那一层。
 #[test]
-fn 不透明度沿父子链相乘() {
+fn opacity_multiplies_along_parent_chain() {
     let child = box_el("child").with(&props::OPACITY, PropertyValue::float(0.5));
     let root = Element::new(NodeTag::Container)
         .with_key("root")
@@ -234,7 +234,7 @@ fn 不透明度沿父子链相乘() {
 /// 少一条就会出现"容器半透明但里面的卡片不透明" —— 而那正是半透明的用处所在
 /// （毛玻璃 / 压暗遮罩）。
 #[test]
-fn 祖先不透明度影响后代绘制() {
+fn ancestor_opacity_affects_descendant_draw() {
     let child = box_el("child").with(
         &props::BACKGROUND,
         PropertyValue::color(zephyra_core::core::Color::rgba(1.0, 1.0, 1.0, 1.0)),
@@ -256,7 +256,7 @@ fn 祖先不透明度影响后代绘制() {
 /// 这条是上一组的对偶：alpha=0 的 Quad 仍要进 `DisplayList`、仍要占一次 draw call。
 /// 动画结束时省掉它是实打实的，而判据必须是"列表里没有"而不是"alpha 等于 0"。
 #[test]
-fn 完全透明时不产出绘制命令() {
+fn fully_transparent_emits_no_draw_commands() {
     let inner = box_el("inner").with(&props::OPACITY, PropertyValue::float(0.0));
     let (_, list) = build(&inner);
     assert!(
@@ -272,7 +272,7 @@ fn 完全透明时不产出绘制命令() {
 /// 这是"绘制时偏移"的**全部**意义。改了布局矩形会连带改命中测试 ——
 /// 症状是"动画期间按钮点不中"，而那种缺陷往往在上线后才被发现。
 #[test]
-fn 偏移不改布局矩形() {
+fn offset_does_not_change_layout_rect() {
     let plain = box_el("b");
     let (_, a) = build(&plain);
     let shifted = box_el("b").with(&props::TRANSLATE_Y, PropertyValue::float(20.0));
@@ -302,7 +302,7 @@ fn 偏移不改布局矩形() {
 ///
 /// 只看 `DisplayList` 不够：万一某处把偏移写回了 `Node::rect()`，两条都会"看起来对"。
 #[test]
-fn 偏移不回写布局盒() {
+fn offset_does_not_write_back_to_layout_box() {
     let plain = box_el("b");
     let (na, _) = build(&plain);
     let shifted = box_el("b").with(&props::TRANSLATE_Y, PropertyValue::float(20.0));
@@ -318,7 +318,7 @@ fn 偏移不回写布局盒() {
 ///
 /// 用 hit 模块的真实入口测（`interaction_tests.rs` 走的是宿主路由，这里直接问 hit）。
 #[test]
-fn 偏移不影响命中测试() {
+fn offset_does_not_affect_hit_testing() {
     let plain = box_el("b");
     let shifted = box_el("b").with(&props::TRANSLATE_Y, PropertyValue::float(20.0));
     let theme = Theme::builtin(ThemeVariant::Dark);
@@ -349,7 +349,7 @@ fn 偏移不影响命中测试() {
 
 /// 子节点跟着父节点一起位移（累加，不是取最近一个）。
 #[test]
-fn 位移沿父子链累加() {
+fn translation_accumulates_along_parent_chain() {
     let child = box_el("child");
     let root = Element::new(NodeTag::Container)
         .with_key("root")
@@ -385,7 +385,7 @@ fn 位移沿父子链累加() {
 /// `Vec<Vertex>` + `Arc`，那是每帧 19 次无谓分配。判据用 `ptr_eq` 而不是
 /// "数值相等" —— 后者对任何实现都成立，等于没测。
 #[test]
-fn 零位移不重新分配顶点() {
+fn zero_translation_does_not_reallocate_vertices() {
     let theme = Theme::builtin(ThemeVariant::Dark);
     let ctx = Context::new(&theme).with_icons(private_icons(0));
     let el = Element::new(NodeTag::Container)
@@ -423,7 +423,7 @@ fn 零位移不重新分配顶点() {
 /// 一起测是因为 `uv` 动起来**画面上仍然"只是图标平移了"** —— 只是会花屏。
 /// 只测位置会漏掉"平移把图集坐标也平了"这种错误。
 #[test]
-fn 位移只动位置不动_uv() {
+fn translation_moves_position_but_not_uv() {
     let theme = Theme::builtin(ThemeVariant::Dark);
     let ctx = Context::new(&theme).with_icons(private_icons(1));
     let el = Element::new(NodeTag::Container)
@@ -477,7 +477,7 @@ fn 位移只动位置不动_uv() {
 /// 这条接的是 `tree_needs_layout` 那笔账 —— 若 `TRANSLATE_*` 被误声明成布局属性，
 /// 动画会让每一帧都重排，而症状（帧率下降）远不如"控件位置跳"那么容易定位。
 #[test]
-fn 偏移属性不影响稳态判定() {
+fn offset_property_does_not_affect_steady_state_decision() {
     let theme = Theme::builtin(ThemeVariant::Dark);
     let ctx = Context::new(&theme);
     let mut cache = FrameCache::new();
@@ -497,7 +497,7 @@ fn 偏移属性不影响稳态判定() {
 ///
 /// 与上一条配对：既要"静止时不重排"，也要"变了会重画"。
 #[test]
-fn 改偏移会重画() {
+fn offset_change_repaints() {
     let theme = Theme::builtin(ThemeVariant::Dark);
     let ctx = Context::new(&theme);
     let mut cache = FrameCache::new();
@@ -520,7 +520,7 @@ fn 改偏移会重画() {
 /// `offset` 上。断言 `glyphs[0].dst.x` 变了，等于要求缓存失效重算 —— 那正好是
 /// 本次要消掉的开销。所以这里断言**合起来**的结果：`(dst + offset).x` 的差。
 #[test]
-fn 文字跟着容器一起位移() {
+fn glyphs_translate_with_container() {
     let theme = Theme::builtin(ThemeVariant::Dark);
     let engine = null_engine();
     let ctx = Context::with_engine(&theme, &engine);
@@ -566,7 +566,7 @@ fn 文字跟着容器一起位移() {
 /// offset 变」这件事。`TRANSLATE_X` 只重绘不重排，正好把「几何变了但排版输入
 /// 一个字节没变」这个组合单独拎出来。
 #[test]
-fn 位移时字形四边形不重算() {
+fn glyph_quads_are_not_recomputed_on_translation() {
     let theme = Theme::builtin(ThemeVariant::Dark);
     let engine = null_engine();
     let ctx = Context::with_engine(&theme, &engine);

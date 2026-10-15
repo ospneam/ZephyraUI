@@ -8,7 +8,7 @@
     /// 这条测试钉住的是**症状**：宽度 3、高 2、`row_pitch = 16`（64 对齐后的常见值）
     /// 的一批像素。按 `width*4 = 12` 读会把第二行读成"第一行的后半 + 第二行的头"。
     #[test]
-    fn 按行距读_不是按宽度乘四() {
+    fn read_uses_row_pitch_not_width_times_four() {
         // 每行 16 字节：前 12 字节 = 3 个像素（各 4 字节，用该行行号标记颜色，
         // alpha 全 255），后 4 字节是行距填充。
         const PITCH: usize = 16;
@@ -51,7 +51,7 @@
 
     /// 声明尺寸与真实尺寸不一致必须能查出来 —— 那意味着画面缺一条边且**不报错**。
     #[test]
-    fn 尺寸不匹配_必须查得出来() {
+    fn size_mismatch_must_be_detected() {
         let px = PixelRead {
             data: vec![0; 600 * 600 * 4],
             order: ChannelOrder::Bgra,

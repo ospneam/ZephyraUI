@@ -241,7 +241,7 @@ impl InputLayout {
     /// 每个 `SemanticName` 指针都必须落在某个 [`InputElement::name`] 内部。
     ///
     /// 这条不是风格检查 —— 它是**悬垂指针**那个 bug 的直接判据。`SemanticName` 是裸
-    /// 指针，D3D12 只在 `CreateGraphicsPipelineState` 那一刻读它。早先的实现把
+    /// ptr_of，D3D12 只在 `CreateGraphicsPipelineState` 那一刻读它。早先的实现把
     /// `InputElement` 建成 `map` 闭包里的临时值，7 个指针全部指向已经释放的栈内存，
     /// 而症状只是 `E_INVALIDARG`。
     #[cfg(test)]

@@ -22,7 +22,7 @@
     /// 结果是**旧值留在表里**。现有 286 条测试**全部照过** ——
     /// 因为没有一条测过"同一 key 设两次"。这条就是那次遗漏的补上。
     #[test]
-    fn 重复设同一属性时表里留下最后那个值() {
+    fn last_value_wins_when_setting_same_property_twice() {
         let mut store = PropertyStore::new();
         store.set_local(&A, PropertyValue::float(1.0));
         store.set_local(&A, PropertyValue::float(2.0));
@@ -46,7 +46,7 @@
     /// 两者不一致的症状是「界面停在旧值但重绘计数在涨」——
     /// 有动画时表现为**永远追不上**，静止时看不出来。
     #[test]
-    fn 变更记录里的新值与表里一致() {
+    fn change_log_value_matches_table() {
         let mut store = PropertyStore::new();
         let first = store.set_local(&A, PropertyValue::float(10.0)).unwrap();
         assert_eq!(
@@ -76,7 +76,7 @@
     /// 两者曾分别是两张表；合成一个 `Vec` 类型后最容易出的错是**共用了同一条
     /// 查找**（于是样式值被当成本地值、或本地设置把样式值覆盖掉）。
     #[test]
-    fn 本地与样式互不干扰() {
+    fn local_and_styled_do_not_interfere() {
         let mut store = PropertyStore::new();
         store.set_styled(&A, PropertyValue::float(1.0));
         store.set_local(&A, PropertyValue::float(2.0));
@@ -99,7 +99,7 @@
     /// 两条路径的原因：`set_local` 拿得到 `&'static PropertyKey`（于是知道名字），
     /// 而 diff 只有 id。这条钉的是"id 路径不会因为缺名字而丢掉值或写错地方"。
     #[test]
-    fn 按_id_写入与按_key_写入结果一致() {
+    fn write_by_id_matches_write_by_key() {
         let mut by_key = PropertyStore::new();
         by_key.set_local(&A, PropertyValue::float(7.0));
         let mut by_id = PropertyStore::new();

@@ -4,7 +4,7 @@
     use super::*;
 
     #[test]
-    fn 注册过才_contains() {
+    fn contains_is_true_only_after_registration() {
         let mut n = TextureNames::new();
         assert!(n.is_empty());
         assert!(!n.contains("logo.png"), "未注册的不能算存在");
@@ -17,7 +17,7 @@
     }
 
     #[test]
-    fn 注销后_contains_变假() {
+    fn contains_is_false_after_unregistration() {
         let mut n = TextureNames::new();
         n.insert("a.png");
         assert!(n.remove("a.png"));

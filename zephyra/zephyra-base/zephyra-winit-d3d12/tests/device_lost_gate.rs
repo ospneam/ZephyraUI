@@ -35,7 +35,7 @@ use zephyra_winit_d3d12::SwapState;
 /// `DEVICE_HUNG` / `DEVICE_REMOVED` 之后设备**不会自己好**，重试只是把同一个
 /// 错误每帧打一遍，同时在屏幕上推出一个无效 visual。
 #[test]
-fn 设备已死时一律不画() {
+fn never_draws_when_device_is_dead() {
     for s in [SwapState::Same, SwapState::Synced, SwapState::Failed] {
         assert!(
             !zephyra_winit_d3d12::should_draw_frame(s, true),
@@ -61,7 +61,7 @@ fn resize失败时不画() {
 /// `Same` 是**常态**：鼠标在窗口里动也会进到这儿。把它误判成「别画」会让
 /// UI 完全不响应，而那比 bug 报的现象更难发现。
 #[test]
-fn 尺寸没变或resize成功时照常画() {
+fn draws_normally_when_size_unchanged_or_resize_succeeded() {
     assert!(
         zephyra_winit_d3d12::should_draw_frame(SwapState::Same, false),
         "尺寸没变是常态，必须照常画"
@@ -74,7 +74,7 @@ fn 尺寸没变或resize成功时照常画() {
 
 /// 真值表全列一遍。防止以后加第四个状态时漏改判断。
 #[test]
-fn 真值表完整() {
+fn truth_table_is_complete() {
     let table = [
         (SwapState::Same, false, true),
         (SwapState::Synced, false, true),

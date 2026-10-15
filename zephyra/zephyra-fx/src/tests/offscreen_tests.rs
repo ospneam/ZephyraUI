@@ -269,7 +269,7 @@
 
     /// 无滤镜时不产生任何离屏需求 —— 这是最常见的路径，必须零开销。
     #[test]
-    fn 无滤镜不产生离屏需求() {
+    fn no_filter_creates_no_offscreen_requirement() {
         let l = list_of(vec![
             quad(FilterChain::none(), BlendMode::default(), Rect::new(0.0, 0.0, 10.0, 10.0)),
             quad(blur(0.0), BlendMode::default(), Rect::new(0.0, 0.0, 10.0, 10.0)),
@@ -307,7 +307,7 @@
     /// ⚠ 方向容易搞反：RT 向**外**扩，所以屏幕原点落在 RT 内的**负**坐标上。
     /// 宿主该做的是 `screen − origin`，而不是 `screen + origin`。
     #[test]
-    fn 局部原点就是离屏矩形左上角() {
+    fn local_origin_is_offscreen_rect_top_left() {
         let l = list_of(vec![quad(
             blur(4.0),
             BlendMode::default(),
@@ -326,7 +326,7 @@
     /// 典型场景是同一张卡片的背景与文本共用一个投影：两块内容矩形不同，
     /// 但**离屏矩形**可能相同（内容都在同一张卡片的投影范围内）。
     #[test]
-    fn 相同离屏矩形会被合并() {
+    fn identical_offscreen_rects_are_merged() {
         // 两个不同矩形，但外扩后恰好同尺寸 → 不会被合并（矩形不等）。
         let a = quad(blur(2.0), BlendMode::default(), Rect::new(0.0, 0.0, 10.0, 10.0));
         let b = quad(blur(2.0), BlendMode::default(), Rect::new(0.0, 0.0, 10.0, 10.0));
@@ -346,7 +346,7 @@
 
     /// 投影的不对称外扩被完整反映到 RT 尺寸上。
     #[test]
-    fn 投影离屏矩形包含偏移() {
+    fn shadow_offscreen_rect_includes_offset() {
         let f = FilterChain::single(Filter::DropShadow {
             color: Color::rgba(0.0, 0.0, 0.0, 0.4),
             offset: Point::new(4.0, 6.0),
@@ -357,9 +357,9 @@
         assert_eq!(p.bounds, Rect::new(-2.0, 0.0, 112.0, 62.0));
     }
 
-    /// 混合模式不产生离屏需求 —— 它改的是混合方程，不是像素数量。
+    /// blend_mode_creates_no_offscreen_requirement —— 它改的是混合方程，不是像素数量。
     #[test]
-    fn 混合模式不产生离屏需求() {
+    fn blend_mode_creates_no_offscreen_requirement() {
         let l = list_of(vec![quad(
             FilterChain::none(),
             BlendMode::Multiply,
@@ -373,7 +373,7 @@
     ///
     /// 逐字形模糊会把每个字糊成独立一块，视觉上完全不是"这段文字被模糊了"。
     #[test]
-    fn 文本离屏范围是全部字形的并集() {
+    fn text_offscreen_bounds_is_union_of_all_glyphs() {
         let g = |x: f32| zephyra_core::paint::GlyphQuad {
             dst: Rect::new(x, 10.0, 8.0, 12.0),
             uv: zephyra_core::core::UvRect::FULL,
@@ -400,7 +400,7 @@
 
     /// 空字形的文本不产生离屏需求（内容矩形是零尺寸，RT 无意义）。
     #[test]
-    fn 空文本不产生离屏需求() {
+    fn empty_text_creates_no_offscreen_requirement() {
         let cmd = Command::Text {
             atlas: zephyra_core::paint::TextureRef::new("a"),
             glyphs: Vec::new().into(),
@@ -424,7 +424,7 @@
     /// 这条是对"配对命令会被排序拆散"那个论断的正面反证：改成按内容
     /// 几何后，跨 layer 的命令也不会错位。
     #[test]
-    fn 离屏需求的下标能定位回原命令() {
+    fn offscreen_requirement_index_maps_back_to_source_command() {
         let a = quad(FilterChain::none(), BlendMode::default(), Rect::new(0.0, 0.0, 5.0, 5.0));
         let b = quad(blur(1.0), BlendMode::default(), Rect::new(10.0, 10.0, 20.0, 20.0));
         let l = list_of(vec![a, b]);

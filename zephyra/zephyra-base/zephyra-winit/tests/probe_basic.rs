@@ -99,7 +99,7 @@ fn probe_texture(device: &ID3D11Device, name: &str, bind: u32, usage: D3D11_USAG
 ///
 /// 这个区分决定了「该找驱动还是该找系统」，所以必须逐块跑。
 #[test]
-fn 逐块适配器_探_d3d11_基础能力() {
+fn per_adapter_probe_d3d11_baseline_capability() {
     use windows::core::Interface as _;
     use windows::Win32::Graphics::Dxgi::CreateDXGIFactory1;
 
@@ -259,7 +259,7 @@ fn 逐块适配器_探_d3d11_基础能力() {
 }
 
 #[test]
-fn 这台机器的_d3d11_基础能力探测() {
+fn probe_d3d11_baseline_on_this_machine() {
     let Some((device, context)) = device() else {
         panic!("建不出 D3D11 设备");
     };

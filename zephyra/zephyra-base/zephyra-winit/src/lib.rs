@@ -130,7 +130,7 @@ pub struct HostWindow<V: View> {
     router: zephyra_core::input::InputRouter,
     pointer: Option<u32>,
     pointer_pos: (f32, f32),
-    /// 有没有**待处理的事件**（resize / 指针 / 按键 / 切主题）。
+    /// 有没有**待处理的事件**（resize / ptr_of / 按键 / 切主题）。
     ///
     /// ⚠ 这**不是**「内容变了」。内容变没变由 core 判定（`FrameOutcome`）。
     /// 本字段只表示「值不值得跑一帧」—— 因为判断后者必须先跑 `view()`，而那是

@@ -77,7 +77,7 @@ pub struct HostWindow<V: View> {
     router: InputRouter,
     pointer: Option<u32>,
     pointer_pos: (f32, f32),
-    /// 有没有**待处理的事件**（resize / 指针 / 按键 / 图集变化）。
+    /// 有没有**待处理的事件**（resize / ptr_of / 按键 / 图集变化）。
     ///
     /// ⚠ 这**不是**「内容变了」。内容变没变由 core 判定（`FrameOutcome`）。
     dirty: bool,
@@ -370,7 +370,7 @@ impl<V: View> HostWindow<V> {
     /// 注册一张图像纹理，返回写进 `props::IMAGE_TEXTURE` 的槽位句柄。
     ///
     /// D3D12 里「SRV」不是对象而是**描述符堆里的槽位**，所以这里返回 `u32` 而不是
-    /// 一个 `IShaderResourceView` 指针。
+    /// 一个 `IShaderResourceView` ptr_of。
     ///
     /// # 为什么走一条**独立**的提交
     ///
@@ -1193,7 +1193,7 @@ fn list_kind_histogram(&self) -> Vec<usize> {
             // 「点哪儿不好使」的唯一一手证据：坐标 → 处理目标。
             // 画面永远是对的，命中偏了也只有这一行能看出来。
             eprintln!(
-                "[trace] 指针 ({:.0}, {:.0}) → {:?}",
+                "[trace] ptr_of ({:.0}, {:.0}) → {:?}",
                 self.pointer_pos.0, self.pointer_pos.1, self.router.hovered()
             );
         }

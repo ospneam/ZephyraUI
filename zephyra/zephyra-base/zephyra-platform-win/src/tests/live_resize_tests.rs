@@ -144,7 +144,7 @@
             "每个 WM_SIZE 都必须同步画一帧"
         );
         // 用 delta 而不是绝对值：`wm_size_skipped()` 是**进程级**计数，
-        // 别的用例（尤其 `回调执行期间的重入被跳过`）会把它加上去，而
+        // 别的用例（尤其 `reentry_during_callback_is_skipped`）会把它加上去，而
         // cargo test 的执行顺序是按字母序 + 线程调度的，不保证谁先跑。
         // 断绝对值等于把「别的测试存在」当成 bug 报出来。
         let skipped_before = wm_size_skipped();
@@ -161,7 +161,7 @@
     /// 这条守住"子类化没有把窗口搞坏"。子类化最常见的事故就是忘了转消息，
     /// 症状是"某类操作无声失效"，极难归因。
     #[test]
-    fn 其它消息转给原过程() {
+    fn other_messages_forward_to_original_procedure() {
         let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
         COUNT.store(0, Ordering::Relaxed);
         set_render_hook(std::sync::Arc::new(|| {
@@ -197,7 +197,7 @@
     /// 顺序很重要：宿主是先建窗口再装回调，中间可能有第一个 `WM_SIZE`
     /// （比如创建时就带初始尺寸）。那一次必须安静地什么都不画。
     #[test]
-    fn 没装回调时不崩() {
+    fn no_crash_when_no_callback_installed() {
         let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
         {
             let mut slot = HOOK.lock().unwrap_or_else(|e| e.into_inner());
@@ -234,7 +234,7 @@
     /// 而拖动结束时宿主本来就会收到最后一个 `WM_SIZE`，那一次才是该画的。
     /// 所以正确行为是丢中间帧，而不是补。
     #[test]
-    fn 回调执行期间的重入被跳过() {
+    fn reentry_during_callback_is_skipped() {
         let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
         COUNT.store(0, Ordering::Relaxed);
         // 必须是 `static` 而不是局部变量：钩子类型是 `'static`（它活到进程结束），

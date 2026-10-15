@@ -16,7 +16,7 @@
 //! 那是**读回代码**的错：`pNumViewports` 是 `[in, out]`，输入值表示数组长度，
 //! 而当时传的是 0 —— 「你要 0 个」就得到 0 个。视口一直是好的。
 //!
-//! 教训留在 [`视图读回`] 的注释里：观测代码自身出错时，它制造的现象与它要排除的
+//! 教训留在 [`read_back_view`] 的注释里：观测代码自身出错时，它制造的现象与它要排除的
 //! 故障**完全同形**。所以这一格对视口做的是**断言**，不是打印。
 #![cfg(windows)]
 
@@ -94,7 +94,7 @@ unsafe fn make_texture(
 /// 数组给 16 个而不是 1 个：万一有人把 `pNumViewports` 写成「实际个数」而不是
 /// 「容量」，多给几个槽能让越界写表现为读回脏数据而不是内存破坏 —— 后者会变成
 /// 一个与本测试无关的崩溃。
-unsafe fn 视图读回(context: &ID3D11DeviceContext) -> (u32, f32, f32) {
+unsafe fn read_back_view(context: &ID3D11DeviceContext) -> (u32, f32, f32) {
     let mut count = 16u32;
     let mut buf = [D3D11_VIEWPORT::default(); 16];
     context.RSGetViewports(&mut count, Some(buf.as_mut_ptr()));
@@ -134,7 +134,7 @@ unsafe fn read_back(gpu: &zephyra_winit::surface::Gpu, tex: &ID3D11Texture2D) ->
 /// 让 `cargo test` 变红 —— 而本项目里这类故障的特征恰恰是**没有任何错误**。
 /// 所以覆盖率、视口读回、设备状态三样都必须是断言。
 #[test]
-fn 最小管线能铺满视口() {
+fn minimal_pipeline_fills_the_viewport() {
     let Ok(gpu) = zephyra_winit::surface::Gpu::new() else {
         panic!("建不出 D3D11 设备 —— 最小管线都建不出设备，后面的测试没有意义");
     };
@@ -183,7 +183,7 @@ fn 最小管线能铺满视口() {
             .IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         gpu.context.Draw(3, 0);
 
-        let (count, width, height) = 视图读回(&gpu.context);
+        let (count, width, height) = read_back_view(&gpu.context);
         assert_eq!(
             (count, width, height),
             (1, SIZE as f32, SIZE as f32),

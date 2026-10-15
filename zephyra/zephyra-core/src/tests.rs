@@ -1282,7 +1282,7 @@ fn vertex_bounds_when_first_vertex_is_interior() {
 
     /// 不设滤镜时是空链 —— 这是零回归的前提（否则每条命令都要开 RT）。
     #[test]
-    fn 未设滤镜时命令带空链() {
+    fn command_without_filter_carries_empty_chain() {
         let list = render_of(
             &Element::new(NodeTag::Container).with(
                 &crate::props::BACKGROUND,
@@ -1323,7 +1323,7 @@ fn vertex_bounds_when_first_vertex_is_interior() {
 
     /// 默认不报非默认混合（`Clear` 之外的所有比较都要走到）。
     #[test]
-    fn 默认混合模式不被报出() {
+    fn default_blend_mode_is_not_reported() {
         let list = render_of(&blurred_rect(2.0));
         assert!(
             !list.has_non_default_blend(),
@@ -1336,7 +1336,7 @@ fn vertex_bounds_when_first_vertex_is_interior() {
     /// 两条路径（core 的 `offscreen_requirements` 与 fx 的 `plan_offscreens`）
     /// 算的是同一个问题，所以必须给出相同答案 —— 不一致就说明有一处漂移。
     #[test]
-    fn 离屏需求与几何外扩一致() {
+    fn offscreen_requirement_matches_geometry_outset() {
         let list = render_of(&blurred_rect(2.0));
         let reqs = list.offscreen_requirements();
         assert_eq!(reqs.len(), 1);
@@ -1360,7 +1360,7 @@ fn vertex_bounds_when_first_vertex_is_interior() {
     ///
     /// 这与 `Opacity` 的继承语义相反 —— 半透明叠加天然正确，模糊叠加完全不成立。
     #[test]
-    fn 滤镜不沿父子链继承() {
+    fn filter_is_not_inherited_along_parent_chain() {
         let child = Element::new(NodeTag::Control)
             .with_key("child")
             .with(
@@ -1380,7 +1380,7 @@ fn vertex_bounds_when_first_vertex_is_interior() {
 
     /// 文本命令也带滤镜（`text_command` 的占位值被 `render_rec` 正确覆盖）。
     #[test]
-    fn 文本命令也携带滤镜() {
+    fn text_command_also_carries_filter() {
         let e = Element::new(NodeTag::Text)
             .with_key("t")
             .with(
@@ -1410,7 +1410,7 @@ fn vertex_bounds_when_first_vertex_is_interior() {
     /// 这条若漏了，表现是"改了 blur 那一帧有反应、之后再也不更新"，而
     /// 单元测试全绿。
     #[test]
-    fn 属性相等能区分不同滤镜() {
+    fn property_equality_separates_distinct_filters() {
         let a = PropertyValue::filter(FilterChain::single(Filter::Blur {
             sigma_x: 1.0,
             sigma_y: 1.0,
@@ -1429,7 +1429,7 @@ fn vertex_bounds_when_first_vertex_is_interior() {
 
     /// `Debug` 输出能看出滤镜项数 —— 属性 diff 失败时的诊断依据。
     #[test]
-    fn 滤镜属性有可读调试输出() {
+    fn filter_property_has_readable_debug_output() {
         let v = PropertyValue::filter(FilterChain::single(Filter::Blur {
             sigma_x: 1.0,
             sigma_y: 1.0,
@@ -1443,7 +1443,7 @@ fn vertex_bounds_when_first_vertex_is_interior() {
 
     /// 尺寸类断言用得到，确认测试里的常量与框架一致。
     #[test]
-    fn 布局尺寸常量自洽() {
+    fn layout_size_constants_are_self_consistent() {
         assert_eq!(Size::new(200.0, 100.0).width, 200.0);
     }
 }

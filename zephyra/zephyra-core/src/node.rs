@@ -417,7 +417,7 @@ impl Node {
 /// 换句话说，"脏标记清空"与"测量结果过期"是两件事 ——
 /// 前者每帧都发生，后者只在属性变化时发生。
 ///
-/// 门禁：`zephyra-core/tests/layout_cache_tests.rs::稳态完全不重测`
+/// 门禁：`zephyra-core/tests/layout_cache_tests.rs::steady_state_does_not_remeasure`
 /// （改之前它是红的，每帧 6 次整形）。
 pub fn clear_dirty(node: &mut Node) {
     node.dirty = Dirty::None;

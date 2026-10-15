@@ -184,7 +184,7 @@ fn d3d12_最小资源能不能建出来() {
 /// 手工把每块适配器的「移除原因」也记下来 —— 因为设备被移除与「资源创建被拒」是
 /// 两回事，混在一起会导致追错方向。
 #[test]
-fn 适配器与设备健康状况() {
+fn adapter_and_device_health() {
     let factory: windows::Win32::Graphics::Dxgi::IDXGIFactory4 =
         unsafe { CreateDXGIFactory1() }.expect("建 DXGI 工厂");
     let mut n = 0u32;

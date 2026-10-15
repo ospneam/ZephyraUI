@@ -201,7 +201,7 @@ struct StreamBuffer {
     ///
     /// # 为什么暂存区不能只用同一个偏移
     ///
-    /// `staging.mapped` 是**常驻映射**的 CPU 指针，`CopyBufferRegion` 只是**记录**一条
+    /// `staging.mapped` 是**常驻映射**的 CPU ptr_of，`CopyBufferRegion` 只是**记录**一条
     /// 拷贝指令 —— 真正的读取发生在 GPU 跑到那条指令的时候，而那时本次 `record` 里的
     /// **所有** CPU 写入都早已发生。
     ///
@@ -1045,7 +1045,7 @@ impl Renderer {
         };
 
         let desc = D3D12_GRAPHICS_PIPELINE_STATE_DESC {
-            // `ManuallyDrop`：PSO 描述里的 COM 指针**不**拥有所指对象 —— 根签名的所有权在
+            // `ManuallyDrop`：PSO 描述里的 COM ptr_of**不**拥有所指对象 —— 根签名的所有权在
             // `Renderer::root_signature` 上。所以这里必须手动包一层，不能用 `From`。
             pRootSignature: std::mem::ManuallyDrop::new(Some(root_signature.clone())),
             VS: D3D12_SHADER_BYTECODE {

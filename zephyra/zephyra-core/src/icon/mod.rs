@@ -106,7 +106,7 @@ pub struct Icon {
 }
 
 impl Icon {
-    /// 空图标（viewBox 24×24，无路径段），可作 const 兜底值。
+    /// 空图标（viewBox 24×24，无路径段），可作 const fallback_value。
     ///
     /// 未知图标名回落到它，而不是 panic 或缺资源：一个拼错的名字不该让整个
     /// 界面崩掉，且"某个图标不显示"是可见、可对比的；崩掉不是。

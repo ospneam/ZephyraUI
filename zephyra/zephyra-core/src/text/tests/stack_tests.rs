@@ -176,7 +176,7 @@
     /// 而这条测试是唯一能抓住它的断言。它没运行这件事本身很说明问题 ——
     /// **缩进错误的测试不会失败，它只是消失**，所以要靠 `dead_code` 警告发现。
     #[test]
-    fn 触发淘汰时_产出的_uv_互不重叠() {
+    fn eviction_produces_non_overlapping_uvs() {
         // FixedWidth 的字形是 px/2 见方的实心块：16px ⇒ 8×8 的墨 + 两圈留白 = 10×10。
         // 32×32 只装得下 3×3 = 9 个，而下面排 12 个字符 ⇒ 必然淘汰。
         let mut s = TextStack::with_atlas_size(FixedWidth { advance: 10.0 }, 32);
@@ -296,7 +296,7 @@
 /// 现在字号由 `shape` 直接写进 [`ShapedText::px_size`]，所以断言是「等于」而不是
 /// 「接近」—— 而**含 CJK 时也必须成立**。
 #[test]
-fn 字号从排版原样传到绘制_不反推() {
+fn font_size_is_forwarded_not_inferred() {
     for px in [12.0f32, 16.0, 18.0, 24.0, 32.0] {
         let mut s = TextStack::new(FixedWidth { advance: 1.0 });
         let style = TextStyle {
@@ -328,7 +328,7 @@ fn 字号从排版原样传到绘制_不反推() {
     /// 空排版的字号是 0，而 `glyph_quads` 对空 `lines` 直接返回 `None` ——
     /// 所以「0 号字号」不会被拿去查图集。
     #[test]
-    fn 空排版不产出任何四边形_所以零字号无害() {
+    fn empty_layout_makes_no_quads_so_zero_font_size_is_harmless() {
         let mut s = stack(7.0);
         let empty = ShapedText::default();
         assert_eq!(empty.px_size, 0.0, "默认构造的排版结果字号为 0");
@@ -385,7 +385,7 @@ fn 字号从排版原样传到绘制_不反推() {
     /// 路换上的策略才算数。这条测试用 12 个字形（'A'..'L'）打进只装得下 9 个的图集，
     /// 触发淘汰后检查"偶数字形真的没了"。
     #[test]
-    fn 宿主可以从文本栈换上自定义淘汰策略() {
+    fn host_can_install_custom_eviction_policy() {
         let mut s = TextStack::with_atlas_size(FixedWidth { advance: 10.0 }, 32);
         s.set_atlas_policy(OddOnly);
         let style = TextStyle {

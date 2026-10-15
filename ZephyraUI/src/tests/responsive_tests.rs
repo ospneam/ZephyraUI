@@ -8,7 +8,7 @@
     /// 官方原文：小 = 最大可达 640；中 = 641 - 1007；大 = 1008 及以上。
     /// 边界两侧都取，因为"≤ 640 算小"与"< 640 算小"只差这一个像素。
     #[test]
-    fn 断点按官方的三个边界判() {
+    fn breakpoints_follow_three_official_boundaries() {
         assert_eq!(WidthClass::of_effective_width(640.0), WidthClass::Small);
         assert_eq!(WidthClass::of_effective_width(641.0), WidthClass::Medium);
         assert_eq!(WidthClass::of_effective_width(1007.0), WidthClass::Medium);
@@ -27,7 +27,7 @@
     /// 若不除，800 会被判成 Small，于是该展开的导航被折叠 —— 症状是布局不合身，
     /// 而不是报错。
     #[test]
-    fn 断点判据用有效像素而不是物理像素() {
+    fn breakpoint_uses_effective_not_physical_pixels() {
         assert_eq!(
             WidthClass::of_viewport((1400.0, 800.0), 1.25),
             WidthClass::Large,
@@ -64,7 +64,7 @@
 
     /// 列数：可用宽度每涨一个"卡宽 + 间距"才多一列，且不越界。
     #[test]
-    fn 列数随可用宽度增长且至少一列() {
+    fn column_count_grows_with_width_and_is_at_least_one() {
         // 200 卡宽 + 12 间距 = 212 步长。n 列占宽 = n×212 − 12。
         assert_eq!(columns_for(212.0, 200.0, 12.0), 1);
         assert_eq!(columns_for(411.0, 200.0, 12.0), 1, "第二列要 412 起");
@@ -82,7 +82,7 @@
 
     /// 每档的最少列数是**下限**，不是目标值 —— 真正的列数由可用宽度决定。
     #[test]
-    fn 最少列数单调不减() {
+    fn minimum_column_count_is_monotonic() {
         assert!(WidthClass::Small.min_columns() <= WidthClass::Medium.min_columns());
         assert!(WidthClass::Medium.min_columns() <= WidthClass::Large.min_columns());
     }
@@ -93,7 +93,7 @@
     /// 忘了乘就会得到 40 物理 = 32 epx，**低于官方"可触摸"下限**，
     /// 而代码读起来完全正确。
     #[test]
-    fn 触控目标按_scale_换算成布局单位() {
+    fn touch_target_converts_scale_to_layout_units() {
         assert_eq!(touch_px(TOUCH_MIN_EPX, 1.25), 50.0);
         assert_eq!(touch_px(TOUCH_OPTIMAL_EPX, 1.25), 55.0);
         assert_eq!(touch_px(TOUCH_MIN_EPX, 1.0), 40.0, "100% 下应恒等");
@@ -105,7 +105,7 @@
     /// 判据直接抄原文。改这些数字必须同时改 `docs/responsive-and-touch.md`
     /// 里的引用，否则这条会红。
     #[test]
-    fn 官方数字必须与文档一致() {
+    fn official_numbers_match_documentation() {
         assert_eq!(WidthClass::SMALL_MAX_EPX, 640.0);
         assert_eq!(WidthClass::LARGE_MIN_EPX, 1008.0);
         assert_eq!(TOUCH_MIN_EPX, 40.0);

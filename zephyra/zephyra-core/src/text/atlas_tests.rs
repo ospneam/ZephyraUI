@@ -40,7 +40,7 @@
 //!
 //! 两者缺一不可：`uv` 若把留白算进去，`GlyphQuad::dst` 会跟着变大，字之间凭空多出
 //! 缝隙；留白若没有，双线性采样会在四边形边缘各取一半邻居的纹素，字之间出现淡竖条。
-//! 留白那半边由 `atlas.rs` 里的 `相邻字形之间留出透明的一圈` 与本文件下面那条
+//! 留白那半边由 `atlas.rs` 里的 `transparent_gap_between_adjacent_glyphs` 与本文件下面那条
 //! 「尺寸一致」共同钉住。
 
 // 这个文件在 **core 内部**，所以用 `crate::` 而不是 `zephyra_core::`。
@@ -147,7 +147,7 @@ fn coverage_原样落进图集_不因_offset_而移位() {
 /// 「尺寸一致」这条不是废话：`AtlasGlyph::size` 会被拿去算 `GlyphQuad::dst`，
 /// 而 `dst` 的尺寸要能与 `uv` 反推出的像素尺寸对上，否则采样会错位。
 #[test]
-fn 位图尺寸与图集条目_严格一致() {
+fn bitmap_size_matches_atlas_entry_strictly() {
     let raster = diag_bitmap();
     let atlas = atlas_of(raster.clone());
     let entry = atlas.get(7, 1, 16).unwrap();
@@ -167,7 +167,7 @@ fn 位图尺寸与图集条目_严格一致() {
 /// 透明像素不写 —— 所以先插一个满图，再插一个只占左上半的位图，右侧应当保留满图的
 /// 内容。早期版本无条件写 `coverage`（含 0），于是每个字形的透明区域都把邻居擦成 0。
 #[test]
-fn 后插入的字形_不擦掉已有字形() {
+fn later_glyph_insert_does_not_erase_existing_ones() {
     let mut atlas = GlyphAtlas::new();
 
     // 先放一个铺满 64×64 的不透明块。
@@ -207,7 +207,7 @@ fn 后插入的字形_不擦掉已有字形() {
 /// 「必须占条目」是为了不重复栅格化；「不占空间」是为了不让它把货架推进一格 ——
 /// 那会在字形之间留下永远填不满的缝。
 #[test]
-fn 空白字形不占空间但有条目() {
+fn blank_glyph_costs_no_space_but_has_an_entry() {
     let mut atlas = GlyphAtlas::new();
     let before = atlas.stats().usage();
 
@@ -236,7 +236,7 @@ fn 空白字形不占空间但有条目() {
 
 /// 重复插入**不新增条目**（缓存命中）。
 #[test]
-fn 同一字形重复插入命中缓存() {
+fn reinserting_same_glyph_hits_cache() {
     let raster = diag_bitmap();
     let mut atlas = GlyphAtlas::new();
     let a = atlas.get_or_insert(7, 1, 16, Some(raster.clone())).unwrap();
@@ -250,7 +250,7 @@ fn 同一字形重复插入命中缓存() {
 ///
 /// 同一个字形在不同像素字号下是不同的图，混用会得到"缩放后字形模糊/错位"。
 #[test]
-fn 不同字号是不同的条目() {
+fn different_font_sizes_are_distinct_entries() {
     let raster = diag_bitmap();
     let mut atlas = GlyphAtlas::new();
     atlas.get_or_insert(7, 1, 16, Some(raster.clone())).unwrap();
@@ -266,7 +266,7 @@ fn 不同字号是不同的条目() {
 ///
 /// 这一条不测字形，只测「core 会把 `PlacedGlyph` 送进 `GlyphSource::rasterize`」。
 #[test]
-fn 排版_到_栅格化_这条链能跑通() {
+fn shaping_to_rasterization_chain_runs_end_to_end() {
     let raster = diag_bitmap();
     let src = OneGlyph {
         font_id: 3,

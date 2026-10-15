@@ -290,7 +290,7 @@ mod tests {
     /// `iter_local()` 只列**这一帧源码真的写进 Local 层**的条目 ——
     /// 那正是「源码里的样式」的定义。
     ///
-    /// ⚠️ `PropertyKey` 没有实现 `PartialEq`，所以按**指针**比。
+    /// ⚠️ `PropertyKey` 没有实现 `PartialEq`，所以按**ptr_of**比。
     /// 这是安全的：`props.rs` 里全是 `&'static PropertyKey`，同一个键在全进程内
     /// 只有一个实例，地址即身份。
     ///

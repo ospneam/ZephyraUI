@@ -13,7 +13,7 @@
     }
 
     #[test]
-    fn 完全在裁剪区内的三角形原样返回() {
+    fn triangle_fully_inside_clip_returned_unchanged() {
         let tri = [p(1.0, 1.0), p(3.0, 1.0), p(2.0, 3.0)];
         let out = geom_clip(&tri, Some(Rect::new(0.0, 0.0, 10.0, 10.0)));
         assert_eq!(out.len(), 3, "不该多出顶点：{out:?}");
@@ -21,13 +21,13 @@
     }
 
     #[test]
-    fn 完全在裁剪区外的三角形被丢弃() {
+    fn triangle_fully_outside_clip_is_dropped() {
         let tri = [p(20.0, 20.0), p(22.0, 20.0), p(21.0, 22.0)];
         assert!(geom_clip(&tri, Some(Rect::new(0.0, 0.0, 10.0, 10.0))).is_empty());
     }
 
     #[test]
-    fn 跨界三角形裁剪后面积等于解析值() {
+    fn clipped_straddling_triangle_area_equals_analytic_value() {
         // 单位方块 (0,0)..(2,2)，拆成两个三角形，用 `x >= 1` 裁掉左半。
         // 两半裁完的面积**不等**：`(0,0)(2,0)(2,2)` 那半切x=1 得四边形
         // `(2,0)(2,2)(1,1)(1,0)`，面积 1.5；另一半 `(0,0)(2,2)(0,2)` 切出
@@ -50,7 +50,7 @@
     }
 
     #[test]
-    fn 斜边正好压在裁剪角上时交集是整个方块() {
+    fn diagonal_exactly_on_clip_corner_intersects_whole_box() {
         // 三角 (0,0)(20,0)(0,20) 的斜边是 `x + y = 20`，而 `[0,10]²` 内
         // `x + y <= 20` 恒成立 —— 所以交集是**整个**方块，面积 100。
         //
@@ -68,7 +68,7 @@
     }
 
     #[test]
-    fn 斜边真正切掉一块时面积减少量正确() {
+    fn area_decrease_is_correct_when_diagonal_actually_cuts() {
         // 三角 (0,0)(20,0)(0,20) 裁到 `[0,15]²`。斜边 `x + y = 20` 与
         // `x = 15` / `y = 15` 交于 (15,5) 与 (5,15)。
         //
@@ -95,7 +95,7 @@
     }
 
     #[test]
-    fn 裁剪不产生重复顶点() {
+    fn clipping_produces_no_duplicate_vertices() {
         // 半开区间的存在理由：顶点恰好落在裁剪线上时，若用闭区间会生成
         // 一个坐标完全相同的重复点，让结果多边形自交、面积偏大。
         // 已知会触发的构造：先被 y 裁出边界点，再被 x 裁到同一坐标。
@@ -115,7 +115,7 @@
     }
 
     #[test]
-    fn 扇形三角化的面积和等于多边形面积() {
+    fn sector_triangulation_area_sums_to_polygon_area() {
         let poly = vec![
             p(1.0, 1.0),
             p(5.0, 1.0),
@@ -134,7 +134,7 @@
     }
 
     #[test]
-    fn 退化多边形不产出三角形() {
+    fn degenerate_polygon_yields_no_triangles() {
         // 三点共线
         let poly = vec![p(0.0, 0.0), p(1.0, 0.0), p(2.0, 0.0)];
         assert!(fan_triangulate(&poly).is_empty());
@@ -143,7 +143,7 @@
     }
 
     #[test]
-    fn 裁剪顶点不产生_nan() {
+    fn clipped_vertices_have_no_nan() {
         // 裁剪线正好穿过一个顶点：这是最容易产生 NaN 的情形
         let tri = [p(0.0, 0.0), p(4.0, 2.0), p(0.0, 4.0)];
         let out = geom_clip(&tri, Some(Rect::new(0.0, 2.0, 4.0, 2.0)));

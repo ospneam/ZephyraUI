@@ -125,7 +125,7 @@ fn glyph_quads(batch: &zephyra_fx::quad::QuadBatch) -> usize {
 #[test]
 #[ignore = "需要真 GPU。手动跑：--ignored --nocapture"]
 #[allow(non_snake_case, reason = "测试名用中文描述被测行为，比逐字翻成英文好读")]
-fn 字形_在GPU上与CPU参考图一致() {
+fn glyphs_on_gpu_match_cpu_reference_image() {
     let view = TextHeavy { lines: &LINES };
     // ---- 参考侧：CPU ----
     let mut cpu = CpuHost::new(view, (SIZE, SIZE));
@@ -287,7 +287,7 @@ fn ink(pixels: &[u8]) -> u64 {
 
 /// 顶点流必须真的带出字形四边形 —— 否则上面那个测试可能在比两张「只有矩形」的图。
 #[test]
-fn 字形四边形_在顶点流里可数() {
+fn glyph_quads_are_countable_in_the_vertex_stream() {
     let mut cpu = CpuHost::new(TextHeavy { lines: &LINES }, (SIZE, SIZE));
     let _ = cpu.frame();
     let batch = cpu.batch();

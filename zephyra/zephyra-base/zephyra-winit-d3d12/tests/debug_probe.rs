@@ -34,7 +34,7 @@ const TRIV_PS: &[u8] = include_bytes!("triv.ps.bin");
 
 #[test]
 #[ignore = "诊断用：要真设备 + 调试层。跑法见文件末尾"]
-fn 调试层_挂上了吗_有消息吗() {
+fn debug_layer_attached_and_has_messages() {
     // ---- 1. 调试层 ----
     //
     // 必须在建设备**之前**开 —— 文档明写。

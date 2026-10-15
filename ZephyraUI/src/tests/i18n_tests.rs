@@ -5,7 +5,7 @@
 
     /// 解析必须照 BCP 47 的三段结构，且**规范化**大小写。
     #[test]
-    fn 标签按_bcp47_解析并规范化() {
+    fn tag_is_parsed_and_normalized_per_bcp47() {
         let t = Tag::parse("zh-hans-cn").expect("合法");
         assert_eq!(t.language(), "zh");
         assert_eq!(t.script(), Some("Hans"));
@@ -28,7 +28,7 @@
     /// 这条是官方措辞的直接翻译：`Intl` 用
     /// "the first entry in the list that matches a locale supported"。
     #[test]
-    fn 协商按偏好顺序而不是全局最近() {
+    fn negotiation_follows_preference_order_not_globally_nearest() {
         // `ja` 排第一 ⇒ 必须选 ja，即使 `en-US` 与第二项**完全相等**（距离 0）。
         let prefs = Preferences::from_list(&["ja", "en-US"]);
         let available = [Tag::parse("en-US").unwrap(), Tag::parse("ja").unwrap()];
@@ -41,7 +41,7 @@
 
     /// 回退优先级：全中 > 丢 region > 只语言段。
     #[test]
-    fn 回退距离按官方顺序() {
+    fn fallback_distance_follows_official_order() {
         let full = Tag::parse("zh-Hans-CN").unwrap();
         assert_eq!(full.distance(&Tag::parse("zh-Hans-CN").unwrap()), Some(0));
         assert_eq!(full.distance(&Tag::parse("zh-Hans").unwrap()), Some(2));
@@ -60,7 +60,7 @@
     /// 浏览器显式追加 language-only 回退标签（`en-US,en;q=0.9`），
     /// 所以「只有 `zh-Hans-CN` 译文而用户是 `zh-Hans`」必须能取到。
     #[test]
-    fn 消息查找按_language_only_回退() {
+    fn message_lookup_falls_back_to_language_only() {
         let mut m = Messages::new();
         m.insert("zh-Hans-CN", "hello", "你好");
         // 只插了精确 locale。
@@ -82,7 +82,7 @@
     /// 这是浏览器的真实行为（某门语言缺资源时回落默认语言），
     /// 也是"降级要写在明处"的落点：真要发现漏翻，靠门禁而不是靠界面。
     #[test]
-    fn 漏翻回落到默认语言() {
+    fn missing_translation_falls_back_to_default_language() {
         let mut m = Messages::new();
         m.insert("en", "nav.home", "Home");
         // `ja` 一个键都没有 ⇒ 必须拿到 `en` 的文案。
@@ -100,7 +100,7 @@
     /// 这一条是**真实**的：`negotiate` 交出来的 `Tag` 会带 script，
     /// 而调用方手里的默认语言常量可能只写到语言段。
     #[test]
-    fn 默认语言也走语言段回退() {
+    fn default_locale_also_uses_language_section_fallback() {
         let mut m = Messages::new();
         m.insert("zh-Hans", "a", "A");
         assert_eq!(m.select(&Preferences::new(), "zh-Hans", "a"), Some("A"));
@@ -110,7 +110,7 @@
 
     /// 漏翻必须可被机器发现（门禁依据）。
     #[test]
-    fn 缺失键可枚举() {
+    fn missing_keys_are_enumerable() {
         let mut m = Messages::new();
         m.insert("en", "a", "A");
         let missing = m.missing_in("en", &["a", "b", "c"]);
@@ -119,7 +119,7 @@
 
     /// 偏好表有序、去重，`first()` 对应 `navigator.language`。
     #[test]
-    fn 偏好表有序且去重() {
+    fn preference_list_is_ordered_and_deduplicated() {
         let p = Preferences::from_list(&["en-US", "zh-CN"]);
         assert_eq!(p.first().unwrap().as_str(), "en-US");
         let mut q = p.clone();
@@ -137,7 +137,7 @@
     /// 本测试仍会过，而真正的问题（宿主给的语言**全**被跳过 → 回落默认）
     /// 会静默发生。所以这里额外断言"含坏项时好项仍在"。
     #[test]
-    fn 自有列表与借用列表同形() {
+    fn owned_and_borrowed_lists_have_same_shape() {
         let owned: Vec<String> = vec!["zh-CN".to_string(), "坏-标签".to_string()];
         let p = Preferences::from_owned(&owned);
         assert_eq!(p.len(), 1);

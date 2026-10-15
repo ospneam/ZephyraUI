@@ -50,7 +50,7 @@ const SCALE: u32 = 3;
 
 #[test]
 #[ignore = "需要系统字体、且会写文件；默认不进无差别测试。手动跑：--ignored --nocapture"]
-fn 字形图集里有正确的字形() {
+fn glyph_atlas_contains_correct_glyphs() {
     let (mut stack, note) = from_system_font();
     println!("{note}");
 

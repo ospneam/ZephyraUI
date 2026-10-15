@@ -75,7 +75,7 @@ fn run_frames_dt(g: &mut Gallery, dt: f32, n: u32) {
 /// `333/16 ≈ 20` 帧就会放完，而按真实时间的实现要 21 帧。差一帧不多，
 /// 所以这里用更狠的判据：**同样的总时长，分成两倍多的帧数跑，放完的时刻不变**。
 #[test]
-fn 时钟按毫秒推进而非帧数() {
+fn clock_advances_by_milliseconds_not_frames() {
     let mut g = Gallery::default();
     g.route = "settings";
     // 先跑一帧让"路由变了"被吃掉。
@@ -93,7 +93,7 @@ fn 时钟按毫秒推进而非帧数() {
 
 /// 换路由 ⇒ 时钟归零并重放入场。
 #[test]
-fn 换路由后入场重放() {
+fn route_change_replays_entrance() {
     let mut g = Gallery::default();
     // 先在 home 上把动画跑完。
     run_frames(&mut g, 40);
@@ -109,7 +109,7 @@ fn 换路由后入场重放() {
 
 /// 档位一路走到 `enter-8`，放完之后**回到 `None`**。
 #[test]
-fn 档位走到头之后不再有分类名() {
+fn no_class_name_after_tier_exhausted() {
     let mut g = Gallery::default();
     g.route = "settings";
     // 先吃掉"路由变了"那一帧。
@@ -147,7 +147,7 @@ fn 档位走到头之后不再有分类名() {
 /// 少一条的后果是"最高档永不命中，页面永远半透明" —— 那是个看起来像
 /// "动画卡住了"的缺陷。
 #[test]
-fn 八个档位都在样式表里且单调() {
+fn all_eight_tiers_in_sheet_and_monotonic() {
     let mut g = Gallery::default();
     g.route = "settings";
     let _ = run_frames(&mut g, 1);
@@ -189,7 +189,7 @@ fn 八个档位都在样式表里且单调() {
 /// 所以不标脏）—— 但如果实现里出现"每帧 +dt 不夹上限"那种写法，
 /// 就会变成永久动画。这条钉住"放完即静止"。
 #[test]
-fn 放完之后时钟不再前进() {
+fn clock_stops_after_layout() {
     let mut g = Gallery::default();
     g.route = "settings";
     run_frames(&mut g, 60);
@@ -207,7 +207,7 @@ fn 放完之后时钟不再前进() {
 /// 宿主首帧填 0（`InputState::dt_ms` 的文档说明了），而首帧恰好也是
 /// "刚建树"那一帧 —— 这里出问题的症状是整个界面起不来。
 #[test]
-fn 首帧零间隔不炸且不发分类名() {
+fn first_frame_zero_interval_is_safe_and_emits_no_class() {
     let mut g = Gallery::default();
     g.route = "settings";
     g.on_input(&InputState {
@@ -228,7 +228,7 @@ fn 首帧零间隔不炸且不发分类名() {
 /// 不夹的话 `enter_ms` 一步跳到 10 万，然后 `f32` 精度丢到小数点后第 7 位 ——
 /// 症状是"动画结束之后又重放了一次"，而且极难归因。
 #[test]
-fn 极大间隔被夹住() {
+fn huge_interval_is_clamped() {
     let mut g = Gallery::default();
     g.route = "settings";
     // 第一帧吃掉"路由变了"（归零，不累加本帧的 dt）—— 这是刻意的：

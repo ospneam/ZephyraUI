@@ -49,7 +49,7 @@ const CLEAR: Color = Color::rgba(0.0, 0.0, 0.0, 1.0);
 /// 无关**的失败原因。离屏纹理是到己建的、不经过 DXGI 的渲染目标，于是出问题时
 /// 故障域只剩渲染器本身。
 #[test]
-fn 矩形会真的落到像素上() {
+fn rectangle_reaches_pixels() {
     let Ok(gpu) = Gpu::new() else {
         eprintln!("跳过：建不出 D3D11 设备");
         return;
@@ -128,7 +128,7 @@ fn 矩形会真的落到像素上() {
 ///
 /// # 它的作用是当"对照组"
 ///
-/// 它和 [`矩形会真的落到像素上`] 共用同一份着色器、同一份输入布局、同一份顶点数据、
+/// 它和 [`rectangle_reaches_pixels`] 共用同一份着色器、同一份输入布局、同一份顶点数据、
 /// 同一种缓冲（`DYNAMIC` + `Map`），唯一差别是**不经过 `Renderer::render`**。
 ///
 /// 于是"能不能画"被从一堆变量里单独拎了出来：
@@ -142,7 +142,7 @@ fn 矩形会真的落到像素上() {
 /// 的那一半里就包括**都漏掉的** `IASetPrimitiveTopology`。拿一个自己也是坏的
 /// 东西当参照物，两边一起错，结论看着自洽却毫无信息。
 #[test]
-fn 裸_d3d11_能画出满屏三角形() {
+fn bare_d3d11_draws_a_full_screen_triangle() {
     let Ok(gpu) = Gpu::new() else {
         eprintln!("跳过：建不出 D3D11 设备");
         return;
@@ -355,7 +355,7 @@ fn renderer_data(list: &DisplayList) -> (Vec<u8>, Vec<u8>) {
 /// 看起来照样通过，但真实宿主里那块就永远清不干净。所以下面额外断言左半边的
 /// **边缘**不是黑色。
 #[test]
-fn 帧内_scissor_只影响脏区() {
+fn in_frame_scissor_only_affects_damage() {
     let Ok(gpu) = Gpu::new() else {
         eprintln!("跳过：建不出 D3D11 设备");
         return;
@@ -481,7 +481,7 @@ fn 帧内_scissor_只影响脏区() {
 /// `missing_textures`）。不注册的话画的是空气，而 `report.quads` 仍然 > 0 ——
 /// 又是一个「计数器正常但画面是空的」陷阱。
 #[test]
-fn 图像圆角_四角被切掉() {
+fn image_corner_radius_cuts_the_corners() {
     let Ok(gpu) = Gpu::new() else {
         eprintln!("跳过：建不出 D3D11 设备");
         return;
@@ -579,7 +579,7 @@ fn 图像圆角_四角被切掉() {
 /// 而「变暗」这件事发生在**颜色**上（白 × 0.93 = 236），所以判据必须落在 RGB 上。
 /// 这条与本仓反复记录的「判据要落在真正变化的那个量上」是同一件事。
 #[test]
-fn 直角图像的边缘不被压暗() {
+fn square_corner_image_edges_are_not_darkened() {
     let Ok(gpu) = Gpu::new() else {
         eprintln!("跳过：建不出 D3D11 设备");
         return;

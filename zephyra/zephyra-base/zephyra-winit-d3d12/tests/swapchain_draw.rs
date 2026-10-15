@@ -65,7 +65,7 @@ fn expected_coverage_rect(w: u32, h: u32) -> f64 {
 /// 交换链能建成、能取到 RTV、能呈现，并且**真的把像素画上了**。
 #[test]
 #[ignore = "需要真 GPU 与 DComp。手动跑：--ignored --nocapture"]
-fn 交换链_能呈现出真实像素() {
+fn swapchain_presents_real_pixels() {
     let Ok(mut gpu) = Gpu::new() else {
         panic!("建不出 D3D12 设备");
     };
@@ -127,7 +127,7 @@ fn 交换链_能呈现出真实像素() {
 /// 只有一张能画的症状是「画面每帧一样」或「偶尔闪一下」，很难从截图上看出来。
 #[test]
 #[ignore = "需要真 GPU 与 DComp。手动跑：--ignored --nocapture"]
-fn 两个后缓冲都能画() {
+fn both_back_buffers_are_drawable() {
     let Ok(mut gpu) = Gpu::new() else {
         panic!("建不出 D3D12 设备");
     };
@@ -295,7 +295,7 @@ fn resize_buffers_在画过之后失败_并按设计重建() {
 /// GPU 拖进 `DEVICE_HUNG`。本条就是那个回归的门禁。
 #[test]
 #[ignore = "需要真 GPU 与 DComp。手动跑：--ignored --nocapture"]
-fn 缩放窗口_不重建交换链() {
+fn window_resize_does_not_rebuild_swapchain() {
     let Ok(gpu) = Gpu::new() else {
         panic!("建不出 D3D12 设备");
     };
@@ -344,7 +344,7 @@ fn 缩放窗口_不重建交换链() {
 /// 装不下时容量要**涨到够大并留余量**，且内容尺寸仍按窗口。
 #[test]
 #[ignore = "需要真 GPU 与 DComp。手动跑：--ignored --nocapture"]
-fn 容量不足时_重建并留余量() {
+fn rebuilds_with_headroom_when_capacity_insufficient() {
     let Ok(gpu) = Gpu::new() else {
         panic!("建不出 D3D12 设备");
     };
@@ -584,7 +584,7 @@ fn probe_resize_buffers_被哪一步卡住() {
 /// 需要真的 D3D12 设备。本机起不来（见 `d3d12_draw.rs` 头部）。
 #[test]
 #[ignore = "需要 GPU 与 DComp 现场；本机起不来（--ignored --nocapture 跑）"]
-fn 重建后旧链在宿主重新挂载之前不能释放() {
+fn old_swapchain_must_survive_until_host_rebinds() {
     let Ok(mut gpu) = Gpu::new() else {
         panic!("建不出 D3D12 设备");
     };
@@ -632,7 +632,7 @@ fn 重建后旧链在宿主重新挂载之前不能释放() {
 /// 交换链**连传 0 都不允许**（文档明写）。不早退的话每次最小化都会抛一个无意义的错，
 /// 而窗口最小化是**正常使用**的一部分。
 #[test]
-fn 零尺寸_resize_被忽略而不是报错() {
+fn zero_sized_resize_is_ignored_not_an_error() {
     let Ok(mut gpu) = Gpu::new() else {
         panic!("建不出 D3D12 设备");
     };

@@ -57,7 +57,7 @@ const IID_RESOURCE: windows::core::GUID = ID3D12Resource::IID;
 #[ignore = "**已通过**。本测试记录的是「已排除 windows-rs ABI 缺陷」这个结论 —— \
              而真正的根因（缓冲 Layout 写成 UNKNOWN）两条路径犯的是同一个错，\
              所以当时它排除不了描述符假设"]
-fn 裸签名与绑定层结论必须一致() {
+fn bare_signature_agrees_with_binding_layer() {
     let factory: windows::Win32::Graphics::Dxgi::IDXGIFactory4 =
         unsafe { CreateDXGIFactory1() }.expect("工厂");
     let adapter = unsafe { factory.EnumAdapters1(0) }.expect("适配器 0");

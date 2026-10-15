@@ -99,7 +99,7 @@ fn drain(queue: &ID3D11InfoQueue, label: &str) {
                 //   Category@0 Severity@4 ID@8 pad@12 pDescription@16 DescriptionByteLength@24
                 //
                 // ⚠ 我先前按「Severity@0 Category@4 ID@8 DescriptionByteLength@12 内联描述」
-                // 解析 —— 那是早期 SDK 的布局，当前 SDK 与 windows-rs 都是**指针**形式。
+                // 解析 —— 那是早期 SDK 的布局，当前 SDK 与 windows-rs 都是**ptr_of**形式。
                 // 结果读出空描述。
                 let n = got.min(buf.len()).max(32);
                 let b = &buf[..n];

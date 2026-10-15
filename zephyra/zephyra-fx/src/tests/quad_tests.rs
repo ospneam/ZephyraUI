@@ -73,7 +73,7 @@
     /// 唯一可靠的信号就是"帧数越多，缓冲越大"。所以判据取**逐帧相等**，而不是
     /// "某个上限之内" —— 后者对缓慢增长完全放过。
     #[test]
-    fn 复用缓冲逐帧不增长() {
+    fn reused_scratch_does_not_grow_across_frames() {
         let list = list_of(vec![
             quad(Rect::new(0.0, 0.0, 100.0, 100.0), Color::rgb(1.0, 0.0, 0.0)),
             quad(Rect::new(10.0, 10.0, 50.0, 50.0), Color::rgb(0.0, 1.0, 0.0)),
@@ -111,7 +111,7 @@
     /// "某类图元画错位置" —— 那与"这次改动只是想省点分配"完全无关，
     /// 几乎不可能被联想到。
     #[test]
-    fn 复用路径与一次性路径逐字节相同() {
+    fn reused_path_byte_identical_to_one_shot_path() {
         let mut list = DisplayList::new();
         for i in 0..6u32 {
             list.push(
@@ -328,7 +328,7 @@
     ///
     /// 所以判据取逐顶点相等，没有第二条路能蒙混过去。
     #[test]
-    fn 无裁剪快路径与完整裁剪链逐顶点相同() {
+    fn unclipped_fast_path_matches_full_clip_vertex_by_vertex() {
         // 三组形状：常规、共线（退化）、跨越大画布。
         let cases: [&[[f32; 2]; 3]; 3] = [
             &[[0.0, 0.0], [10.0, 0.0], [0.0, 10.0]],
@@ -382,7 +382,7 @@
     /// 进入顶点流：`path_triangles` 计数偏大，而按 `Σ|面积|` 的断言**仍然通过**
     /// （它本来就是面积和的一部分），所以只有这条能抓到。
     #[test]
-    fn 退化三角形在两条路径上都被剔除() {
+    fn degenerate_triangle_is_culled_on_both_paths() {
         let collinear = list_of(vec![path_cmd(
             &[[0.0, 0.0], [5.0, 0.0], [10.0, 0.0]],
             Color::rgba(1.0, 0.0, 0.0, 1.0),
@@ -718,7 +718,7 @@ fn runs_不跨过其它段合并() {
     /// 变异测试把它抓出来了：把 `if !(radius > 0.0)` 改成 `if false`（强制半径 0
     /// 也走外插路径）时，68 条测试**仍然全绿**。改成直接比两个函数的输出才抓住。
     #[test]
-    fn 圆角为零时逐字节退化成_from_uv_rect() {
+    fn zero_radius_is_byte_identical_to_from_uv_rect() {
         let dst = Rect::new(10.0, 20.0, 64.0, 32.0);
         let px = (200.0, 200.0);
         let want = Vertex::from_uv_rect(dst, px, [1.0; 4], UvRect::FULL, kind::IMAGE);
@@ -737,7 +737,7 @@ fn runs_不跨过其它段合并() {
     /// ⚠️ 不能改成断言 `position` —— NDC 上 64.75/200 与 64/200 差得很小，
     /// 那种断言在改成别的目标尺寸时会静默失效。
     #[test]
-    fn 圆角图像外扩一个_aa_band() {
+    fn rounded_image_outsets_by_one_aa_band() {
         let dst = Rect::new(10.0, 20.0, 64.0, 32.0);
         let b = expand(&rounded_image_list(dst, 8.0), (200, 200), |_| true);
         assert_eq!(b.images.len(), 4, "一个图像四边形 = 4 个顶点");
@@ -762,7 +762,7 @@ fn runs_不跨过其它段合并() {
     ///
     /// 两者都「看起来有 uv」，所以必须断言符号。
     #[test]
-    fn 圆角图像的_uv_是外插而不是被裁() {
+    fn rounded_image_uv_is_extrapolated_not_cropped() {
         let dst = Rect::new(0.0, 0.0, 64.0, 64.0);
         let b = expand(&rounded_image_list(dst, 8.0), (200, 200), |_| true);
         let v = &b.images[0];
@@ -791,7 +791,7 @@ fn runs_不跨过其它段合并() {
     /// 半径要真的填进顶点 —— 否则片元里的 `corner.x > 0` 分支永不进，
     /// 圆角参数被静默吞掉（图像变成直角，且不报错）。
     #[test]
-    fn 圆角半径进了顶点() {
+    fn corner_radius_reaches_the_vertex() {
         let b = expand(
             &rounded_image_list(Rect::new(0.0, 0.0, 40.0, 40.0), 12.0),
             (200, 200),
@@ -837,7 +837,7 @@ fn runs_不跨过其它段合并() {
     /// [`AA_BAND`]。若这一条失败，多半是外扩被误加到了所有类别上 ——
     /// 那会让字形采样到图块外的像素（描边发白、图像边缘串色）。
     #[test]
-    fn 矩形类别_外扩出视口_而字形类别不扩() {
+    fn rect_kind_outsets_past_viewport_while_glyph_kind_does_not() {
         let rect = Rect::new(0.0, 0.0, 100.0, 100.0);
         let px = (100.0, 100.0);
         let sdf = Vertex::from_rect(rect, px, [1.0; 4], [0.0; 2]);
@@ -864,7 +864,7 @@ fn runs_不跨过其它段合并() {
 
     /// 外扩量必须恰好是 AA_BAND，且字形/图像**不受影响**。
     #[test]
-    fn 外扩量恰好是_aa_band() {
+    fn outset_amount_is_exactly_aa_band() {
         let rect = Rect::new(0.0, 0.0, 100.0, 100.0);
         let px = (100.0, 100.0);
         let sdf = Vertex::from_rect(rect, px, [1.0; 4], [0.0; 2]);

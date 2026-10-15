@@ -85,7 +85,7 @@ fn two_nodes_recolored() -> Element {
 /// 这是本模块的全部意义。宿主据此跳过 `paint`（73 µs）+ `expand`（40 µs）
 /// + 一次 present。
 #[test]
-fn 同一棵树第二次是_unchanged() {
+fn second_pass_over_same_tree_is_unchanged() {
     let theme = Theme::dark();
     let ctx = Context::new(&theme);
     let mut cache = FrameCache::new();
@@ -141,7 +141,7 @@ fn unchanged_之后改动会恢复() {
 /// 单次能过不代表幂等 —— 若某处每帧都留下一点脏（例如时间戳进了属性），第二次
 /// 会过而第十次不过。这条把那种「每 N 帧重算一次」的抖动钉住。
 #[test]
-fn 连续十次稳态只有首次重算() {
+fn ten_steady_frames_recompute_only_once() {
     let mut cache = FrameCache::new();
     let el = two_nodes();
     let mut updates = 0;
@@ -165,7 +165,7 @@ fn 连续十次稳态只有首次重算() {
 /// 了」。这条是专门钉那个「视口不参与判据」的漏洞的 —— 症状是「窗口拉大后右侧
 /// 留白，且不会自愈」。
 #[test]
-fn 视口变了要重绘() {
+fn viewport_change_repaints() {
     let mut cache = FrameCache::new();
     let el = two_nodes();
 
@@ -179,7 +179,7 @@ fn 视口变了要重绘() {
 
 /// 结构增删（多一个带背景色的子节点）必须 `Updated`，且列表变长。
 #[test]
-fn 结构增删要重绘() {
+fn structural_change_repaints() {
     let mut cache = FrameCache::new();
     let (_, before) = step(&mut cache, &two_nodes(), (400.0, 300.0));
 
@@ -259,7 +259,7 @@ fn damage_of(cache: &mut FrameCache, element: &Element, bounds: (f32, f32)) -> D
 /// 变异测试是唯一能发现这种"测试恒真"的手段，而这里的症状恰好是最坏的一类：
 /// 脏矩形偏小 ⇒ 屏幕上留着上一帧的旧颜色（残影），而**所有计数器都正常**。
 #[test]
-fn 多处脏时脏区是并集() {
+fn damage_is_union_of_multiple_dirty_nodes() {
     /// 水平一行两块。根不加背景色 —— 否则它会被标脏、并把整窗并进来。
     fn row(a: Color, b: Color) -> Element {
         Element::new(NodeTag::Container)
@@ -308,7 +308,7 @@ fn 多处脏时脏区是并集() {
 /// 变异测试：把 `scan` 里折叠分支的 `return dirty` 改成 `return false`，
 /// 本条立刻失败（会退化成 `Unchanged`）。
 #[test]
-fn 折叠节点要重绘且脏区退让成整帧() {
+fn collapsed_node_repaints_and_falls_back_to_full_damage() {
     let mut cache = FrameCache::new();
     let bounds = (400.0, 300.0);
 
@@ -333,7 +333,7 @@ fn 折叠节点要重绘且脏区退让成整帧() {
 
 /// 首帧必然是 `Full`（树是新建的，没有「上一帧」可比较）。
 #[test]
-fn 首帧脏区是整帧() {
+fn first_frame_damage_is_full() {
     let mut cache = FrameCache::new();
     let d = damage_of(&mut cache, &two_nodes(), (400.0, 300.0));
     assert!(
@@ -347,7 +347,7 @@ fn 首帧脏区是整帧() {
 /// 这是脏区唯一有价值的场景，也是上面那条「残影」风险的正面判据：矩形小到
 /// 不含脏节点就是错的。
 #[test]
-fn 纯改色时脏区收窄且覆盖脏节点() {
+fn colour_only_change_narrows_damage_over_dirty_nodes() {
     let theme = Theme::dark();
     let ctx = Context::new(&theme);
     let mut cache = FrameCache::new();
@@ -377,7 +377,7 @@ fn 纯改色时脏区收窄且覆盖脏节点() {
 /// 被删节点留下的像素**没人**负责重画，而它的旧矩形已经随节点一起没了 ——
 /// 没有任何数据能算出该重画哪里。这是「必须保守」的第一种情况。
 #[test]
-fn 结构增删时脏区退让成整帧() {
+fn structural_change_falls_back_to_full_damage() {
     let mut cache = FrameCache::new();
     step(&mut cache, &two_nodes(), (400.0, 300.0));
 
@@ -402,7 +402,7 @@ fn 结构增删时脏区退让成整帧() {
 ///
 /// 重排会让节点移动与收缩，而**旧**矩形没有被快照下来 —— 算不出来就只能全画。
 #[test]
-fn 视口变化时脏区退让成整帧() {
+fn viewport_change_falls_back_to_full_damage() {
     let mut cache = FrameCache::new();
     step(&mut cache, &two_nodes(), (400.0, 300.0));
     let d = damage_of(&mut cache, &two_nodes(), (800.0, 600.0));

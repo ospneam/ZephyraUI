@@ -42,7 +42,7 @@
     /// `map` 闭包里的临时 `InputElement`，闭包一返回就失效。症状只是
     /// `CreateGraphicsPipelineState` 回 `E_INVALIDARG`，与「描述符字段填错」无法区分。
     #[test]
-    fn 语义名指针_必须落在自己持有的内存里() {
+    fn semantic_name_pointer_lies_in_own_memory() {
         let layout = input_elements();
         if let Err(i) = layout.names_are_owned() {
             panic!(
@@ -58,7 +58,7 @@
     /// （它逐项比对描述格式与着色器输入签名，且不告诉你是第几个）。`kind` 是 `float`、
     /// `color` 是 `float4`，写错必然被拒。
     #[test]
-    fn 输入元素格式_必须与表里声明的一致() {
+    fn input_element_layout_matches_table() {
         let layout = input_elements();
         for (i, d) in layout.descs().iter().enumerate() {
             let (name, index, fmt, _) = VERTEX_LAYOUT[i];
@@ -120,7 +120,7 @@
     /// 那类"断言看起来相关、实际查的是别的东西"的缺口比没有断言更危险：它让人
     /// 以为这一层有防护。
     #[test]
-    fn 语义索引区间互不重叠() {
+    fn semantic_index_ranges_do_not_overlap() {
         // 各格式占几格语义索引：`float2` 两格，`float4` 四格，`float` 一格。
         fn slots(fmt: DXGI_FORMAT) -> u32 {
             match fmt {
@@ -170,7 +170,7 @@
         //
         // 而这条断言当时**没能发现那个缺陷**：它只查"第 0 项不是 POSITION"，
         // 对语义索引是否**互相重叠**一无所知。真正能拦住它的是
-        // `语义索引区间互不重叠`。所以这里只保留"名字不是 POSITION"这半条 ——
+        // `semantic_index_ranges_do_not_overlap`。所以这里只保留"名字不是 POSITION"这半条 ——
         // 另半条由那条测试负责。
         assert_eq!(
             name, "TEXCOORD",
@@ -179,7 +179,7 @@
         );
         assert_eq!(
             index, 0,
-            "第 0 项的语义索引应为 0 —— 索引由上面 `语义索引区间互不重叠` 一起约束，\
+            "第 0 项的语义索引应为 0 —— 索引由上面 `semantic_index_ranges_do_not_overlap` 一起约束，\
              硬编一个具体数字只会在改布局时变成一处假绿"
         );
     }

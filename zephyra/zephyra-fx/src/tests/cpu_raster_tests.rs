@@ -45,7 +45,7 @@
     /// 2. 三角形**外面**必须保持清屏色（证明没有把整块乱糊）。
     /// 只断言第 1 条的话，「无条件填满画布」也能过。
     #[test]
-    fn 多边形被光栅化到画布上() {
+    fn polygon_rasterizes_onto_canvas() {
         let batch = path_batch();
         assert_eq!(
             batch.report.path_triangles, 1,
@@ -108,7 +108,7 @@
     /// **方**块 —— 而「方块」在「有没有画出来」这条判据下与圆角**无法区分**。
     /// 所以判据必须是「四角空、中心实」这种**只看形状**的断言。
     #[test]
-    fn 圆角图像的四角被切掉() {
+    fn rounded_image_corners_are_cut_off() {
         let dst = zephyra_core::core::Rect::new(10.0, 10.0, 80.0, 80.0);
         let mut canvas = CpuCanvas::new(100, 100, [0.0; 4]);
         draw_batch(&mut canvas, &image_batch(dst, 20.0), None);
@@ -135,7 +135,7 @@
     /// 无条件施加会让最外一圈像素压到 50% alpha，两边就分叉了。
     /// 症状是「所有直角图像的边缘发暗一圈」，且没有任何计数器会变。
     #[test]
-    fn 直角图像不施加遮罩() {
+    fn square_corner_image_applies_no_mask() {
         let dst = zephyra_core::core::Rect::new(10.0, 10.0, 80.0, 80.0);
         let mut canvas = CpuCanvas::new(100, 100, [0.0; 4]);
         draw_batch(&mut canvas, &image_batch(dst, 0.0), None);
@@ -263,7 +263,7 @@
     /// 现在四边形按 [`crate::quad::AA_BAND`] 向外扩，`half_size` 跟着扩，于是片元
     /// 能落到 `d ∈ (0, AA_BAND]`，`smoothstep` 的两端都可见。
     #[test]
-    fn 四边形留了_抗锯齿_余量_所以过渡带的上半边能被采样() {
+    fn quad_reserves_aa_margin_so_upper_half_of_band_is_sampleable() {
         let rect = zephyra_core::core::Rect::new(10.0, 20.0, 64.0, 32.0);
         let vs = crate::quad::Vertex::from_rect(rect, (10.0, 20.0), [1.0; 4], [0.0, 0.0]);
         let band = crate::quad::AA_BAND;
@@ -333,13 +333,13 @@
     }
 
     #[test]
-    fn 空白画布就是清屏色() {
+    fn blank_canvas_is_clear_colour() {
         let c = CpuCanvas::new(4, 4, [1.0, 0.5, 0.0, 1.0]);
         assert_eq!(&c.pixels[0..4], &[255, 128, 0, 255]);
     }
 
     #[test]
-    fn 图集采样取_alpha_通道() {
+    fn atlas_sampling_takes_the_alpha_channel() {
         let mut px = vec![0u8; 4 * 4 * 4];
         px[3] = 200; // (0,0) 的 alpha
         let a = AtlasBitmap {

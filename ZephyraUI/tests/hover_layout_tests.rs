@@ -104,7 +104,7 @@ fn hover_改尺寸要重排而不只是重绘() {
 /// 拆键与写键是两条不同代码路径（`retain_styled_props` vs `set_styled_prop`），
 /// 只测一边会漏掉「取消 hover 后布局弹不回去」这类缺陷。
 #[test]
-fn 取消_hover_也要重排回去() {
+fn unhover_still_triggers_relayout() {
     let mut cache = cache_with("hover-layout-back.zstyle");
     let theme = Theme::builtin(ThemeVariant::Dark);
     let ctx = Context::new(&theme);
@@ -125,7 +125,7 @@ fn 取消_hover_也要重排回去() {
 /// 判据是同一状态连续两帧 ⇒ 第二帧必须 `Unchanged`。若 `apply` 每帧都标脏，
 /// 这里会立刻红 —— 而那正是「样式表导致 UI 永远不静止」的成因。
 #[test]
-fn 修完之后稳态仍然静止() {
+fn steady_state_stays_quiet_after_fix() {
     let mut cache = cache_with("hover-layout-steady.zstyle");
     let theme = Theme::builtin(ThemeVariant::Dark);
     let ctx = Context::new(&theme);

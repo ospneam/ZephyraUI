@@ -362,7 +362,7 @@ impl Stack {
     /// 测量缓存按**约束精确匹配**（见 [`cached_for`]）。子项在堆叠轴上拿的是
     /// 无穷，于是**只改窗口高度时，子项的约束一个字都没变** ⇒ 缓存命中 ⇒ 整段子树
     /// 跳过测量，也就不再重新整形那几百行文字。
-    /// 门禁 `layout_cache_tests::只改高度不重测子树` 钉的就是这一条。
+    /// 门禁 `layout_cache_tests::height_only_change_does_not_remeasure_subtree` 钉的就是这一条。
     pub fn child_constraints(&self, deflated: Constraints) -> Constraints {
         match self.direction {
             Direction::Horizontal => Constraints {

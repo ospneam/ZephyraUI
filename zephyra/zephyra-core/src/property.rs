@@ -176,7 +176,7 @@ pub enum PropertyValue {
     /// 任意自定义类型。
     Custom {
         inner: Arc<dyn Any + Send + Sync>,
-        /// 类型擦除后的相等判断（存 fn 指针，避免每次构造都分配闭包）。
+        /// 类型擦除后的相等判断（存 fn ptr_of，避免每次构造都分配闭包）。
         eq: fn(&dyn Any, &dyn Any) -> bool,
     },
 }

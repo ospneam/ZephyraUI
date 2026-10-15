@@ -98,7 +98,7 @@ fn coverage(mesh: &TriMesh, bounds: Rect, n: usize) -> f32 {
 // ----------------------------------------------------------------展平
 
 #[test]
-fn 直线段不产出轮廓因为没有面积() {
+fn straight_segment_yields_no_contour_because_no_area() {
     // SVG 规定子路径在填充时视为闭合，所以 M→L 是一个零面积区域。
     // 丢弃它是正确的：耳切法在零面积轮廓上会死循环。
     let segs = vec![Segment::MoveTo(0.0, 0.0), Segment::LineTo(10.0, 0.0)];
@@ -109,7 +109,7 @@ fn 直线段不产出轮廓因为没有面积() {
 }
 
 #[test]
-fn 共线控制点不多切() {
+fn collinear_control_points_do_not_split() {
     // 控制点与端点共线：偏差恒为 0，不该被细分。
     // 端点加一个垂直偏移让它有面积，才能观察展平结果。
     let segs = vec![
@@ -128,7 +128,7 @@ fn 共线控制点不多切() {
 }
 
 #[test]
-fn 半圆的弦高误差不超过容差() {
+fn semicircle_sagitta_error_within_tolerance() {
     // 用四次贝塞尔逼近 180° 圆弧：弦高误差必须 ≤ TOLERANCE。
     let k = 0.5522847498307933_f32;
     let segs = vec![
@@ -174,7 +174,7 @@ fn 半圆的弦高误差不超过容差() {
 }
 
 #[test]
-fn 急弯比缓弯切得更密() {
+fn sharp_curve_is_tessellated_denser_than_shallow_one() {
     // 同样的控制点数量，弯得急的那段必须产生更多顶点。
     let gentle = flatten(
         &[
@@ -199,7 +199,7 @@ fn 急弯比缓弯切得更密() {
 }
 
 #[test]
-fn 闭合子路径的末点不重复() {
+fn closed_subpath_last_point_is_not_repeated() {
     let segs = parse_path_data("M0 0L10 0L10 10Z").unwrap();
     let out = flatten(&segs, TOLERANCE);
     assert_eq!(out.len(), 1);
@@ -209,7 +209,7 @@ fn 闭合子路径的末点不重复() {
 }
 
 #[test]
-fn 退化成线的子路径被丢弃() {
+fn degenerate_line_subpath_is_dropped() {
     // 三点共线：面积为零，不可填充
     let segs = vec![
         Segment::MoveTo(0.0, 0.0),
@@ -222,14 +222,14 @@ fn 退化成线的子路径被丢弃() {
 // ----------------------------------------------------------------绕向与填充规则
 
 #[test]
-fn 面积符号在y向下坐标系里为正表示顺时针() {
+fn positive_area_means_clockwise_in_y_down_space() {
     // (0,0)→(1,0)→(1,1)→(0,1)：y 向下时这是**顺时针**
     let c = contour(&[(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)]);
     assert!(c.signed_area2() > 0.0);
 }
 
 #[test]
-fn 单纯形的三角化面积守恒() {
+fn simple_polygon_triangulation_preserves_area() {
     let c = contour(&[(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)]);
     let mesh = triangulate(std::slice::from_ref(&c), FillRule::NonZero).unwrap();
     assert_eq!(mesh.triangles, 2, "凸四边形应切成 2 个三角形");
@@ -238,7 +238,7 @@ fn 单纯形的三角化面积守恒() {
 }
 
 #[test]
-fn 凹多边形的三角化面积守恒() {
+fn concave_polygon_triangulation_preserves_area() {
     // L 形
     let c = contour(&[
         (0.0, 0.0),
@@ -255,10 +255,10 @@ fn 凹多边形的三角化面积守恒() {
 }
 
 #[test]
-fn 带孔多边形_面积等于外减内() {
+fn polygon_with_hole_area_equals_outer_minus_inner() {
     let outer = contour(&[(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)]);
     // 内层必须与外层**反向**才挖得空：NonZero 下同向嵌套是环绕数 1+1=2，仍然实心
-    // （那条规则由`同向嵌套在非零规则下是实心`单独盯住）。
+    // （那条规则由`same_direction_nesting_is_solid_under_nonzero_rule`单独盯住）。
     let inner = contour(&[(3.0, 7.0), (7.0, 7.0), (7.0, 3.0), (3.0, 3.0)]);
     let contours = vec![outer, inner];
     let mesh = triangulate(&contours, FillRule::NonZero).unwrap();
@@ -272,7 +272,7 @@ fn 带孔多边形_面积等于外减内() {
 }
 
 #[test]
-fn 同向嵌套在非零规则下是实心() {
+fn same_direction_nesting_is_solid_under_nonzero_rule() {
     // 两层同向轮廓：非零规则 → 内部仍然填充（环绕数 2）
     let outer = contour(&[(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)]);
     let inner = contour(&[(3.0, 3.0), (7.0, 3.0), (7.0, 7.0), (3.0, 7.0)]);
@@ -288,7 +288,7 @@ fn 同向嵌套在非零规则下是实心() {
 }
 
 #[test]
-fn 反向嵌套在非零规则下挖空() {
+fn reversed_nesting_cuts_hole_under_nonzero_rule() {
     let outer = contour(&[(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)]);
     let inner = contour(&[(3.0, 7.0), (7.0, 7.0), (7.0, 3.0), (3.0, 3.0)]);
     let contours = vec![outer, inner];
@@ -302,7 +302,7 @@ fn 反向嵌套在非零规则下挖空() {
 }
 
 #[test]
-fn 奇偶规则忽略绕向一律交替() {
+fn even_odd_rule_ignores_winding_and_alternates() {
     let outer = contour(&[(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)]);
     let inner = contour(&[(3.0, 3.0), (7.0, 3.0), (7.0, 7.0), (3.0, 7.0)]);
     let contours = vec![outer, inner];
@@ -317,7 +317,7 @@ fn 奇偶规则忽略绕向一律交替() {
 }
 
 #[test]
-fn 边界上的点归属稳定() {
+fn point_on_boundary_has_stable_ownership() {
     // 顶点处的穿越计数必须用半开区间，否则两条共享端点的边会被双计或漏计。
     let outer = contour(&[(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)]);
     let cs = vec![outer];
@@ -350,7 +350,7 @@ fn 边界上的点归属稳定() {
 }
 
 #[test]
-fn 多个孔都要被挖掉() {
+fn all_holes_are_cut_out() {
     let outer = contour(&[(0.0, 0.0), (30.0, 0.0), (30.0, 10.0), (0.0, 10.0)]);
     // 两个孔都与外框反向 —— NonZero 下同向的孔是实心，挖不出来。
     let h1 = contour(&[(2.0, 6.0), (6.0, 6.0), (6.0, 2.0), (2.0, 2.0)]);
@@ -368,27 +368,27 @@ fn 多个孔都要被挖掉() {
 // ----------------------------------------------------------------自交
 
 #[test]
-fn 检出自交() {
+fn detects_self_intersection() {
     // 经典交叉
     let c = contour(&[(0.0, 0.0), (10.0, 10.0), (10.0, 0.0), (0.0, 10.0)]);
     assert!(is_self_intersecting(c.points()));
 }
 
 #[test]
-fn 简单多边形不被误判为自交() {
+fn simple_polygon_is_not_mistaken_for_self_intersecting() {
     let c = contour(&[(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)]);
     assert!(!is_self_intersecting(c.points()));
 }
 
 #[test]
-fn 相邻边共享端点不算自交() {
+fn shared_endpoint_between_adjacent_edges_is_not_self_intersection() {
     // L 形：相邻边在顶点处接触，合法
     let c = contour(&[(0.0, 0.0), (10.0, 0.0), (10.0, 4.0), (4.0, 4.0), (4.0, 10.0), (0.0, 10.0)]);
     assert!(!is_self_intersecting(c.points()));
 }
 
 #[test]
-fn 自交轮廓被跳过而不是切出碎片() {
+fn self_intersecting_contour_is_skipped_not_shredded() {
     let bad = contour(&[(0.0, 0.0), (10.0, 10.0), (10.0, 0.0), (0.0, 10.0)]);
     let r = triangulate(std::slice::from_ref(&bad), FillRule::NonZero);
     assert!(r.is_err(), "自交轮廓必须报错而不是硬切");
@@ -397,7 +397,7 @@ fn 自交轮廓被跳过而不是切出碎片() {
 // ----------------------------------------------------------------描边
 
 #[test]
-fn 直线描边的宽度正确() {
+fn straight_stroke_width_is_correct() {
     // 水平线段，宽 4 → 上下各 2
     let pts = vec![p(0.0, 10.0), p(20.0, 10.0)];
     let style = StrokeStyle {
@@ -413,7 +413,7 @@ fn 直线描边的宽度正确() {
 }
 
 #[test]
-fn 闭合描边产出外轮廓与内孔() {
+fn closed_stroke_yields_outer_and_inner() {
     //正方形中心线，宽 2
     let pts = vec![p(0.0, 0.0), p(10.0, 0.0), p(10.0, 10.0), p(0.0, 10.0)];
     let style = StrokeStyle {
@@ -435,7 +435,7 @@ fn 闭合描边产出外轮廓与内孔() {
 }
 
 #[test]
-fn 闭合描边三角化后面积等于环带面积() {
+fn closed_stroke_triangulated_area_equals_band() {
     let pts = vec![p(0.0, 0.0), p(10.0, 0.0), p(10.0, 10.0), p(0.0, 10.0)];
     let style = StrokeStyle {
         width: 2.0,
@@ -467,7 +467,7 @@ fn 闭合描边三角化后面积等于环带面积() {
 }
 
 #[test]
-fn 零宽度不产出几何() {
+fn zero_width_produces_no_geometry() {
     let pts = vec![p(0.0, 0.0), p(10.0, 0.0)];
     let style = StrokeStyle {
         width: 0.0,
@@ -477,7 +477,7 @@ fn 零宽度不产出几何() {
 }
 
 #[test]
-fn 方形端帽向外延伸() {
+fn square_cap_extends_outward() {
     let pts = vec![p(0.0, 0.0), p(10.0, 0.0)];
     let style = StrokeStyle {
         width: 4.0,
@@ -492,7 +492,7 @@ fn 方形端帽向外延伸() {
 }
 
 #[test]
-fn 平截端帽不外延() {
+fn bevel_cap_does_not_extend() {
     let pts = vec![p(0.0, 0.0), p(10.0, 0.0)];
     let style = StrokeStyle {
         width: 4.0,
@@ -506,7 +506,7 @@ fn 平截端帽不外延() {
 }
 
 #[test]
-fn 尖角miter被限制时退化为平切() {
+fn clamped_miter_falls_back_to_bevel() {
     // 极小的转角 → miter 外伸极远，必须被 limit 拦下
     let pts = vec![p(0.0, 0.0), p(10.0, 0.0), p(10.001, 5.0)];
     let style = StrokeStyle {
@@ -526,7 +526,7 @@ fn 尖角miter被限制时退化为平切() {
 }
 
 #[test]
-fn 圆接头的外伸被限制在半个宽度量级() {
+fn round_join_outset_limited_to_half_stroke_width() {
     // 直角转折 + miter_limit=1（强制 bevel 等价）不应外伸
     let pts = vec![p(0.0, 0.0), p(10.0, 0.0), p(10.0, 10.0)];
     let style = StrokeStyle {
@@ -577,14 +577,14 @@ fn viewbox偏移被正确扣除() {
 }
 
 #[test]
-fn 退化viewbox不产出几何() {
+fn degenerate_viewbox_produces_no_geometry() {
     let segs = vec![Segment::MoveTo(0.0, 0.0), Segment::LineTo(1.0, 1.0)];
     let t = transform_segments(&segs, (0.0, 0.0, 0.0, 0.0), Rect::new(0.0, 0.0, 10.0, 10.0));
     assert!(t.is_empty());
 }
 
 #[test]
-fn 窄目标矩形下等比缩放居中而不拉伸() {
+fn narrow_target_rect_scales_uniformly_and_centres() {
     // dst 宽大于高 → 高度方向留白，宽度贴满
     let segs = vec![Segment::MoveTo(0.0, 0.0), Segment::LineTo(0.0, 24.0)];
     let dst = Rect::new(0.0, 0.0, 100.0, 50.0);
@@ -599,7 +599,7 @@ fn 窄目标矩形下等比缩放居中而不拉伸() {
 // ----------------------------------------------------------------端到端
 
 #[test]
-fn 真实图标的三角化面积合理() {
+fn real_icon_triangulation_area_is_sane() {
     // 齿轮图标：4 条轮廓嵌套 —— 外齿圈（顺）+ 内圈（逆，挖空齿圈中心）
     // + 中心轴（顺，实心）+ 轴心孔（逆，挖空）。
     // 正确填充面积 = (252.52 − 154.63) + (48.94 − 19.11) = 127.72。
@@ -635,8 +635,8 @@ fn 真实图标的三角化面积合理() {
 }
 
 #[test]
-fn 所有内置图标都不是空的() {
-    // 为什么单独一条：`所有内置图标都能三角化` 在 `is_empty()` 时是
+fn all_builtin_icons_are_non_empty() {
+    // 为什么单独一条：`all_builtin_icons_can_be_triangulated` 在 `is_empty()` 时是
     // `continue` —— 一个**解析成空图标**的内置资源（根节点 `fill="none"`
     // 之类的），在那里会安静地"通过"。而它的症状在界面上是「某个图标不显示」：
     // 没有报错、没有告警、图还在、就是一片空白。
@@ -657,7 +657,7 @@ fn 所有内置图标都不是空的() {
 }
 
 #[test]
-fn 所有内置图标都能三角化() {
+fn all_builtin_icons_can_be_triangulated() {
     // 回归网：任何一个内置图标三角化失败或产出零面积，都说明几何管线坏了
     for (name, src) in crate::icon::assets::REGISTRY {
         let text = match src {
@@ -693,7 +693,7 @@ fn 所有内置图标都能三角化() {
 }
 
 #[test]
-fn 端到端_填充() {
+fn end_to_end_fill() {
     // 一个 24×24 的实心方块在 48×48 目标里 → 面积 2304
     let segs = parse_path_data("M0 0L24 0L24 24L0 24Z").unwrap();
     let mesh = tessellate(

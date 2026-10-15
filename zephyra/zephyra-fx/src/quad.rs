@@ -957,7 +957,7 @@ impl Scratch {
     /// 这条很难靠肉眼发现，因为单帧（`--dump-cpu`）是对的，只有连续跑才炸；
     /// 帧时间也会跟着线性涨（顶点从 540 涨到 54000），但那看起来像"正常变慢"。
     ///
-    /// 所以下面有 `复用缓冲逐帧不增长` 这条测试守着它。
+    /// 所以下面有 `reused_scratch_does_not_grow_across_frames` 这条测试守着它。
     pub fn reset(&mut self) {
         self.solid.clear();
         self.images.clear();
@@ -1152,7 +1152,7 @@ pub fn expand_range_translated_into(
     //
     // 症状特别隐蔽：`RenderReport::quads` 一直是对的（它数 `solid.len()/4`，
     // 而 `solid` 确实有那些顶点），画面也只是"多画一层重叠"，不报任何错。
-    // 只有逐帧比对顶点量才看得见 —— 那就是 `复用缓冲逐帧不增长` 那条测试。
+    // 只有逐帧比对顶点量才看得见 —— 那就是 `reused_scratch_does_not_grow_across_frames` 那条测试。
     //
     // 正确写法是"借容量、清内容"，两步都不能少。
     let mut out = QuadBatch {

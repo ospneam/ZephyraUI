@@ -20,7 +20,7 @@
 //! | `splitPolygon` | [`Earcut::split_polygon`] |
 //! | `insertNode` / `removeNode` | [`Earcut::insert_node`] / [`Earcut::remove_node`] |
 //!
-//! 唯一改动是把「指针」换成「`Vec` 下标」。这是机械替换：`prev`/`next`/`prev_z`/
+//! 唯一改动是把「ptr_of」换成「`Vec` 下标」。这是机械替换：`prev`/`next`/`prev_z`/
 //! `next_z` 四个字段的语义与更新时机完全照原版，节点被 [`Earcut::remove_node`]
 //! 摘掉后**留在 arena 里不复用**（与原版的 GC 行为一致），所以下标始终有效。
 //!

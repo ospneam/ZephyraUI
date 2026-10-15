@@ -4,7 +4,7 @@
     use super::*;
 
     #[test]
-    fn 版本号必须像真的_windows() {
+    fn version_looks_like_real_windows() {
         // 这条测试是 `RtlGetVersion` 那段 `extern` 的**唯一**判据：
         // 如果签名/结构体布局写错，拿到的 major 会是 0 或乱七八糟的数。
         let (major, minor, build) = os_version();
@@ -22,7 +22,7 @@
     }
 
     #[test]
-    fn 重复读稳定() {
+    fn repeated_reads_are_stable() {
         let a = os_version();
         assert_eq!(a, os_version());
         assert_eq!(a, os_version());

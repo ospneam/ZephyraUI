@@ -4,7 +4,7 @@
     use super::*;
 
     #[test]
-    fn 版本号必须可读且主版本不小于十() {
+    fn version_is_readable_and_major_at_least_ten() {
         // 本 crate 只在 Windows 上有内容；非 Windows 上这条测试走 stub 分支。
         let v = Windows.version().expect("Windows 上必须能读到版本号");
         assert!(v.0 >= 10, "读到的主版本不像 Windows：{v:?}");
@@ -17,7 +17,7 @@
     }
 
     #[test]
-    fn 空句柄不调用_dwm_也不生效() {
+    fn null_handle_calls_no_dwm_and_enables_nothing() {
         let out = Windows.apply_window_chrome(
             WindowHandle::from_raw(0),
             WindowChrome::minimal(true, zephyra_platform::CornerPreference::Round),
@@ -26,7 +26,7 @@
     }
 
     #[test]
-    fn 能力位与文档门槛一致() {
+    fn capability_bits_match_documented_thresholds() {
         let caps = Windows.capabilities();
         let build = build_number();
         assert_eq!(
@@ -48,7 +48,7 @@
     }
 
     #[test]
-    fn 空句柄下请求_mica_不会生效() {
+    fn mica_request_with_null_handle_does_nothing() {
         // 判据用**空句柄**：这是不碰 DWM 的最短路径，于是"没生效"唯一可能的
         // 原因就是"压根没调"。真窗口上的 Mica 是否真透出来，由截图门禁在
         // 像素层核对（docs/win/02 §4）——API 返回成功**不能**证明材质可见。
@@ -64,7 +64,7 @@
 
     #[test]
     #[cfg(windows)]
-    fn 每种材质都有对应的_dwm_枚举() {
+    fn every_material_has_a_matching_dwm_enum() {
         // 文档表（docs/win/02 §1）：Mica=MAINWINDOW(2)、Acrylic=TRANSIENT(3)、
         // MicaAlt=TABBED(4)、None=NONE(1)。
         //
@@ -81,7 +81,7 @@
     }
 
     #[test]
-    fn 系统主题查询结果必须与注册表一致或读不到() {
+    fn system_theme_query_matches_registry_or_is_unreadable() {
         // ⚠️ 这两个注册表值**没有官方文档**（见 docs/win/04 §2），所以判据不能是
         // "必须等于深色"—— 那会在浅色系统上无故红。
         //
@@ -102,7 +102,7 @@
     }
 
     #[test]
-    fn 每帧问能力不许有副作用且要稳定() {
+    fn capability_query_is_side_effect_free_and_stable() {
         // `capabilities()` 在热路径被调用：它必须无分配、无锁、无 I/O。
         let a = Windows.capabilities();
         let b = Windows.capabilities();

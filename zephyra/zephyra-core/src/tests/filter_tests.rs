@@ -8,7 +8,7 @@
     /// 这条测试的价值在于：一旦有人在本枚举中间插入变体，两侧的下标就全错位了，
     /// 而错位不会报错 —— 只会让 `kMultiply` 悄悄按 `kOverlay` 渲染。
     #[test]
-    fn 混合模式与_skia_逐值同序() {
+    fn blend_modes_match_skia_value_by_value() {
         // 按 Skia `SkBlendMode.h:38-74` 的声明顺序抄下来，不允许改序。
         let skia_order = [
             BlendMode::Clear,
@@ -63,7 +63,7 @@
     /// 这张表是 GPU 混合状态与 CPU 参考光栅器的**唯一共同基准**：两侧若不一致，
     /// 同一DisplayList 在 GPU 上与 CPU 上会画出不同的颜色，而测试全绿。
     #[test]
-    fn 系数表与_skia_逐项对齐() {
+    fn coefficient_table_aligns_with_skia_item_by_item() {
         use BlendMode::*;
         use Coeff::*;
         // (src coeff, dst coeff)，抄自 kCoeffs。
@@ -95,7 +95,7 @@
 
     /// 只有 Porter-Duff 那 15 个能用系数表达，且分类与 Skia 的两个 Last 常量一致。
     #[test]
-    fn 只有前十五个能用系数表达() {
+    fn only_first_fifteen_expressible_with_coefficients() {
         for m in [
             BlendMode::Clear,
             BlendMode::Modulate,
@@ -125,7 +125,7 @@
 
     /// `Overlay` 在系数表之外，且`Multiply` 是最后一个可分离模式。
     #[test]
-    fn 分类边界与_skia_一致() {
+    fn filter_boundaries_match_skia() {
         assert_eq!(BlendMode::LAST_COEFF_MODE, BlendMode::Screen);
         assert_eq!(BlendMode::LAST_SEPARABLE_MODE, BlendMode::Multiply);
         assert!(BlendMode::Screen.as_coeff().is_some());
@@ -153,7 +153,7 @@
     /// 模糊在边界处被切掉；而 NaN 会让整个矩形坐标变 NaN，光栅化器直接丢弃
     /// 一切（症状是"元素凭空消失"）。
     #[test]
-    fn 非有限或非正标准差退化成零() {
+    fn non_finite_or_non_positive_sigma_degenerates_to_zero() {
         for bad in [-1.0, 0.0, f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
             let f = Filter::Blur {
                 sigma_x: bad,
@@ -177,7 +177,7 @@
 
     /// 投影的不对称外扩：右下投影只扩右下。
     #[test]
-    fn 投影按方向不对称外扩() {
+    fn shadow_outset_is_direction_asymmetric() {
         let f = Filter::DropShadow {
             color: Color::rgba(0.0, 0.0, 0.0, 0.4),
             offset: Point::new(4.0, 6.0),
@@ -196,7 +196,7 @@
 
     /// 向左上投影：左上扩得更多，右下只留 blur 半径。
     #[test]
-    fn 左上投影往左上扩() {
+    fn top_left_shadow_outsets_towards_top_left() {
         let f = Filter::DropShadow {
             color: Color::rgba(0.0, 0.0, 0.0, 0.4),
             offset: Point::new(-10.0, -4.0),
@@ -218,7 +218,7 @@
     /// 求和会让 blur+blur 的离屏矩形大一倍 —— 而实际上只有最后一级的输出
     /// 边缘在起作用。
     #[test]
-    fn 串联滤镜取逐边最大值而不是求和() {
+    fn chained_filters_take_elementwise_max_not_sum() {
         let chain = FilterChain::new([
             Filter::Blur {
                 sigma_x: 2.0,
@@ -241,7 +241,7 @@
 
     /// 空链与恒等滤镜都判为恒等，宿主据此跳过开离屏。
     #[test]
-    fn 恒等链不开离屏() {
+    fn identity_chain_does_not_allocate_offscreen() {
         assert!(FilterChain::none().is_identity());
         assert!(FilterChain::default().is_identity());
         assert!(
@@ -267,7 +267,7 @@
 
     /// 链的顺序被保留：`then` 追加到末尾。
     #[test]
-    fn 链顺序即执行顺序() {
+    fn chain_order_is_execution_order() {
         let a = Filter::Blur {
             sigma_x: 1.0,
             sigma_y: 1.0,
@@ -288,7 +288,7 @@
 
     /// 离屏原点：几何坐标仍是屏幕坐标，宿主需要知道往哪儿挪。
     #[test]
-    fn 离屏原点是内容原点减去外扩() {
+    fn offscreen_origin_is_content_origin_minus_outset() {
         let f = Filter::Blur {
             sigma_x: 2.0,
             sigma_y: 2.0,
@@ -305,7 +305,7 @@
 
     /// 恒等链的离屏矩形就是内容本身 —— 尺寸决策不引入任何额外开销。
     #[test]
-    fn 恒等链不改变矩形() {
+    fn identity_chain_leaves_rect_unchanged() {
         let r = Rect::new(3.0, 7.0, 40.0, 24.0);
         assert_eq!(FilterChain::none().bounds_for(r), r);
         assert!(FilterChain::none().outsets().is_zero());
@@ -313,7 +313,7 @@
 
     /// `Clear` 不需要目标像素，其余模式都需要 —— 这决定"先清屏还是先画背景"。
     #[test]
-    fn 读取目标的模式判定() {
+    fn read_destination_mode_decision() {
         assert!(!BlendMode::Clear.needs_destination());
         assert!(!BlendMode::Src.needs_destination());
         assert!(BlendMode::SrcOver.needs_destination());
@@ -322,13 +322,13 @@
 
     /// `Default` 是 `SrcOver`，与现有渲染器的固定混合一致（零回归的前提）。
     #[test]
-    fn 默认混合模式是_src_over() {
+    fn default_blend_mode_is_src_over() {
         assert_eq!(BlendMode::default(), BlendMode::SrcOver);
     }
 
     /// 按声明序取变体（供分类测试用）。
     fn enum_by_index(i: usize) -> BlendMode {
-        // 与 `混合模式与_skia_逐值同序` 的数组同序。
+        // 与 `blend_modes_match_skia_value_by_value` 的数组同序。
         const ALL: [BlendMode; BlendMode::COUNT] = [
             BlendMode::Clear,
             BlendMode::Src,

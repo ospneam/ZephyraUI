@@ -39,7 +39,7 @@
     /// `pixels` 里取，越界读到的字节会被原样上传 —— 症状是一张底部带随机色块的
     /// 图，**没有任何错误**。
     #[test]
-    fn 像素不足_必须报错而不是建出垃圾纹理() {
+    fn insufficient_pixels_must_error_not_build_junk_texture() {
         let Some((device, context)) = test_device() else {
             eprintln!("跳过：建不出 D3D11 设备");
             return;
@@ -54,7 +54,7 @@
 
     /// 完整走一遍：建纹理 → 建 SRV → 登记 → 查 → 注销。
     #[test]
-    fn 登记与查询() {
+    fn register_and_query() {
         let Some((device, context)) = test_device() else {
             eprintln!("跳过：建不出 D3D11 设备");
             return;

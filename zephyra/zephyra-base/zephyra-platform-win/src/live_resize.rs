@@ -159,7 +159,7 @@ fn render_once() {
 ///
 /// 存 `isize` 再转回来会得到 `Option<WNDPROC>` = `Option<Option<fn>>`，
 /// 与返回类型差一层 —— 那种"套娃"要么加 `.flatten()` 糊过去，要么就是把
-/// `WNDPROC` 本来就是 `Option<fn 指针>` 这件事忘掉。直接存最省事。
+/// `WNDPROC` 本来就是 `Option<fn ptr_of>` 这件事忘掉。直接存最省事。
 static PREV: Mutex<Vec<(isize, WNDPROC)>> = Mutex::new(Vec::new());
 
 fn previous_proc(hwnd: HWND) -> WNDPROC {
@@ -190,10 +190,10 @@ pub fn install(hwnd: isize) -> Result<(), LiveResizeError> {
                 return Err(LiveResizeError::SetWindowLong(err.0));
             }
         }
-        // `isize -> fn 指针` 不是"非原始类型转换"，Rust 不允许 `as`。
+        // `isize -> fn ptr_of` 不是"非原始类型转换"，Rust 不允许 `as`。
         //
         // SAFETY：上面那个 `SetWindowLongPtrW` 的返回值按文档就是窗口过程地址，
-        // 而 `WNDPROC` 正是 `Option<fn 指针>`。
+        // 而 `WNDPROC` 正是 `Option<fn ptr_of>`。
         let prev = std::mem::transmute::<isize, WNDPROC>(prev);
         let mut table = PREV.lock().unwrap_or_else(|e| e.into_inner());
         table.retain(|(k, _)| *k != hwnd);

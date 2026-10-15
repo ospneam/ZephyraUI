@@ -84,7 +84,7 @@ fn expand(list: &DisplayList) -> quad::QuadBatch {
 }
 
 #[test]
-fn 文字_从栅格化一路到采样_都能对上() {
+fn glyphs_line_up_from_rasterization_through_sampling() {
     let Some(mut stack) = stack() else { return };
 
     let style = TextStyle {
@@ -251,7 +251,7 @@ fn 文字_从栅格化一路到采样_都能对上() {
 /// 这是个真实的坑：步进非零但墨迹为零的字形若被当成有尺寸处理，会在屏幕上画出
 /// 一个矩形色块 —— 表现为"每个词后面跟着一块脏东西"。
 #[test]
-fn 空格不产生四边形() {
+fn space_produces_no_quads() {
     let Some(mut stack) = stack() else { return };
     let style = TextStyle {
         size: SIZE,
@@ -272,7 +272,7 @@ fn 空格不产生四边形() {
 
 /// 图集用量必须单调增长，且不会溢出。
 #[test]
-fn 图集用量合理且不溢出() {
+fn atlas_usage_is_sane_and_does_not_overflow() {
     let Some(mut stack) = stack() else { return };
     let style = TextStyle {
         size: SIZE,
@@ -307,7 +307,7 @@ fn 图集用量合理且不溢出() {
 /// 这一条看似显然，但它是"图集采样到错误像素"最常见的成因：某个中间层觉得
 /// "uv 应该在 0..1"于是又除了一次 `ATLAS_SIZE`。
 #[test]
-fn 顶点_uv_与_图集条目_逐字对应() {
+fn vertex_uv_matches_atlas_entry_verbatim() {
     let Some(mut stack) = stack() else { return };
     let style = TextStyle {
         size: SIZE,
@@ -344,7 +344,7 @@ fn 顶点_uv_与_图集条目_逐字对应() {
 ///
 /// 若文本原点或 dst 计算有误，这里会先炸 —— 它比"屏幕上字跑到窗口外"好查得多。
 #[test]
-fn 顶点位置与_dst_矩形一致() {
+fn vertex_position_matches_dst_rect() {
     let Some(mut stack) = stack() else { return };
     let style = TextStyle {
         size: SIZE,

@@ -51,7 +51,7 @@ const VIEWPORT: (f32, f32) = (1400.0, 800.0);
 /// 刻意查两个方向：少翻（缺键）与多翻（某语言多了别的语言没有的键）。
 /// 只查缺键会漏掉"给某语言单独加了一条"这种最后必然腐烂的做法。
 #[test]
-fn 每种语言都不缺键() {
+fn no_locale_is_missing_keys() {
     let all = app::catalog_keys();
     let m = app::messages();
     for locale in SUPPORTED {
@@ -77,7 +77,7 @@ fn 每种语言都不缺键() {
 /// 于是 `tr()` 会返回键名（`route.home` 而不是 "Home"）。
 /// 这比"函数返回 Option 再断言 Some"更贴近真实症状：错的是画面，不是接口。
 #[test]
-fn 每条路由都有文案键() {
+fn every_route_has_a_copy_key() {
     for (id, en, _icon) in app::ROUTES {
         let key = app::route_key(id);
         assert_eq!(key, format!("route.{id}").as_str(), "路由 {id} 缺文案键");
@@ -99,7 +99,7 @@ fn 每条路由都有文案键() {
 /// 下标错位的症状是"选了中文得到日文"，画面上完全看不出原因 ——
 /// 这条不是防御性断言，它拦住的是一个**看起来正常**的 bug。
 #[test]
-fn 语言自称与支持列表等长() {
+fn self_described_locale_count_matches_supported_list() {
     assert_eq!(
         LANG_SELFS.len(),
         SUPPORTED.len(),
@@ -120,7 +120,7 @@ fn 语言自称与支持列表等长() {
 /// 用 `SUPPORTED` 而不造假数据 —— **真实**的组合才值得测：
 /// `zh-CN` → `zh-Hans`、`en-GB` → `en`、`ja-JP` → `ja`、`de-DE` → 落回默认 `en`。
 #[test]
-fn 系统偏好落到正确语言() {
+fn system_preference_maps_to_correct_locale() {
     let available: Vec<Tag> = SUPPORTED.iter().filter_map(|s| Tag::parse(s)).collect();
     let cases: &[(&[&str], &str)] = &[
         (&["zh-CN", "en-US"], "zh-Hans"),
@@ -133,7 +133,7 @@ fn 系统偏好落到正确语言() {
         //
         // 这**不是** bug，是真实的产品取舍：本 demo 只发布了简体。
         // 对照组是"两个都写了 script"——那时 Hans/Hant 不许互相回退
-        // （见 `i18n.rs` 的 `回退距离按官方顺序`）。繁体缺口记在
+        // （见 `i18n.rs` 的 `fallback_distance_follows_official_order`）。繁体缺口记在
         // `docs/i18n.md` §6。
         (&["zh-TW"], "zh-Hans"),
         (&["en-GB", "fr"], "en"),
@@ -166,7 +166,7 @@ fn 系统偏好落到正确语言() {
 /// 这里手工造一份"漏翻的表"（删掉 `ja` 的一条）来验证回退链本身 ——
 /// 真实表漏翻会被上一条门禁拦住，所以必须自己造。
 #[test]
-fn 漏翻时回落默认语言而不是显示键名() {
+fn missing_translation_falls_back_instead_of_showing_key() {
     let key = "route.home";
     let stripped = without("ja", key);
     let got = stripped.select(&Preferences::from_list(&["ja"]), SUPPORTED[0], key);
@@ -187,7 +187,7 @@ fn 漏翻时回落默认语言而不是显示键名() {
 /// 这条验证 `tr()` 的最后一档。它把"降级写在明处"变成可执行断言：
 /// 有人把 `unwrap_or(key)` 改成 `unwrap_or("")`，这里立刻红。
 #[test]
-fn 查不到的键显示键名而不是空白() {
+fn missing_key_shows_key_name_not_blank() {
     let g = Gallery::default();
     let got = g.tr("no.such.key");
     assert_eq!(got, "no.such.key", "缺失键必须回显键名");
@@ -344,7 +344,7 @@ fn collect_texts(node: &Node, out: &mut String) {
 
 /// 系统偏好 `zh-CN` 时，保留树上的文字必须是中文。
 #[test]
-fn 系统偏好中文则界面是中文() {
+fn chinese_system_preference_yields_chinese_ui() {
     let h = Harness::new(vec!["zh-CN".to_string(), "en-US".to_string()]);
     assert_eq!(h.gallery.locale(), "zh-Hans");
     let texts = h.texts();
@@ -357,7 +357,7 @@ fn 系统偏好中文则界面是中文() {
 
 /// 手动切语言必须真的换掉文字，而且**双向**。
 #[test]
-fn 手动切语言会换掉画面文字() {
+fn manual_locale_switch_changes_rendered_text() {
     let mut h = Harness::new(Vec::new());
     assert_eq!(h.gallery.locale(), "en", "空偏好 ⇒ 回落默认语言");
     assert!(h.texts().contains("Home"), "默认应为英文");
@@ -429,7 +429,7 @@ fn frame_once<'a>(
 /// 2. 宿主的字形层 —— 真机上可见，但本机 D3D12 资源创建不可用（`tests/d3d12_draw.rs`
 ///    头部有证据），所以门禁只能走到第 1 层。记账见 `docs/i18n.md` §7。
 #[test]
-fn 切语言会让整帧重画() {
+fn locale_switch_repaints_whole_frame() {
     let sheet = std::sync::Arc::new(sheet());
     let mut cache = FrameCache::new();
     cache.set_styler(Box::new(zephyra_style::SheetStyler(sheet)));
@@ -479,7 +479,7 @@ fn 切语言会让整帧重画() {
 /// （例如只存在于 `view()` 内部的临时变量里），症状就是"切一次语言，勾选全没了"。
 /// 它不崩，只是安静地丢数据。
 #[test]
-fn 切语言不丢其它状态() {
+fn locale_switch_preserves_other_state() {
     let mut h = Harness::new(Vec::new());
     h.gallery.route = "settings";
     h.frame(None, None);
@@ -509,7 +509,7 @@ fn 切语言不丢其它状态() {
 /// 这是"两处真相"的交叉点：`SUPPORTED` 里如果出现 `settings` 这种与路由 id
 /// 同形的项，点它就变成换语言而不是导航。症状是点导航没反应、或顺手换了个语言。
 #[test]
-fn 路由_id_不与语言标签相撞() {
+fn route_id_does_not_collide_with_locale_tags() {
     for (id, _, _) in app::ROUTES {
         assert!(
             !SUPPORTED.contains(id),

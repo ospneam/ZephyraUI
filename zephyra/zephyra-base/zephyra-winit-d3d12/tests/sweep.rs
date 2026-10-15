@@ -452,7 +452,7 @@ fn d3d12_资源创建_逐字段扫描() {
 }
 
 #[test]
-fn 占位_保证文件被编译() {
+fn placeholder_keeps_file_compiled() {
     let _ = DXGI_ADAPTER_DESC::default();
     let _ = hres(Ok(()));
 }

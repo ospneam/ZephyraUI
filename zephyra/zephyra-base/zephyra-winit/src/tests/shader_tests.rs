@@ -91,10 +91,10 @@
     /// 约束** —— 于是下一次有人"顺手把索引改紧凑一点"就会静默地把它打回去。
     /// 这条断言就是那道护栏。
     ///
-    /// D3D12 那边有一条同名的（`shader.rs::语义索引区间互不重叠`）。两个后端是**同类
+    /// D3D12 那边有一条同名的（`shader.rs::semantic_index_ranges_do_not_overlap`）。两个后端是**同类
     /// 缺陷**，只给一个加防护等于把另一个留在裸奔状态。
     #[test]
-    fn semantic_index_ranges_do_not_overlap() {
+    fn shader_semantic_index_ranges_do_not_overlap() {
         fn slots(fmt: DXGI_FORMAT) -> u32 {
             match fmt {
                 DXGI_FORMAT_R32_FLOAT => 1,

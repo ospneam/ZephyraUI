@@ -141,7 +141,7 @@ const N: usize = 6;
 /// 这条在修好之前是红的：子项拿到的是父的有限约束，改高度 ⇒ 每个子项的
 /// `measure_cache` 键都变 ⇒ 整段子树重排。
 #[test]
-fn 只改高度不重测子树() {
+fn height_only_change_does_not_remeasure_subtree() {
     let mut f = Fixture::new(N);
     let first = f.layout((800.0, 600.0));
     assert!(first > 0, "首趟必然要测量（实际 {first}）");
@@ -158,7 +158,7 @@ fn 只改高度不重测子树() {
 /// 与上一条配对。只有上一条会让人误以为"约束根本不参与"，而那在宽度变化时
 /// 会立刻给出错误宽度 —— 那是最容易发现的症状。
 #[test]
-fn 改宽度会重测子树() {
+fn width_change_remeasures_subtree() {
     let mut f = Fixture::new(N);
     let first = f.layout((800.0, 600.0));
     let third = f.layout((900.0, 600.0));
@@ -173,7 +173,7 @@ fn 改宽度会重测子树() {
 /// 这条在**旧代码**下也应当是绿的（缓存键相同就命中），但它是上面两条的
 /// 前提：若稳态都在重测，"只改高度不重测"就毫无意义。
 #[test]
-fn 稳态完全不重测() {
+fn steady_state_does_not_remeasure() {
     let mut f = Fixture::new(N);
     f.layout((800.0, 600.0));
     let again = f.layout((800.0, 600.0));
@@ -185,7 +185,7 @@ fn 稳态完全不重测() {
 /// 守住"缓存键真的与高度无关"这件事。只测一次的话，一个"第一次看见高度变化
 /// 就把子树标脏"的实现也能过。
 #[test]
-fn 高度来回改都不重测() {
+fn height_changes_do_not_remeasure() {
     let mut f = Fixture::new(N);
     f.layout((800.0, 600.0));
     for h in [700.0, 500.0, 900.0, 600.0] {
@@ -199,7 +199,7 @@ fn 高度来回改都不重测() {
 /// 若堆叠轴给无穷时**交叉轴也**被放成无穷，`stretch` 就无从谈起 ——
 /// 子项会退回内容宽度，页面横向排版全散。这条守住"只放开一根轴"。
 #[test]
-fn 交叉轴仍是有限约束() {
+fn cross_axis_is_still_a_finite_constraint() {
     let mut f = Fixture::new(2);
     f.layout((800.0, 600.0));
     let child = f.node.children().first().expect("有子项");
@@ -216,7 +216,7 @@ fn 交叉轴仍是有限约束() {
 /// 我们的做法是让 `pick_axis` 在上限无界时跳过夹逼，所以这一条守的是
 /// "别在别的地方漏出无穷"。
 #[test]
-fn 无界约束下尺寸是有限值() {
+fn size_is_finite_under_unbounded_constraints() {
     let engine = RefCell::new(CountingEngine::new());
     let theme = Theme::builtin(ThemeVariant::Dark);
     let ctx = Context::with_engine(&theme, &engine);

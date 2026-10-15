@@ -27,7 +27,7 @@
 //! | 哪块区域脏了（纯几何） | **core** |
 //! | scissor 怎么设、局部 clear 怎么做 | base（D3D API） |
 //! | 要不要 present（flip model / vsync） | base |
-//! | 事件触发（resize / 指针 / 按键） | base（Win32 词汇） |
+//! | 事件触发（resize / ptr_of / 按键） | base（Win32 词汇） |
 //!
 //! # ⚠️ 为什么跨帧局部重绘不可行（所以 [`Damage`] 只用于帧内 scissor）
 //!
@@ -399,7 +399,7 @@ fn scan(node: &Node, ctx: Context<'_>, out: &mut Vec<Rect>) -> bool {
     // ⚠ 不能在这里提前返回：早退会漏掉后面兄弟子树里的脏节点，于是脏矩形偏小 ——
     // 症状是那一块留着上一帧的旧颜色（残影），而所有计数器都正常。
     //
-    // （这条是有测试的：把并集换成"只取第一个矩形"，`多处脏时脏区是并集` 立刻失败。）
+    // （这条是有测试的：把并集换成"只取第一个矩形"，`damage_is_union_of_multiple_dirty_nodes` 立刻失败。）
     let mut any = dirty;
     for child in node.children() {
         any |= scan(child, ctx, out);

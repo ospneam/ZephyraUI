@@ -5,7 +5,7 @@
 
     /// 缓动必须满足不动点的基本性质，否则任何接入都会得到错的外观。
     #[test]
-    fn 缓动在两端与总时长上闭合() {
+    fn easing_closes_at_both_ends_and_total_duration() {
         for e in [
             Easing::Linear,
             Easing::Direct,
@@ -45,7 +45,7 @@
     /// 第一版我断言"点到点应接近 0.5"，红在这里 —— 那是我按名字猜的。
     /// 官方表格给的是**控制点字面值**，形状由字面值决定，与名字无关。
     #[test]
-    fn 官方曲线的形状与出处一致() {
+    fn official_curve_shapes_match_their_source() {
         let direct = Easing::Direct.at(0.5);
         let p2p = Easing::PointToPoint.at(0.5);
         let soft = Easing::SoftExit.at(0.5);
@@ -69,7 +69,7 @@
 
     /// 非法输入必须收敛而不是发散。
     #[test]
-    fn 非法时长与负流逝都收敛() {
+    fn invalid_duration_and_negative_elapsed_converge() {
         assert_eq!(progress(0.0, 0.0, Easing::Linear), 1.0, "时长为 0 ⇒ 立即完成");
         assert_eq!(progress(f32::NAN, 83.0, Easing::Linear), 0.0);
         assert_eq!(progress(-5.0, 83.0, Easing::Direct), 0.0);
@@ -79,7 +79,7 @@
 
     /// 档位：0 进度不发分类名，完成时满档，绝不越界到 `STEPS + 1`。
     #[test]
-    fn 档位不越界且零进度不发分类名() {
+    fn tiers_clamp_and_zero_progress_emits_no_class() {
         assert_eq!(step(0.0), None);
         assert_eq!(step(f32::NAN), None);
         assert_eq!(step(1.0), Some(STEPS));
@@ -100,7 +100,7 @@
 
     /// 时长常量必须等于官方表格里的数（83 / 167 / 250 / 333）。
     #[test]
-    fn 时长常量与官方表格一致() {
+    fn duration_constants_match_official_table() {
         assert_eq!(FADE_MS, 83.0);
         assert_eq!(MS_167, 167.0);
         assert_eq!(MS_250, 250.0);

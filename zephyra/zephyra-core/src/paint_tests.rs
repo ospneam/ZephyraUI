@@ -104,7 +104,7 @@ fn path_triangles(list: &DisplayList) -> usize {
 /// 症状都是**图标整个不出现**，且没有任何报错（`RenderReport` 里只少几个三角形）。
 /// 所以判据取存在性，把数值留给 `demo --bench` 观察。
 #[test]
-fn 每个内置图标都产出非空路径() {
+fn every_builtin_icon_yields_non_empty_path() {
     let names = crate::icon::assets::REGISTRY.iter().map(|(n, _)| *n);
     let mut checked = 0usize;
     for name in names {
@@ -118,7 +118,7 @@ fn 每个内置图标都产出非空路径() {
              图标集查不到 / SVG 解析失败 / 展平为空 / 三角化失败"
         );
         // 三角形必须是**整数个**（写入 Vertices 时按 3 个一组），而具体数量
-        // 交给 `路径顶点数恒为三的倍数` 与 `demo --bench` 观察。
+        // 交给 `path_vertex_count_is_always_a_multiple_of_three` 与 `demo --bench` 观察。
         checked += 1;
     }
     assert!(
@@ -136,7 +136,7 @@ fn 每个内置图标都产出非空路径() {
 ///
 /// 而"什么都不产出"是好的：症状是可见的（少一个图标），可对比、可定位。
 #[test]
-fn 未登记的图标名安全降级() {
+fn unregistered_icon_name_degrades_safely() {
     let list = render_of(&icon_el("this-icon-does-not-exist"), UNIT);
     assert_eq!(
         path_triangles(&list),
@@ -160,7 +160,7 @@ fn 未登记的图标名安全降级() {
 /// 而那个症状与"图标不显示"完全不同（前者是图形出现在奇怪的地方），所以需要
 /// 一条独立断言，而不是靠"非空"顺带覆盖。
 #[test]
-fn 图标几何落在节点矩形内() {
+fn icon_geometry_falls_inside_node_rect() {
     let list = render_of(&icon_el("gear"), UNIT);
     for item in list.iter() {
         let Command::Path { vertices, .. } = &item.command else {
@@ -206,7 +206,7 @@ fn 图标几何落在节点矩形内() {
 /// 于是三角形数量对这条判据**完全没有分辨力**（两种正确实现给出同样的 125），
 /// 而唯一能区分"用了 rect"与"丢了 rect"的量是**坐标范围**。
 #[test]
-fn 图标尺寸随节点变大而放大() {
+fn icon_size_scales_with_node() {
     let small = path_bounds(&render_of(&icon_el("gear"), UNIT))
         .expect("20×20 的齿轮应当产出路径");
     let big = path_bounds(&render_of(&icon_el("gear"), BIG))
@@ -249,7 +249,7 @@ fn 图标尺寸随节点变大而放大() {
 /// 如果 `render_rec` 的图像分支忘了读它，症状是「矩形有圆角、图像没有」——
 /// 而两者在 demo 里并排出现时，肉眼会以为「图像不支持圆角」而不是「接线漏了」。
 #[test]
-fn 圆角半径传到图像命令() {
+fn corner_radius_reaches_image_command() {
     let el = Element::new(NodeTag::Container)
         .with(
             &crate::props::IMAGE_TEXTURE,
@@ -273,7 +273,7 @@ fn 圆角半径传到图像命令() {
 
 /// 图像的 `radius` 缺省是 0（直角），且**与矩形共用同一个属性**。
 #[test]
-fn 图像默认圆角是零() {
+fn image_default_corner_radius_is_zero() {
     let el =
         Element::new(NodeTag::Container).with(&crate::props::IMAGE_TEXTURE, PropertyValue::static_str("t"));
     let list = render_of(&el, UNIT);
@@ -288,7 +288,7 @@ fn 图像默认圆角是零() {
 }
 
 #[test]
-fn 图像与图标都设时图像胜出() {
+fn image_wins_when_both_image_and_icon_are_set() {
     let el = Element::new(NodeTag::Container)
         .with_key("root")
         .with(&crate::props::ICON_NAME, PropertyValue::static_str("gear"))
@@ -318,7 +318,7 @@ fn 图像与图标都设时图像胜出() {
 /// 继承链上的文本色未必同义。那条设计决定需要一个断言，否则后人会"顺手补上继承"
 /// （看起来更方便），然后按钮里的图标跟着外层文本色一起变。
 #[test]
-fn 图标颜色取自_icon_color_且默认不继承() {
+fn icon_colour_comes_from_icon_color_and_is_not_inherited() {
     // 显式给色。
     let colored = Element::new(NodeTag::Container)
         .with_key("root")
@@ -366,7 +366,7 @@ fn 图标颜色取自_icon_color_且默认不继承() {
 /// 这条断言放在 core（契约层）而不是 fx：core 是产出方，由它保证"我给的顶点数
 /// 一定是完整三角形的倍数"才是负责的做法。fx 那边只能验证消费方没错。
 #[test]
-fn 路径顶点数恒为三的倍数() {
+fn path_vertex_count_is_always_a_multiple_of_three() {
     let list = render_of(&icon_el("camera"), UNIT);
     let mut paths = 0usize;
     for item in list.iter() {
@@ -405,7 +405,7 @@ fn 路径顶点数恒为三的倍数() {
 /// 症状是「第二个图标叠在第一个的位置上」，而四条已有测试全都通过：
 /// 它们各自只画一个图标、一个矩形，恰好落在同一个键上。
 #[test]
-fn 缓存不得让不同位置的图标串味() {
+fn cache_must_not_confuse_icons_at_different_positions() {
     let a = path_bounds(&render_of(&icon_el("gear"), Rect::new(0.0, 0.0, 20.0, 20.0)))
         .expect("第一个齿轮");
     let b = path_bounds(&render_of(&icon_el("gear"), Rect::new(40.0, 0.0, 20.0, 20.0)))
@@ -447,7 +447,7 @@ fn 缓存不得让不同位置的图标串味() {
 /// 与上一条同形、判据不同：键里若只有位置没有尺寸，则同一位置先画20×20 再画
 /// 48×48，第二次会拿到 20×20 的几何。
 #[test]
-fn 缓存不得让不同尺寸的图标串味() {
+fn cache_must_not_confuse_icons_of_different_sizes() {
     let small = path_bounds(&render_of(&icon_el("gear"), UNIT)).expect("20×20");
     let big = path_bounds(&render_of(&icon_el("gear"), BIG)).expect("48×48");
 
@@ -468,7 +468,7 @@ fn 缓存不得让不同尺寸的图标串味() {
 ///
 /// 所以判据取**逐顶点相等**：没有第二条路能蒙混过去。
 #[test]
-fn 缓存命中与首次计算逐字节相同() {
+fn cache_hit_is_byte_identical_to_first_computation() {
     let path_of = |bounds: Rect| -> Vec<[f32; 2]> {
         let list = render_of(&icon_el("gear"), bounds);
         let mut all = Vec::new();
@@ -513,7 +513,7 @@ fn 缓存命中与首次计算逐字节相同() {
 /// `include_str!`（框架里"别名的图标"很常见），它们会合法地共享 —— 那是对的。
 /// 真正要防的是**取错了**：键算成常量 0，于是所有图标命中同一条。
 #[test]
-fn 不同图标不共享缓存条目() {
+fn different_icons_do_not_share_cache_entries() {
     let gear = path_triangles(&render_of(&icon_el("gear"), UNIT));
     let camera = path_triangles(&render_of(&icon_el("camera"), UNIT));
 

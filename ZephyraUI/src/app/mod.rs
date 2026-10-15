@@ -48,7 +48,7 @@ pub const ROUTES: &[(&str, &str, &str)] = &[
 pub const BASE_VIEWPORT: (u32, u32) = (1400, 800);
 
 /// 内容区两侧的页边距（布局单位）。与 `pages.rs` 里的 section 间距同源，
-/// 由 `tests::gates::内容区宽度随断点变化` 间接钉住。
+/// 由 `tests::gates::content_width_follows_breakpoint` 间接钉住。
 pub const PAGE_GUTTER: f32 = 28.0;
 
 /// 本 demo 支持的语言（有序，**第一项是默认/回退语言**）。
@@ -68,7 +68,7 @@ pub const SUPPORTED: &[&str] = &["en", "zh-Hans", "ja"];
 /// 放进表里就得给 3 种语言各填 3 条共 9 条，而那 9 条内容两两相同 ——
 /// 表格里的重复迟早会被误改成"翻译"，而那正是错的。
 ///
-/// 对齐关系由门禁 `i18n_tests::语言自称与支持列表等长` 钉住：
+/// 对齐关系由门禁 `i18n_tests::self_described_locale_count_matches_supported_list` 钉住：
 /// 下标错位会让用户选了"English"却得到日文，而那在画面上完全看不出原因。
 pub const LANG_SELFS: &[&str] = &["English", "中文", "日本語"];
 
@@ -85,7 +85,7 @@ pub const LANG_SELFS: &[&str] = &["English", "中文", "日本語"];
 /// 已接进视图：导航标题（11 条路由）、页头标题、应用名、页头工具按钮、
 /// 设置页七条。**未接**：控件展台 44 张卡与各页正文 —— 那些仍是源码里的
 /// 中文硬编码。这是**记账的债**，不是"已支持"：门禁
-/// `i18n_tests::每种语言都不缺键` 覆盖的是本表列出的键，
+/// `i18n_tests::no_locale_is_missing_keys` 覆盖的是本表列出的键，
 /// `i18n_tests::未接入的硬编码文案已记账` 钉住剩下的数量，见 `docs/i18n.md` §5。
 const CATALOG: &[(&str, &str, &str)] = &[
     // ---- en（默认语言）----
@@ -188,7 +188,7 @@ pub fn catalog_keys() -> Vec<&'static str> {
 ///
 /// 源码里**没有面向用户的字符串** —— 与"源码零外观"是同一条纪律：
 /// 控件发分类名、不发颜色；页面发 key、不发文案。漏翻由门禁枚举
-/// （`i18n_tests::每种语言都不缺键`），不靠肉眼。
+/// （`i18n_tests::no_locale_is_missing_keys`），不靠肉眼。
 pub fn messages() -> Messages {
     let mut m = Messages::new();
     for (locale, key, value) in CATALOG {
@@ -207,7 +207,7 @@ pub fn messages() -> Messages {
 /// 找不到时**返回 id 本身**而不是 `panic!` 或空串：调用方随后会拿它当键去
 /// `tr()`，而 `tr()` 的最后一档正是"返回键名"，于是画面上出现路由 id ——
 /// 看得见的降级。真正拦住这件事的是门禁
-/// `i18n_tests::每条路由都有文案键`（新增路由忘了加译文会红）。
+/// `i18n_tests::every_route_has_a_copy_key`（新增路由忘了加译文会红）。
 pub fn route_key(id: &str) -> &'static str {
     // 只在默认语言那一组里找键 —— 键集合与语言无关，看第一组就够且更快。
     for (locale, key, _) in CATALOG {
@@ -428,7 +428,7 @@ impl Gallery {
     ///
     /// 这里曾经写死 `236.0`，而 `shell::NAV_W` 实际是 232。列数于是按错 4 单位算 ——
     /// 而 4 单位小到看不出，只在某些宽度上让「差一点点放不下第 5 列」。
-    /// 那条错是被 `tests::gates::内容区宽度随断点变化` 抓到的，不是被眼看出来的。
+    /// 那条错是被 `tests::gates::content_width_follows_breakpoint` 抓到的，不是被眼看出来的。
     pub fn content_width(&self) -> f32 {
         let nav = if self.is_compact() {
             0.0
@@ -551,7 +551,7 @@ impl Gallery {
     /// 三级回退（见 [`Messages::select`]）：当前语言 → 语言段 → 默认语言。
     /// 连默认语言也没有才轮到这里，返回**键名**而不是空串：空串会让"漏翻"
     /// 看起来像"这里本来就是空的"，而键名在画面上立刻可辨。
-    /// 真正发现漏翻的是门禁，不是肉眼（`i18n_tests::每种语言都不缺键`）。
+    /// 真正发现漏翻的是门禁，不是肉眼（`i18n_tests::no_locale_is_missing_keys`）。
     pub fn tr(&self, key: &'static str) -> &'static str {
         messages()
             .select(&self.prefs_for_current(), SUPPORTED[0], key)

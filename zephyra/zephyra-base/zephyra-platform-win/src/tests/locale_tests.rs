@@ -7,7 +7,7 @@
     ///
     /// 判据取四项 + 结尾。按分隔符切的实现会在这里多出一个空串。
     #[test]
-    fn 多字符串按连续双_null_解析() {
+    fn multiple_strings_parsed_by_double_null() {
         let units: Vec<u16> = "en-US\0zh-CN\0ja\0\0".encode_utf16().collect();
         assert_eq!(
             parse_multi_string(&units),
@@ -21,7 +21,7 @@
 
     /// 缓冲比实际内容长时必须停在全零区，不能产出空项。
     #[test]
-    fn 缓冲多余长度不产生空项() {
+    fn trailing_buffer_bytes_produce_no_empty_entry() {
         let mut units: Vec<u16> = "en-US\0de\0\0".encode_utf16().collect();
         units.extend(std::iter::repeat(0).take(64));
         assert_eq!(
@@ -32,7 +32,7 @@
 
     /// 没有双 null 的兜底：最后一段仍要收下。
     #[test]
-    fn 缺双_null_时兜底收下最后一段() {
+    fn trailing_segment_kept_when_double_null_missing() {
         let units: Vec<u16> = "en-US\0fr".encode_utf16().collect();
         assert_eq!(
             parse_multi_string(&units),
@@ -45,7 +45,7 @@
     /// 这条是自声明签名是否写对的**唯一**运行时证据：签名错了会静默失败，
     /// 于是「接口通了」与「返回空表」都长得像成功。
     #[test]
-    fn 真机可读到系统语言() {
+    fn system_locale_readable_on_real_machine() {
         let langs = preferred_ui_languages();
         assert!(
             !langs.is_empty(),
@@ -65,12 +65,12 @@
         }
     }
 
-    /// 标志位必须钉住：`MUI_LANGUAGE_NAME` = `0x4`。
+    /// flags_are_pinned：`MUI_LANGUAGE_NAME` = `0x4`。
     ///
     /// 传 0 会返回 LCID（如 `1033`）而非语言名 —— 而 `1033` 不是 BCP 47 标签，
     /// 协商会全部落空。这条是那个坑的护栏。
     #[test]
-    fn 标志位必须钉住() {
+    fn flags_are_pinned() {
         assert_eq!(MUI_LANGUAGE_NAME, 0x4);
         assert_ne!(MUI_LANGUAGE_NAME, 0, "0 = MUI_LANGUAGE_ID，会返回 LCID");
     }

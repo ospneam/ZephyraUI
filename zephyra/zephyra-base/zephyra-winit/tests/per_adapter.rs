@@ -163,7 +163,7 @@ let Ok(dxgi) = adapter.cast::<windows::Win32::Graphics::Dxgi::IDXGIAdapter>() el
 }
 
 #[test]
-fn 逐块适配器测视口() {
+fn per_adapter_probe_viewport() {
     let factory: windows::Win32::Graphics::Dxgi::IDXGIFactory4 =
         unsafe { CreateDXGIFactory1() }.expect("DXGI 工厂");
 

@@ -4,7 +4,7 @@
     use super::*;
 
     #[test]
-    fn 圆角取值与文档枚举一一对应() {
+    fn corner_values_map_one_to_one_onto_doc_enum() {
         // 数值必须与 DWM_WINDOW_CORNER_PREFERENCE 一致（docs/win/01）。
         assert_eq!(CornerPreference::Default.raw(), 0);
         assert_eq!(CornerPreference::DoNotRound.raw(), 1);
@@ -21,27 +21,27 @@
     }
 
     #[test]
-    fn 未文档化的圆角取值按默认处理而不是报错() {
+    fn undocumented_corner_value_falls_back_instead_of_erroring() {
         // 新版 Windows 加第五档时，我们不该把窗口弄坏。
         assert_eq!(CornerPreference::from_raw(99), CornerPreference::Default);
         assert_eq!(CornerPreference::from_raw(-1), CornerPreference::Default);
     }
 
     #[test]
-    fn 空句柄是无效的() {
+    fn null_handle_is_invalid() {
         assert!(!WindowHandle::from_raw(0).is_valid());
         assert!(WindowHandle::from_raw(0x1234).is_valid());
     }
 
     #[test]
-    fn 句柄调试输出不含地址() {
+    fn handle_debug_output_has_no_addresses() {
         // 裸地址在日志里既没信息量又指向可能已释放的窗口。
         let s = format!("{:?}", WindowHandle::from_raw(0x7FFF_ABCD_1234));
         assert!(!s.contains("7FFF"), "调试输出不该含句柄值：{s}");
     }
 
     #[test]
-    fn 当前平台的默认实现必须自洽() {
+    fn current_platform_defaults_are_self_consistent() {
         let p = current();
         let caps = p.capabilities();
         // 能力位与实际行为必须一致：声称支持就必须真的返回 true，
@@ -64,7 +64,7 @@
     }
 
     #[test]
-    fn 空窗口句柄不应让任何能力生效() {
+    fn null_window_handle_enables_nothing() {
         // 句柄无效时实现必须静默返回全 false，而不是碰 0 号地址。
         let out = current().apply_window_chrome(
             WindowHandle::from_raw(0),

@@ -438,7 +438,7 @@
     /// 没有留白时，片元在四边形最外沿采样会各取一半邻居的纹素 —— 画面上是字与字
     /// 之间的淡竖条、圆角处的鬼影。这个测试直接钉住那几格的值。
     #[test]
-    fn 相邻字形之间留出透明的一圈() {
+    fn transparent_gap_between_adjacent_glyphs() {
         let mut atlas = GlyphAtlas::new();
         let a = atlas
             .get_or_insert(0, 1, 16, Some(raster(4, 4, Point::new(0.0, 0.0))))
@@ -488,7 +488,7 @@
     /// 若把留白算进 uv，`GlyphQuad::dst` 会跟着变大，字与字之间凭空多出缝隙，
     /// 且字会被拉伸一点点。
     #[test]
-    fn 留白不改变对外的_uv_与尺寸() {
+    fn padding_leaves_exported_uv_and_size_unchanged() {
         let mut atlas = GlyphAtlas::new();
         let e = atlas
             .get_or_insert(0, 1, 16, Some(raster(4, 3, Point::new(0.0, 0.0))))
@@ -532,7 +532,7 @@
 
     /// 满了之后再来新字形：淘汰**最久未用**的那个，最近用过的留下。
     #[test]
-    fn 放不下时淘汰最久未用的字形() {
+    fn evicts_least_recently_used_glyph_when_full() {
         let mut atlas = fill_small();
 
         // 把第 0、1 个标记成"最近用过"（重新取用即刷新）。
@@ -565,7 +565,7 @@
     /// 这条是重排最容易写错的地方：清了映射表却没清画布，旧墨会从新字形的留白里
     /// 露出来 —— 画面上是随机噪点，且只在触发淘汰之后才出现。
     #[test]
-    fn 重排之后画布上只剩幸存者的墨() {
+    fn only_survivors_ink_remains_on_canvas_after_reflow() {
         let mut atlas = fill_small();
         let before = inked(&atlas);
         assert_eq!(before, 36 * 64, "36 个 8×8 的块，墨量应当是 36×64");
@@ -595,7 +595,7 @@
     /// 而不是"那里有墨"这种弱条件 —— 重排把映射表换了一遍，最典型的错法就是把
     /// 残值留在了别处。
     #[test]
-    fn 重排后幸存者的_uv_互不重叠且指向自己的位图() {
+    fn survivor_uvs_do_not_overlap_and_point_to_own_bitmap() {
         let mut atlas = GlyphAtlas::with_size(SMALL);
         // 编号 1..=36，覆盖率值 = 编号（非零，且两两不同）。
         for n in 1..=36u32 {
@@ -658,7 +658,7 @@
     /// 这是重排最容易写错的地方：清了映射表却没清画布，旧墨会留在原地。画面上是
     /// 随机噪点，而且**只在触发过淘汰之后**才出现 —— 没跑满的测试永远看不到。
     #[test]
-    fn 重排后没有残墨留在条目之外() {
+    fn reflow_leaves_no_ink_outside_entries() {
         let mut atlas = fill_small();
         atlas
             .get_or_insert(0, 999, 16, Some(raster(8, 8, Point::new(0.0, 0.0))))
@@ -697,7 +697,7 @@
 
     /// 真的放不下时才淘汰 —— 反复取用已缓存的字形不该触发任何回收。
     #[test]
-    fn 缓存命中不触发淘汰() {
+    fn cache_hit_does_not_trigger_eviction() {
         let mut atlas = GlyphAtlas::with_size(SMALL);
         let e = atlas
             .get_or_insert(0, 1, 16, Some(raster(8, 8, Point::new(0.0, 0.0))))
@@ -714,7 +714,7 @@
 
     /// 单个字形比整张图集还大 ⇒ 淘汰也没用，必须返回 `None` 而不是死循环。
     #[test]
-    fn 比图集还大的字形_淘汰也放不下就返回_none() {
+    fn oversized_glyph_returns_none_when_eviction_cannot_fit() {
         let mut atlas = GlyphAtlas::with_size(SMALL);
         atlas
             .get_or_insert(0, 1, 16, Some(raster(8, 8, Point::new(0.0, 0.0))))
@@ -745,7 +745,7 @@
     /// 时那样是对的），淘汰一个再进一个 —— 数量不变、内容整体重排 —— 宿主就会跳过
     /// 上传，GPU 抱着旧图集，画面上字全跑到别的位置去了。
     #[test]
-    fn 淘汰时字形数可能不变但版本号必须前进() {
+    fn eviction_advances_revision_even_if_glyph_count_unchanged() {
         let mut atlas = fill_small();
         let before_rev = atlas.revision();
         let before_n = atlas.stats().glyphs;
@@ -766,9 +766,9 @@
         );
     }
 
-    /// 空白字形不推进版本号 —— 否则每遇到一个空格就白传一次整张图集。
+    /// blank_glyph_does_not_bump_revision —— 否则每遇到一个空格就白传一次整张图集。
     #[test]
-    fn 空白字形不推进版本号() {
+    fn blank_glyph_does_not_bump_revision() {
         let mut atlas = GlyphAtlas::with_size(SMALL);
         let before = atlas.revision();
         atlas.get_or_insert(0, 1, 16, None).unwrap();
@@ -828,7 +828,7 @@
     /// 交回一个必然放不下的顺序。那条复验会挡住，所以不会清空画布，但每一个新字形
     /// 都会白触发一次淘汰。
     #[test]
-    fn 策略收到的是本图集的真实边长与占位尺寸() {
+    fn policy_receives_real_atlas_edge_and_slot_size() {
         let (counting, calls) = Counting::new();
         let mut atlas = GlyphAtlas::with_policy(SMALL, counting);
         // 先塞一个字形占位，再触发一次淘汰。
@@ -876,7 +876,7 @@
     /// `DropEverything` 要求一个不留 —— 若图集忽略策略而自行 LRU，画布上就还会有
     /// 36 个块。这里断言的是"策略的话语权"，不是"淘汰能否工作"。
     #[test]
-    fn 策略说全丢_图集就全丢() {
+    fn atlas_drops_everything_when_policy_says_so() {
         let mut atlas = fill_small();
         assert_eq!(atlas.stats().glyphs, 36, "前置条件：图集已满");
         atlas.set_policy(DropEverything);
@@ -958,7 +958,7 @@
     /// 触发淘汰"其实没触发；28×28 下换行后又不够放第四个，于是策略正确地返回 `None`
     /// 而测试误判成"图集没采纳策略"。两次都是前提算错，不是实现问题。
     #[test]
-    fn 重排顺序由策略决定而不是图集自己排() {
+    fn reflow_order_comes_from_policy_not_the_atlas() {
         const TINY: u32 = 32;
         let mut atlas = GlyphAtlas::with_size(TINY);
         // 两个高矮不同的字形（含留白后 10×22 与 10×14），再加一个填充物把图集占满。
@@ -1020,7 +1020,7 @@
     /// 这是复验存在的全部理由。策略是外部代码，它可能算错；而画布一旦被清空又没有
     /// 重排成功，症状是"所有文字消失且无任何报错" —— 最难查的一类。
     #[test]
-    fn 策略给出放不下的顺序时_图集拒绝且不清空画布() {
+    fn atlas_refuses_and_keeps_canvas_when_policy_overflows() {
         let mut atlas = fill_small();
         let before_ink = inked(&atlas);
         let before_rev = atlas.revision();
@@ -1067,7 +1067,7 @@
     /// 必然混在里面。若策略把它算进分母，图集紧张时会先丢空格 —— 而丢空格腾不出
     /// 任何空间，于是白白触发一连串淘汰。
     #[test]
-    fn 空白字形不会被策略当成可淘汰对象() {
+    fn blank_glyph_not_offered_to_policy_as_evictable() {
         let mut atlas = GlyphAtlas::with_size(SMALL);
         // 塞满可见字形。
         for n in 0..36u32 {
@@ -1109,7 +1109,7 @@
     /// 不在名单里；若重排不把它们捞回来，它们会被静默丢弃。症状不是崩溃，而是
     /// 「同一个空格在重排前后表现不同」—— 极难定位。
     #[test]
-    fn 重排后空白条目全部保留且不占画布() {
+    fn reflow_keeps_all_blank_entries_and_they_cost_no_canvas() {
         let mut atlas = fill_small();
         let blank_keys: Vec<GlyphKey> = (200..205u32).map(|n| GlyphKey::new(0, n, 16)).collect();
         for k in &blank_keys {
@@ -1143,7 +1143,7 @@
 
     /// `LruEviction` 自己就该把空白排除掉 —— 上面那条是端到端，这条钉住单元。
     #[test]
-    fn 默认策略直接把空白条目排除在分母外() {
+    fn default_policy_excludes_blank_entries_from_denominator() {
         let real = EntryInfo {
             key: GlyphKey::new(0, 1, 16),
             padded: (10, 10),

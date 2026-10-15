@@ -15,7 +15,7 @@
     ///
     /// 写不成 `const` 断言，因为 `D3D12_TEXTURE_LAYOUT` 不是结构体常量友好类型。
     #[test]
-    fn 缓冲的_布局_必须是行主序而不是未知() {
+    fn buffer_layout_must_be_row_major_not_unknown() {
         let d = buffer_desc(64);
         assert_eq!(
             d.Layout,
@@ -53,7 +53,7 @@
     ///
     /// <https://learn.microsoft.com/en-us/windows/win32/api/d3d12/ne-d3d12-d3d12_resource_flags>
     #[test]
-    fn 渲染目标纹理必须带_允许渲染目标标志() {
+    fn render_target_texture_must_allow_render_target() {
         let rt = crate::surface::texture_desc((64, 64), D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET);
         assert_eq!(
             rt.Flags,
@@ -76,7 +76,7 @@
     /// 改完没有验证是否真的解决了问题（没有），于是这个基于推理的改动就留了下来。
     /// 官方文档把这件事说清楚了，所以改回去，并用这条测试防止再次凭推理改动它。
     #[test]
-    fn 管线状态的_节点掩码_单_gpu_下就是零() {
+    fn pipeline_state_node_mask_is_zero_for_single_gpu() {
         // 断言的是**生产代码用的那个常量**（`create_pso` 里引用的就是它）。
         assert_eq!(
             PSO_NODE_MASK, 0,
@@ -100,7 +100,7 @@
     /// 判据直接写成那个形状：`head = 8000` 时，12 字节**必须放不下**。
     /// 若哪天有人把对齐项从 `upload_end` 里去掉，这条立刻红。
     #[test]
-    fn 上传结束偏移_必须含_256_字节对齐() {
+    fn upload_end_offset_accounts_for_256_byte_alignment() {
         // 对齐把起点从 8000 推到 8192，于是 12 字节放不下。
         assert_eq!(
             upload_end(8000, 12),
@@ -119,7 +119,7 @@
     /// `upload_end` 对 `head` 单调不减 —— `reserve` 靠它判断"再放一段会不会超"，
     /// 若出现非单调就会出现"更大的 head 反而放得下"的荒谬情形。
     #[test]
-    fn 上传结束偏移_对_head_单调不减() {
+    fn upload_end_offset_is_monotonic_in_head() {
         let mut prev = 0u64;
         for head in (0..40_000u64).step_by(37) {
             let cur = upload_end(head, 64);
@@ -147,7 +147,7 @@
     ///
     /// 所以判据取真实后果：荒谬 `head` 的 `want` 必须大到不可能被当成「放得下」。
     #[test]
-    fn 上传结束偏移_荒谬的_head_必须判为放不下() {
+    fn upload_end_offset_rejects_absurd_head() {
         // 1GB 远超任何暂存区（初始 64KB / 4KB，扩容上限也就几 MB）。
         const IMPOSSIBLE: u64 = 1 << 30;
         for head in [
@@ -172,7 +172,7 @@
     /// 缓冲容量最大不过几十 MB，`head` 不可能离开。[`UPLOAD_ALIGN`] 的对齐项
     /// 在这个域里必须精确，不能有半点漂移。
     #[test]
-    fn 上传结束偏移_现实域内精确() {
+    fn upload_end_offset_is_exact_on_realistic_inputs() {
         let align = |v: u64| (v + UPLOAD_ALIGN - 1) & !(UPLOAD_ALIGN - 1);
         for &head in &[0u64, 1, 255, 256, 257, 7919, 8000, 8180, 8192, 8193, 65_536] {
             for &bytes in &[0u64, 1, 12, 64, 300, 4096] {
@@ -191,7 +191,7 @@
     /// 若哪天有人把 `& !(ALIGN-1)` 去掉，「12 字节放不进 8192 边界上」的回归
     /// 会以另一种形式回来。
     #[test]
-    fn 上传起点_真的对齐() {
+    fn upload_start_offset_is_aligned() {
         for head in 0..3000u64 {
             let (off, _) = upload_span(head, 0);
             assert_eq!(off % UPLOAD_ALIGN, 0, "head={head} 的起点 {off} 没对齐");
@@ -206,7 +206,7 @@
     /// 而它的实际后果是 memcpy 与游标推进量不一致，也就是"拷了 N 字节却只推进 M"，
     /// 下一段会重叠覆盖上一段。那类损坏**没有报错**，只是画面随机错。
     #[test]
-    fn 上传区间_长度守恒() {
+    fn upload_span_length_is_conserved() {
         for head in 0..4000u64 {
             for bytes in [0u64, 1, 12, 64, 300, 4096, u64::MAX / 2, u64::MAX] {
                 let (off, end) = upload_span(head, bytes);

@@ -412,7 +412,7 @@ fn shell_metrics_match_stylesheet() {
 /// 判据是"写没写"，不是"写了多少"：数值对错还能调，**这两行存在**就让整个
 /// 响应式失效，且没有任何报错。
 #[test]
-fn 根容器不写固定尺寸() {
+fn root_container_writes_no_fixed_size() {
     let css = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("gallery.zstyle"))
         .unwrap();
     let start = css
@@ -441,7 +441,7 @@ fn 根容器不写固定尺寸() {
 /// 1. 根矩形 == 客户区（铺满）；
 /// 2. 基准画布下与去掉尺寸之前**无差别**（回归保护）。
 #[test]
-fn 基准画布下根容器仍铺满客户区() {
+fn root_container_still_fills_client_area_at_baseline() {
     let root = laid_out("home");
     let r = root.rect();
     let (cw, ch) = zephyra_ui::app::BASE_VIEWPORT;
@@ -555,7 +555,7 @@ fn only_fill_nodes_carry_local_width() {
 ///
 /// # 为什么这条必须住在**应用**侧而不是 core 侧
 ///
-/// core 的 `所有内置图标都不是空的`（新加）能抓「登记了但资源是空的」，抓不了
+/// core 的 `all_builtin_icons_are_non_empty`（新加）能抓「登记了但资源是空的」，抓不了
 /// 「压根没登记」—— 没登记的名字根本不会出现在那张表里，而它在本仓造成过的故障
 /// 是：`DISMISS` 常量与 `dismiss.svg` 资源都在，唯独 `REGISTRY` 少一行，于是
 /// `IconSet::get` 回落到 `Icon::EMPTY`，界面上的图标位**是空的**。
@@ -1168,7 +1168,7 @@ fn every_catalog_entry_has_a_non_empty_showcase_page() {
 /// 数字本身在 `responsive.rs` 里有单测，这里额外钉住**汇编关系**：
 /// 类别必须由宽度单调决定，不能出现「宽窗口落到更窄的档」这种倒挂。
 #[test]
-fn 断点作文档的三个类别且单调() {
+fn breakpoint_categories_match_doc_and_are_monotonic() {
     use zephyra_ui::responsive::WidthClass;
 
     let mut prev = WidthClass::Small;
@@ -1199,7 +1199,7 @@ fn 断点作文档的三个类别且单调() {
 /// 三条一起才构成「列数是宽度的函数」。只有第 1 条时，代码完全可以
 /// 退回写死 5 —— 基准图全绿，而真实窗口下症状原样存在。
 #[test]
-fn 列数随宽度变化且基准仍是五列() {
+fn column_count_tracks_width_and_baseline_is_five() {
     use zephyra_ui::app::{Gallery, BASE_VIEWPORT};
     use zephyra_ui::responsive::WidthClass;
 
@@ -1258,7 +1258,7 @@ fn gallery_at(w: u32, h: u32, scale: f32) -> zephyra_ui::app::Gallery {
 /// 这是列数公式的输入。若它与外壳常量脱节，列数会悄悄算错 —— 而症状
 /// （最后一列被裁/多出一列空白）看起来像"样式没调好"，不像算错。
 #[test]
-fn 内容区宽度随断点变化() {
+fn content_width_follows_breakpoint() {
     let wide = gallery_at(1400, 800, 1.0);
     assert_eq!(
         wide.content_width(),
@@ -1295,7 +1295,7 @@ fn 内容区宽度随断点变化() {
 /// 本仓布局单位是物理像素，所以 40 必须乘 scale；不乘会得到 40 物理 = 32 epx
 /// （1.25 缩放下），**低于官方下限而代码看起来完全正确**。
 #[test]
-fn 触控目标按缩放比换算到官方的_epx_下限() {
+fn touch_target_converts_to_official_ephemeral_px() {
     let g = gallery_at(1400, 800, 1.25);
     assert_eq!(g.touch_target(zephyra_ui::responsive::TOUCH_MIN_EPX), 50.0);
     assert_eq!(g.touch_target(zephyra_ui::responsive::TOUCH_OPTIMAL_EPX), 55.0);
