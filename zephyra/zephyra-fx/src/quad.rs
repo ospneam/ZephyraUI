@@ -581,6 +581,12 @@ pub struct RenderReport {
     pub vertex_bytes: u64,
     /// 顶点缓冲是否发生了扩容 —— 稳态下应为 `false`。
     pub reallocated: bool,
+    /// 本帧真正发生的几何上传次数（顶点 + 索引）。
+    ///
+    /// 稳态的「只改颜色」帧应当是 0 —— 几何逐字节没变就不重传。
+    pub index_uploads: usize,
+    /// 几何逐字节没变、因此跳过上传。
+    pub index_upload_skipped: bool,
     /// 图像命令分成的批次数（每批一次 draw call，因绑定不同纹理无法合并）。
     pub image_batches: usize,
     /// 因纹理未注册而跳过的图像命令数。

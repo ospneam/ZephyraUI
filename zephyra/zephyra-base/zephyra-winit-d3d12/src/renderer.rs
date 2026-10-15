@@ -109,6 +109,10 @@ pub struct Renderer {
     /// 要读一下就明白：先把 `scratch` 填满，再把各字段**分别**借成局部变量，
     /// 因为同时持有 `&self.scratch` 与 `&mut self.xxx` 会撞上借用检查器。
     scratch: quad::Scratch,
+    /// 上一次真正上传的顶点字节。逐字节比较后决定要不要重传（见 upload_geometry）。
+    last_vertex_bytes: Vec<u8>,
+    /// 上一次真正上传的索引字节。
+    last_index_bytes: Vec<u8>,
     /// 图集边长（像素）。
     atlas_size: u32,
     /// 图集纹理（所有权）。
@@ -854,6 +858,8 @@ impl Renderer {
             index,
             vertex_capacity,
             scratch: quad::Scratch::new(),
+            last_vertex_bytes: Vec::new(),
+            last_index_bytes: Vec::new(),
             atlas_size,
             atlas,
             atlas_staging: None,
@@ -1779,15 +1785,38 @@ fn upload_geometry(
     //
     // ⚠ 四边形数必须**只数 solid + images** —— 用 `vertices.len() / 4` 会把路径顶点
     // 也除进去，而路径顶点数是 3 的倍数，整数截断会让四边形段的基址全部错位。
+    // ★ 几何**逐字节**没变就不重传。
+    //
+    // 为什么值得：UI 静止时宿主虽然会跳过整帧，但「只改颜色/只动 hover」的帧仍然
+    // 要画 —— 而那一帧的顶点流与上一帧**逐字节相同**。demo 实测每帧顶点 55 KB
+    // （141 四边形），也就是每次这样的交互都白传 55 KB 外加一对屏障。
+    //
+    // 为什么用**逐字节比较**而不是哈希：哈希相等不等于内容相等，一旦碰撞就会跳过
+    // 一次真上传，画面直接错一帧且此后不再自愈 —— 那是「看起来时好时坏」的一类
+    // bug，极难往哈希上联想。55 KB 的 memcmp 在 CPU 上是微秒级。
     if !scratch.indices.is_empty() {
         let need = (scratch.indices.len() * 2) as u64;
         self.index.reserve(device, need)?;
-        self.index
-            .record_upload(list, bytemuck::cast_slice(&scratch.indices))?;
+        let bytes = bytemuck::cast_slice::<u16, u8>(&scratch.indices);
+        if self.last_index_bytes != bytes {
+            self.index.record_upload(list, bytes)?;
+            self.last_index_bytes.clear();
+            self.last_index_bytes.extend_from_slice(bytes);
+            report.index_uploads = report.index_uploads.saturating_add(1);
+        } else {
+            report.index_upload_skipped = true;
+        }
     }
     if !scratch.vertices.is_empty() {
-        self.vertex
-            .record_upload(list, bytemuck::cast_slice(&scratch.vertices))?;
+        let bytes = bytemuck::cast_slice::<Vertex, u8>(&scratch.vertices);
+        if self.last_vertex_bytes != bytes {
+            self.vertex.record_upload(list, bytes)?;
+            self.last_vertex_bytes.clear();
+            self.last_vertex_bytes.extend_from_slice(bytes);
+            report.index_uploads = report.index_uploads.saturating_add(1);
+        } else {
+            report.index_upload_skipped = true;
+        }
     }
     Ok(())
 }
@@ -2183,6 +2212,18 @@ fn replay(
         self.index.reserve(device, need)?;
         self.vertex
             .record_upload(list, bytemuck::cast_slice(quad))?;
+        // ⚠⚠ **离屏 pass 与主路径共用同一条 StreamBuffer**（见 StreamBuffer::reserve），
+        // 所以这里一上传，主路径那份「上次上传内容」的影子就**过期**了。
+        //
+        // 不清的后果很具体：`d3d12_draw.rs` 的
+        // `the_second_frame_is_identical_to_the_first_when_a_filter_is_used` 会红 ——
+        // 第二帧主路径看到几何与影子一致就跳过上传，而 GPU 缓冲里已经是离屏的四边形，
+        // 于是主绘制读到别人的几何。实测差 30588 个字节。
+        //
+        // 这类「省掉一次上传」的优化不能只看上传点自己：谁碰了这条缓冲，谁就得让
+        // 「内容没变」这个判断失效。
+        self.last_vertex_bytes.clear();
+        self.last_index_bytes.clear();
         self.index
             .record_upload(list, bytemuck::cast_slice(&idx))?;
 
