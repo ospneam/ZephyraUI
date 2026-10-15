@@ -483,7 +483,9 @@ fn dump_cpu(light: bool) {
     let batch = host.batch();
     let glyph_vertices = batch
         .solid
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .filter(|c| (c[0].kind - zephyra_fx::quad::kind::GLYPH).abs() < 0.01)
         .count();
     println!(
@@ -521,7 +523,7 @@ fn dump_cpu(light: bool) {
     let canvas = host.render_cpu(clear);
     // 底色 = 出现最多的颜色（必然是根容器铺上去的 surface），与 demo 同法。
     let mut counts: std::collections::HashMap<[u8; 3], usize> = Default::default();
-    for p in canvas.pixels.chunks_exact(4) {
+    for p in canvas.pixels.as_chunks::<4>().0 {
         *counts.entry([p[0], p[1], p[2]]).or_default() += 1;
     }
     let Some((&bg, _)) = counts.iter().max_by_key(|(_, n)| **n) else {
@@ -530,7 +532,9 @@ fn dump_cpu(light: bool) {
     };
     let lit = canvas
         .pixels
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .filter(|p| [p[0], p[1], p[2]] != bg)
         .count();
     let total = (w * h) as usize;

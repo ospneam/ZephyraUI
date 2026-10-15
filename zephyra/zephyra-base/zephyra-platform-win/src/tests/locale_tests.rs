@@ -19,7 +19,7 @@ fn multiple_strings_parsed_by_double_null() {
 #[test]
 fn trailing_buffer_bytes_produce_no_empty_entry() {
     let mut units: Vec<u16> = "en-US\0de\0\0".encode_utf16().collect();
-    units.extend(std::iter::repeat(0).take(64));
+    units.extend(std::iter::repeat_n(0, 64));
     assert_eq!(
         parse_multi_string(&units),
         vec!["en-US".to_string(), "de".to_string()]

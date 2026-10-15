@@ -51,7 +51,9 @@ pub fn radio_button(
         pressed,
     )
 }
-
+#[allow(clippy::too_many_arguments)]
+// 参数是画一次所需的全部输入，彼此没有可成组打包的语义 —— 凑一个 struct 只是把
+// 8 个参数搬进另一个名字，读的人反而要多跳一层。见 AGENTS.md「代码自解释优先」。
 /// 三个选中控件的公共骨架。`row` / `indicator` / `mark` 都是分类名 ——
 /// 三种长相（方/圆/药丸）由样式表按这三组词分别说。
 fn check_like(

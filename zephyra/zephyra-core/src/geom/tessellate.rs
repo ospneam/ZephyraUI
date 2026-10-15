@@ -192,7 +192,7 @@ pub fn triangulate(contours: &[Contour], rule: FillRule) -> Result<TriMesh, TriM
     for g in &groups {
         let expected = abs_area(&g.outer) - g.holes.iter().map(|h| abs_area(h)).sum::<f32>();
         let tris = earcut_triangulate(&g.outer, &g.holes);
-        let actual: f32 = tris.iter().map(|t| tri_area(t)).sum();
+        let actual: f32 = tris.iter().map(tri_area).sum();
         // 相对 0.5% + 绝对 0.05：前者抓"盖不全一大片"，后者抓"小图标差一点点"。
         // 定得太紧会把浮点累积误差误判成退化（症状：一个本该正常的图标消失）。
         let tol = expected.abs() * 0.005 + 0.05;

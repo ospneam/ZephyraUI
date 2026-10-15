@@ -334,7 +334,7 @@ fn offset_does_not_affect_hit_testing() {
     let mut ra = HitResult::default();
     let mut rb = HitResult::default();
     assert!(
-        zephyra_core::hit::hit_test(&na, req.clone(), ctx, &mut ra),
+        zephyra_core::hit::hit_test(&na, req, ctx, &mut ra),
         "未平移的树应当命中"
     );
     assert!(

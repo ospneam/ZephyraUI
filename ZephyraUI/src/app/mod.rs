@@ -284,13 +284,13 @@ pub fn resolve_route(key: &str) -> Option<&'static str> {
 /// 但保留它让函数对任何输入都返回合法路由（`match` 里不留 panic）。
 fn key_of_static(key: &str) -> &'static str {
     if let Some((id, _, _)) = ROUTES.iter().find(|(id, _, _)| *id == key) {
-        return *id;
+        return id;
     }
     if key == SETTINGS_ROUTE.0 {
         return SETTINGS_ROUTE.0;
     }
     if let Some((route, _)) = catalog::GROUP_ROUTES.iter().find(|(r, _)| *r == key) {
-        return *route;
+        return route;
     }
     if let Some(e) = catalog::entry(key) {
         return e.page;
@@ -352,7 +352,7 @@ pub struct Gallery {
     pub round_on: bool,
     /// Basic Input 页：DropDownButton 的展开态。
     pub dd_open: bool,
-    /// 是否请求 Mica 材质外观（标题栏半透明）。	rue = 应用想要；alse = 实色。
+    /// 是否请求 Mica 材质外观（标题栏半透明）。true = 应用想要；false = 实色。
     /// 平台能不能真的开由 zephyra-platform-win 回答，不影响这里。
     pub mica: bool,
     /// Menus 演示：菜单栏当前展开项（None = 全收起）。

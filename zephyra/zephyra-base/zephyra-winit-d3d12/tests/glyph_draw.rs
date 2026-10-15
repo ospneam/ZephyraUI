@@ -113,7 +113,7 @@ impl View for TextHeavy {
             .with_children(self.lines.iter().enumerate().map(|(i, line)| {
                 Element::new(NodeTag::Text)
                     .with_key(*line)
-                    .with(&props::TEXT, PropertyValue::static_str(*line))
+                    .with(&props::TEXT, PropertyValue::static_str(line))
                     .with(&props::TEXT_SIZE, PropertyValue::float(TEXT_PX))
                     .with(&Z_INDEX, PropertyValue::int(i as i32))
             }))

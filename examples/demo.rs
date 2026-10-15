@@ -193,17 +193,7 @@ fn button(name: &'static str, demo: &Demo) -> Element {
 /// 所以这里显式映射而不是直接用 `name`。映射不到时返回**原名**：
 /// 图标集查不到会回落到空图标（不产出命令），症状是"少一个图标"而不是崩掉。
 fn icon_name(button: &'static str) -> &'static str {
-    match button {
-        "menu" => "menu",
-        "pen" => "pen",
-        "eraser" => "eraser",
-        "undo" => "undo",
-        "image" => "image",
-        "camera" => "camera",
-        "gear" => "gear",
-        "settings" => "settings",
-        other => other,
-    }
+    button
 }
 
 #[cfg(test)]
@@ -684,7 +674,9 @@ fn dump_cpu() {
     let batch = host.batch();
     let glyph_vertices = batch
         .solid
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .filter(|c| (c[0].kind - zephyra_fx::quad::kind::GLYPH).abs() < 0.01)
         .count();
     println!(
@@ -773,7 +765,7 @@ fn dump_cpu() {
     // 因为底色覆盖面积最大。这个基准无法被"画错了"骗过去：真出错时底色还在，
     // 而内容色会变。
     let mut counts: std::collections::HashMap<[u8; 3], usize> = Default::default();
-    for p in canvas.pixels.chunks_exact(4) {
+    for p in canvas.pixels.as_chunks::<4>().0 {
         *counts.entry([p[0], p[1], p[2]]).or_default() += 1;
     }
     let Some((&bg, _)) = counts.iter().max_by_key(|(_, n)| **n) else {
@@ -782,7 +774,9 @@ fn dump_cpu() {
     };
     let lit = canvas
         .pixels
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .filter(|p| [p[0], p[1], p[2]] != bg)
         .count();
     let total = (w * h) as usize;

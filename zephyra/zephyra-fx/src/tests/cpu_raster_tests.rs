@@ -43,7 +43,7 @@ fn path_batch() -> quad::QuadBatch {
 /// 判据分两半，缺一不可：
 /// 1. 三角形的**内部**像素必须是白色（证明确实画了）；
 /// 2. 三角形**外面**必须保持清屏色（证明没有把整块乱糊）。
-/// 只断言第 1 条的话，「无条件填满画布」也能过。
+///    只断言第 1 条的话，「无条件填满画布」也能过。
 #[test]
 fn polygon_rasterizes_onto_canvas() {
     let batch = path_batch();

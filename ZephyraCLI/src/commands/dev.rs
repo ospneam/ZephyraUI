@@ -60,7 +60,7 @@ pub fn run(a: &Args, w: &mut dyn Write) -> Result<ExitCode, CliError> {
     }
 
     let watch = !a.has("no-watch");
-    let cargo = cargo;
+
     let mut child = match std::process::Command::new(&cargo).args(&cmd).spawn() {
         Ok(c) => c,
         Err(e) => {

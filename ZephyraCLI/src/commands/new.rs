@@ -96,7 +96,7 @@ pub fn run(a: &Args, w: &mut dyn Write) -> Result<ExitCode, CliError> {
         "  zephyra check styles/app.zstyle   # {}.zstyle",
         name
     ));
-    w.line(&format!("  zephyra run"));
+    w.line("  zephyra run");
     Ok(ExitCode::Success)
 }
 

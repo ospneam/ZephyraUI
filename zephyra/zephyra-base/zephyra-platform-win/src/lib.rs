@@ -172,14 +172,14 @@ fn apply(window: WindowHandle, chrome: WindowChrome) -> ApplyOutcome {
     };
 
     let caption_color = match chrome.caption_color {
-        // DWMWA_CAPTION_COLOR = 35，COLORREF。
-        Some(rgb) if caps.caption_color => set_dwm(hwnd, DwmAttr::CaptionColor, &COLORREF(rgb)),
+        // DWMWA_CAPTION_COLOR = 35，ColorRef。
+        Some(rgb) if caps.caption_color => set_dwm(hwnd, DwmAttr::CaptionColor, &ColorRef(rgb)),
         _ => false,
     };
 
     let border_color = match chrome.border_color {
-        // DWMWA_BORDER_COLOR = 34，COLORREF。
-        Some(rgb) if caps.border_color => set_dwm(hwnd, DwmAttr::BorderColor, &COLORREF(rgb)),
+        // DWMWA_BORDER_COLOR = 34，ColorRef。
+        Some(rgb) if caps.border_color => set_dwm(hwnd, DwmAttr::BorderColor, &ColorRef(rgb)),
         _ => false,
     };
 
@@ -226,9 +226,9 @@ fn apply(window: WindowHandle, chrome: WindowChrome) -> ApplyOutcome {
 enum DwmAttr {
     /// `DWMWA_USE_IMMERSIVE_DARK_MODE` = 20，`BOOL`。
     UseImmersiveDarkMode,
-    /// `DWMWA_BORDER_COLOR` = 34，`COLORREF`。
+    /// `DWMWA_BORDER_COLOR` = 34，`ColorRef`。
     BorderColor,
-    /// `DWMWA_CAPTION_COLOR` = 35，`COLORREF`。
+    /// `DWMWA_CAPTION_COLOR` = 35，`ColorRef`。
     CaptionColor,
     /// `DWMWA_WINDOW_CORNER_PREFERENCE` = 33，`DWM_WINDOW_CORNER_PREFERENCE`。
     WindowCornerPreference,
@@ -294,7 +294,7 @@ fn set_dwm(
     // - `hwnd` 已由调用点判过非空；
     // - `bytes` 是本函数栈上 4 字节，DWM 按 `cbAttribute` 同步读取，生命周期覆盖调用；
     // - `attr` 全部来自文档枚举（见 [`DwmAttr`]），值类型与文档一致
-    //   （BOOL / COLORREF / 枚举 int32）。
+    //   （BOOL / ColorRef / 枚举 int32）。
     unsafe {
         DwmSetWindowAttribute(hwnd, attr.raw(), bytes.as_ptr().cast(), bytes.len() as u32).is_ok()
     }
@@ -321,7 +321,7 @@ impl AsDwmValue for I32 {
 }
 
 #[cfg(windows)]
-impl AsDwmValue for COLORREF {
+impl AsDwmValue for ColorRef {
     fn as_bytes(&self) -> [u8; 4] {
         self.0.to_le_bytes()
     }
@@ -345,7 +345,7 @@ struct I32(i32);
 
 #[cfg(windows)]
 #[derive(Debug, Clone, Copy)]
-struct COLORREF(u32);
+struct ColorRef(u32);
 
 // ---------------------------------------------------------------- 系统主题
 

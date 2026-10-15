@@ -273,7 +273,7 @@ impl Shaders {
         for (i, (name, bytes)) in PS_VARIANTS.iter().enumerate() {
             let mut p = None;
             unsafe { device.CreatePixelShader(bytes, None, Some(&mut p as *mut _)) }
-                .map_err(|e| ShaderError::Create(*name, e))?;
+                .map_err(|e| ShaderError::Create(name, e))?;
             ps.push(p.unwrap_or_else(|| {
                 panic!("CreatePixelShader({name}) 成功时必给着色器（变体 #{i}）")
             }));

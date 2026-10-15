@@ -671,13 +671,9 @@ impl GlyphAtlas {
                 .get(key)
                 .expect("策略返回的幸存者必须都还在图集里");
             let (pw, ph) = padded_size(e);
-            if shelf.place(pw, ph).is_none() {
-                return None;
-            }
+            shelf.place(pw, ph)?;
         }
-        if shelf.place(need_w, need_h).is_none() {
-            return None;
-        }
+        shelf.place(need_w, need_h)?;
 
         self.evictions += plan.dropped as u64;
         self.rebuild(&plan.survivors);

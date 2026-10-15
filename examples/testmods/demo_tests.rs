@@ -279,10 +279,12 @@ fn every_element_is_reachable_by_the_stylesheet() {
     walk(&node, &mut |n: &Node| {
         total += 1;
         if n.style_names().is_empty() && !bare.contains(&n.tag()) {
-            unreachable.push(format!(
-                "{}",
-                n.key().map(|k| k.to_string()).unwrap_or_else(|| "?".into())
-            ));
+            unreachable.push(
+                n.key()
+                    .map(|k| k.to_string())
+                    .unwrap_or_else(|| "?".into())
+                    .to_string(),
+            );
         }
     });
     assert!(

@@ -263,7 +263,9 @@ fn offset_side(
     }
     out
 }
-
+#[allow(clippy::too_many_arguments)]
+// 参数是画一次所需的全部输入，彼此没有可成组打包的语义 —— 凑一个 struct 只是把
+// 8 个参数搬进另一个名字，读的人反而要多跳一层。见 AGENTS.md「代码自解释优先」。
 /// 在 `prev_end` 与 `next_start` 之间补接头。
 ///
 /// - `prev_end`：入边（第 `i-1` 段）偏移线的**终点**（顶点 i 处）

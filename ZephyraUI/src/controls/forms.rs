@@ -206,7 +206,9 @@ pub fn combo_box(key: &'static str, value: &'static str, hovered: bool, pressed:
             .style("combo-chevron"),
     ])
 }
-
+#[allow(clippy::too_many_arguments)]
+// 参数是画一次所需的全部输入，彼此没有可成组打包的语义 —— 凑一个 struct 只是把
+// 8 个参数搬进另一个名字，读的人反而要多跳一层。见 AGENTS.md「代码自解释优先」。
 /// 数字框（RinUI SpinBox）：值 + 右两枚 32×24 扁平上/下按钮。
 ///
 /// `value` 是内容（当前数值的文字形式）。上/下按钮各自带 hover/pressed
@@ -270,7 +272,7 @@ pub fn color_picker(key: &'static str, selected: usize) -> Element {
                     let mut cell = Element::new(NodeTag::Container)
                         .with_key(gen_swatch_key(index))
                         .style("swatch")
-                        .style(*sw);
+                        .style(sw);
                     if index == selected {
                         cell = cell.style("selected");
                     }

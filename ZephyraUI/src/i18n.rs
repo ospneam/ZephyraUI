@@ -161,7 +161,7 @@ impl Tag {
         match (&self.region, &other.region) {
             (Some(a), Some(b)) if a == b => Some(0),
             (None, _) | (_, None) => Some(2),
-            _ => return None,
+            _ => None,
         }
     }
 }

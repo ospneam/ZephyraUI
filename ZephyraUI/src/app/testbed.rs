@@ -92,7 +92,7 @@ fn icon_row() -> Element {
                         // `iter()` 给 `&&str`，但 `with_key` 要 `&str`（元素），
                         // 所以解一层：`*n`。这里用 `.copied()` 让 `n: &str` 更直白。
                         .with_key(*n)
-                        .with(&props::ICON_NAME, PropertyValue::static_str(*n))
+                        .with(&props::ICON_NAME, PropertyValue::static_str(n))
                         .style("testbed-icon")
                 })
                 .collect::<Vec<Element>>(),
@@ -159,7 +159,7 @@ fn effects() -> Element {
         },
     ]);
 
-    let row = Element::new(NodeTag::Container)
+    Element::new(NodeTag::Container)
         .with_key("effects-row")
         .style("testbed-effects")
         .with_children([
@@ -196,8 +196,7 @@ fn effects() -> Element {
                 BlendMode::Multiply,
             ),
             swatch("fx-screen", "warm", FilterChain::none(), BlendMode::Screen),
-        ]);
-    row
+        ])
 }
 
 /// 一个样张：底板（混合目标）+ 样本（混合源）+ 说明。

@@ -898,7 +898,9 @@ fn next_order(order: &mut u32) -> u32 {
 /// 再往下收（0.05）会让三角形数翻几倍，收益却看不见 —— 屏幕上仍然是一个 16~24 像素
 /// 宽的图标，肉眼分辨不出 0.05 DIP 的曲率。
 const FLATTEN_TOLERANCE: f32 = 0.25;
-
+#[allow(clippy::too_many_arguments)]
+// 参数是画一次所需的全部输入，彼此没有可成组打包的语义 —— 凑一个 struct 只是把
+// 8 个参数搬进另一个名字，读的人反而要多跳一层。见 AGENTS.md「代码自解释优先」。
 /// 图标 → [`Command::Path`]。
 ///
 /// # 这条链是几何层唯一的生产入口

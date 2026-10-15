@@ -747,7 +747,14 @@ fn interaction_leaves_no_stale_appearance() {
     let styler = || Box::new(SheetStyler(sheet.clone())) as Box<dyn zephyra_core::styler::Styler>;
 
     // 脚本覆盖四类会改外观的状态：路由、勾选、开关、折叠、选中、悬停/按下。
-    let script: Vec<(&str, fn(&mut Gallery))> = vec![
+
+    /// 一条门禁脚本：改哪儿（名字） + 怎么改（闭包）+ 期望（由闭包自己断言）。
+    ///
+    /// 提取成别名的理由：这个闭包类型在同文件里出现三次，每次写全都很长，
+    /// 而它本身并不比它的名字更说明问题。
+    type GateScripts = Vec<(&'static str, fn(&mut Gallery))>;
+
+    let script: GateScripts = vec![
         ("切到 basic-input", |g| g.route = "basic-input"),
         ("勾上 alpha", |g| g.checked[0] = true),
         ("再勾 beta 与 gamma", |g| {

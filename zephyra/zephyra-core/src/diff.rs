@@ -87,18 +87,10 @@ impl DiffStats {
 /// 为什么是**栈**而不是两个平铺的 `Vec`：父层必须把自己的 `out` 一直握着
 /// （子节点要往里 push），而子层的 `out` 又不能是同一个 —— 平铺就得再开一层
 /// 间接寻址，而栈的 push/pop 正好就是那层间接。
+#[derive(Default)]
 pub(crate) struct Scratch {
     pool: Vec<Vec<Option<Node>>>,
     out: Vec<Vec<Node>>,
-}
-
-impl Default for Scratch {
-    fn default() -> Self {
-        Self {
-            pool: Vec::new(),
-            out: Vec::new(),
-        }
-    }
 }
 
 /// 以新元素对账旧节点树（自建缓冲的一次性入口）。

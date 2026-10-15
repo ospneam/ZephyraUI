@@ -1795,7 +1795,7 @@ impl Renderer {
         report.vertex_bytes = (scratch.vertices.len() * std::mem::size_of::<Vertex>()) as u64;
         report.quads = scratch.solid.len() / 4 + scratch.images.len() / 4;
         report.path_triangles = scratch.paths.len() / 3;
-        self.upload_geometry(device, list, &mut scratch, &mut report)?;
+        self.upload_geometry(device, list, &scratch, &mut report)?;
         self.bind_state(list, env, env.size, env.damage)?;
         if !scratch.vertices.is_empty() {
             self.replay(
@@ -1866,7 +1866,9 @@ impl Renderer {
         }
         Ok(())
     }
-
+    #[allow(clippy::too_many_arguments)]
+    // 参数是画一次所需的全部输入，彼此没有可成组打包的语义 —— 凑一个 struct 只是把
+    // 8 个参数搬进另一个名字，读的人反而要多跳一层。见 AGENTS.md「代码自解释优先」。
     /// 逐 `DrawRun` 回放：一段一个 draw，PSO 与混合模式**成对**换。
     ///
     /// # 为什么按 [`quad::DrawRun`] 走而不是按「矩形/图像/多边形」分三段
@@ -2085,7 +2087,7 @@ impl Renderer {
         );
         inner_report.vertex_bytes = (scratch.vertices.len() * std::mem::size_of::<Vertex>()) as u64;
         inner_report.quads = scratch.solid.len() / 4 + scratch.images.len() / 4;
-        self.upload_geometry(device, list, &mut scratch, &mut inner_report)?;
+        self.upload_geometry(device, list, &scratch, &mut inner_report)?;
         report.absorb(inner_report);
 
         let a_rtv = a.rtv(&self.offscreen_rtv_heap)?;

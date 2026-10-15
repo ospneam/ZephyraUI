@@ -967,10 +967,8 @@ impl Surface {
                 //
                 // 采样数**沿用原值**而不是重新查设备：重建失败时退化成
                 // "尺寸对但没有 MSAA 目标"，那比尺寸不对更难查。
-                self.msaa = match build_msaa_target(&self.device, (width, height), self.samples()) {
-                    Ok(m) => m,
-                    Err(_) => None,
-                };
+                self.msaa = build_msaa_target(&self.device, (width, height), self.samples())
+                    .unwrap_or_default();
                 // 尺寸变了 → 交换链重建 → DComp 侧的 visual 内容绑定必须重新提交一次，
                 // 否则合成器仍持有旧后缓冲的引用。
                 if let Some(c) = &self._compositor {

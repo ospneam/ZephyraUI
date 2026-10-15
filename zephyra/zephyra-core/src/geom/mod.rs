@@ -178,7 +178,7 @@ pub fn contour_area_with_rule(contours: &[Contour], rule: FillRule) -> f32 {
                         depth += 1;
                     }
                 }
-                let sign = if depth % 2 == 0 { 1.0 } else { -1.0 };
+                let sign = if depth.is_multiple_of(2) { 1.0 } else { -1.0 };
                 total += sign * abs_area(c.points());
             }
             total

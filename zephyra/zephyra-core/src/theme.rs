@@ -217,11 +217,7 @@ impl Theme {
                 0xcb as f32 / 255.0,
                 0x5f as f32 / 255.0,
             ),
-            caution: Color::rgb(
-                0xfc as f32 / 255.0,
-                0xe1 as f32 / 255.0,
-                0.00 as f32 / 255.0,
-            ),
+            caution: Color::rgb(0xfc as f32 / 255.0, 0xe1 as f32 / 255.0, 0.00_f32 / 255.0),
             critical: Color::rgb(
                 0xff as f32 / 255.0,
                 0x99 as f32 / 255.0,

@@ -346,8 +346,7 @@ impl Gpu {
         }
         let slots = slots_arr
             .each_mut()
-            .map(|o| o.take().expect("刚刚逐个塞进去的"))
-            .into();
+            .map(|o| o.take().expect("刚刚逐个塞进去的"));
 
         let fence: ID3D12Fence = unsafe { device.CreateFence(0, D3D12_FENCE_FLAG_NONE) }
             .map_err(|e| SurfaceError::new("CreateFence", e))?;

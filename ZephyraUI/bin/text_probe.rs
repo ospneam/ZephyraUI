@@ -61,6 +61,9 @@ fn main() {
     let frame = host.frame();
 
     let batch = host.batch();
+    // 刻意用 chunks_exact 而不是 as_chunks：后者返回元组，接 .filter 要多写一跳，
+    // 而这里只需要「四��一组」这一件事 —— 少一跳比少一个 lint 划算。
+    #[allow(clippy::chunks_exact_to_as_chunks)]
     let glyphs: Vec<_> = batch
         .solid
         .chunks_exact(4)

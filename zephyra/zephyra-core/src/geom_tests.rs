@@ -147,7 +147,7 @@ fn collinear_control_points_do_not_split() {
 #[test]
 fn semicircle_sagitta_error_within_tolerance() {
     // 用四次贝塞尔逼近 180° 圆弧：弦高误差必须 ≤ TOLERANCE。
-    let k = 0.5522847498307933_f32;
+    let k = 0.552_284_8_f32;
     let segs = vec![
         Segment::MoveTo(0.0, 10.0),
         Segment::CubicTo(0.0, 10.0 - 10.0 * k, 10.0 * k, 0.0, 10.0, 0.0),

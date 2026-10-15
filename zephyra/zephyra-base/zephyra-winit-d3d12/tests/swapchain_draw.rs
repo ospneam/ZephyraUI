@@ -184,7 +184,7 @@ fn resize_之后仍然能画() {
         gpu.begin_frame().expect("开帧失败");
         // 失败时立刻拉调试层消息 —— `drain_debug` 只在 `begin_frame` 开头调，
         // 而这里还没到下一帧，那时命令可能已经被下一条错误淹掉了。
-        if let Err(e) = chain.resize(&mut gpu, size) {
+        if let Err(e) = chain.resize(&gpu, size) {
             gpu.drain_debug();
             panic!("resize 到 {size:?} 失败: {e}");
         }
@@ -487,7 +487,7 @@ fn probe2_resize_buffers_矩阵() {
         if mode >= 10 {
             gpu.recreate_command_slots().expect("销毁重建命令槽");
         }
-        let r = chain.resize(&mut gpu, (SIZE * 2, SIZE * 2));
+        let r = chain.resize(&gpu, (SIZE * 2, SIZE * 2));
         println!(
             "[probe2] {label} 采样{samples}: 第一次 resize={} 重建={} 尺寸={:?}",
             if r.is_ok() { "Ok  " } else { "Err " },
@@ -499,7 +499,7 @@ fn probe2_resize_buffers_矩阵() {
         //   「第一次失败、第二次成功」⇒ 是**一次性**状态（提交后还没排空之类）。
         //   「两次都失败」     ⇒ 引用是**持续**持有的，重试救不了。
         if r.is_err() || chain.was_recreated() {
-            let r2 = chain.resize(&mut gpu, (SIZE * 3, SIZE * 2));
+            let r2 = chain.resize(&gpu, (SIZE * 3, SIZE * 2));
             println!(
                 "[probe2] {label}: 紧接着第二次 resize={} 重建={} 尺寸={:?}",
                 if r2.is_ok() { "Ok  " } else { "Err " },
@@ -512,7 +512,7 @@ fn probe2_resize_buffers_矩阵() {
         //   若与「紧接着重试」结果不同 ⇒ 是**时间**问题（GPU/DXGI 异步侧还没完）。
         std::thread::sleep(std::time::Duration::from_millis(300));
         gpu.wait_gpu().expect("等 GPU 失败");
-        let r3 = chain.resize(&mut gpu, (SIZE, SIZE * 2));
+        let r3 = chain.resize(&gpu, (SIZE, SIZE * 2));
         println!(
             "[probe2] {label}: 等 300ms 后 resize={} 重建={} 尺寸={:?} removed=0x{:08X}",
             if r3.is_ok() { "Ok  " } else { "Err " },
@@ -567,7 +567,7 @@ fn probe_resize_buffers_被哪一步卡住() {
             }
         }
 
-        let r = chain.resize(&mut gpu, (SIZE * 2, SIZE * 2));
+        let r = chain.resize(&gpu, (SIZE * 2, SIZE * 2));
         println!(
             "[probe] {label}: resize = {}, 重建 = {}, 链尺寸 {:?}",
             match &r {
@@ -620,7 +620,7 @@ fn old_swapchain_must_survive_until_host_rebinds() {
     chain.present(1).expect("present 失败");
 
     chain
-        .resize(&mut gpu, (SIZE * 2, SIZE * 2))
+        .resize(&gpu, (SIZE * 2, SIZE * 2))
         .expect("resize 应当成功");
     assert!(chain.was_recreated(), "本机画过之后必然走重建");
 
@@ -655,14 +655,14 @@ fn old_swapchain_must_survive_until_host_rebinds() {
 /// 而窗口最小化是**正常使用**的一部分。
 #[test]
 fn zero_sized_resize_is_ignored_not_an_error() {
-    let Ok(mut gpu) = Gpu::new() else {
+    let Ok(gpu) = Gpu::new() else {
         panic!("建不出 D3D12 设备");
     };
     let mut chain =
         Swapchain::new(&gpu, (SIZE, SIZE), &swapchain_desc(), MSAA_SAMPLES).expect("建交换链");
     for bad in [(0, 0), (0, 480), (640, 0)] {
         chain
-            .resize(&mut gpu, bad)
+            .resize(&gpu, bad)
             .unwrap_or_else(|e| panic!("resize 到 {bad:?} 不该报错，却得到 {e}"));
         assert_eq!(chain.size(), (SIZE, SIZE), "尺寸不该被零值改写");
     }

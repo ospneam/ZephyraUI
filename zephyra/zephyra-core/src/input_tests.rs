@@ -96,7 +96,7 @@ fn an_interactive_node_is_actually_reported_as_interactive() {
     let node = tree(&two_buttons());
     let result = hit_at(&node, 10.0, 10.0);
     let target = result.target().expect("落在可交互按钮上时必须有 target");
-    assert_eq!(target.id, crate::id::ElementKey::Name("a".into()));
+    assert_eq!(target.id, crate::id::ElementKey::Name("a"));
     assert!(target.interactive);
 }
 
@@ -141,10 +141,10 @@ fn a_container_is_on_the_path_but_is_not_the_target() {
     assert!(result
         .path
         .iter()
-        .any(|n| n.id == crate::id::ElementKey::Name("root".into())));
+        .any(|n| n.id == crate::id::ElementKey::Name("root")));
     assert_eq!(
         result.target().map(|n| &n.id),
-        Some(&crate::id::ElementKey::Name("a".into()))
+        Some(&crate::id::ElementKey::Name("a"))
     );
 }
 
