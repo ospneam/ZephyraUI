@@ -407,7 +407,7 @@ impl PropertyChange {
 /// [`PropertyKey`] 的 `layout` 字段，由**构造器**在定义时定死，于是「忘了声明」
 /// 从一次静默的布局错位变成**编译错误**。
 ///
-/// 保留它只有一个理由：[`crate::layout_classification_tests`] 用它**独立复算**一遍
+/// 保留它只有一个理由：`crate::layout_classification_tests` 用它**独立复算**一遍
 /// 每个真实 `props::*` 键的分类——**独立复算**才有意义：如果测试只是读字段本身，
 /// 那它就只是把字段抄了一遍，改错了也会一起错、永远绿。
 ///

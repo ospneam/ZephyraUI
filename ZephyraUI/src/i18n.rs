@@ -21,15 +21,15 @@
 //!
 //! | 浏览器 | 本模块 |
 //! |---|---|
-//! | BCP 47 标签 | [`Tag`]（language-script-region 三段，大小写规范化） |
-//! | `navigator.languages` 有序偏好表 | [`Preferences`]（有序，含"第一个"= `language`） |
-//! | `Intl` 逐个回退匹配 | [`negotiate`] |
-//! | `q` 值（`Accept-Language` 的权重） | [`Preferences::with_weight`] |
+//! | BCP 47 标签 | `Tag`（language-script-region 三段，大小写规范化） |
+//! | `navigator.languages` 有序偏好表 | `Preferences`（有序，含"第一个"= `language`） |
+//! | `Intl` 逐个回退匹配 | `negotiate` |
+//! | `q` 值（`Accept-Language` 的权重） | `Preferences::with_weight` |
 //!
 //! # 不做的，以及为什么
 //!
 //! - **复数规则**：CLDR 的复数类别（zero/one/two/few/many/other）需要按语言的
-//!   选择规则与关键词表，那是数据而不是逻辑。本模块只提供 [`Messages::select`]
+//!   选择规则与关键词表，那是数据而不是逻辑。本模块只提供 `Messages::select`
 //!   这个**槽位**，规则数据不进来 —— 硬编码"英文式 one/other"会静默给错中文与
 //!   俄文，而无声的错误比没有更糟。
 //! - **日期/数字格式化**：官方例子用的是 `Intl.DateTimeFormat`，那是 ICU。
@@ -396,7 +396,7 @@ impl Messages {
     ///
     /// # 存在的理由只有门禁
     ///
-    /// 真实表被 [`crate::app::CATALOG`] 门禁钉住「不缺键」，所以回退链没法靠
+    /// 真实表被 `crate::app::CATALOG` 门禁钉住「不缺键」，所以回退链没法靠
     /// 真的漏翻来测 —— 必须有一把"制造漏翻"的刀。
     /// 这类**只为测试存在**的 API 很少，但这条值得有：否则回退链的两档
     /// （默认语言、键名）就只能靠注释声明，而本仓不接受"注释说它工作"。

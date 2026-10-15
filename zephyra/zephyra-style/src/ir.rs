@@ -4,7 +4,7 @@
 //!
 //! 1. **一条声明**写给谁（[`Selector`]）
 //! 2. 声明**什么属性**是什么值（[`Declaration`]）
-//! 3. 多条声明同时命中时**谁赢**（由 [`StyleRule::specificity`] + 出现顺序决定）
+//! 3. 多条声明同时命中时**谁赢**（由 [`Selector::specificity`] + 出现顺序决定）
 //!
 //! # 为什么单独拆一层
 //!
@@ -40,8 +40,8 @@ pub struct Declaration {
 ///
 /// | 变体 | CSS 等价 | 匹配什么 |
 /// |---|---|---|
-/// | [`Selector::Tag`] | `Button { }` | 按元素类型 |
-/// | [`Selector::Named`] | `.危险 { }` | 按源码给的分类名 |
+/// | `Selector::Tag` | `Button { }` | 按元素类型 |
+/// | `Selector::Named` | `.危险 { }` | 按源码给的分类名 |
 ///
 /// 形状必须是 `Tag + Named + …` 这样的列表，语义上等价于 Chrome 的
 /// `Tag.Named` 组合：**同一个元素带多个分类名时，全都匹配上才命中**。

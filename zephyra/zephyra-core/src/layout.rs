@@ -569,7 +569,7 @@ pub fn measure(node: &mut Node, constraints: Constraints, ctx: Context<'_>) -> S
 ///
 /// resize 实测每帧 1709 次分配、约合每节点 2.8 次（`--bench-resize --alloc-probe`）。
 ///
-/// # 为什么不用 [`Stack::each_rect`] 那样的流式回调
+/// # 为什么不用 `Stack::each_rect` 那样的流式回调
 ///
 /// 递归要的是 `&mut Node`，而尺寸要从同一个节点的**子节点**里读 ——
 /// 闭包迭代器会同时借走 `&Node`，与随后的 `&mut` 冲突。所以两趟都写成显式循环：

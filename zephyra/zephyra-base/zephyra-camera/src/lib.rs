@@ -1,3 +1,4 @@
+#![deny(rustdoc::broken_intra_doc_links)]
 //! `zephyra-camera`：摄像头采集与像素格式处理。
 //!
 //! # 为什么是**子包**而不是 `zephyra-core` 的一部分

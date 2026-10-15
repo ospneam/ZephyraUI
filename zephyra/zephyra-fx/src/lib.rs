@@ -1,3 +1,4 @@
+#![deny(rustdoc::broken_intra_doc_links)]
 //! GPU **后端无关**的那一层：顶点展开、字形图集、纹理表、CPU 参考光栅器。
 //!
 //! # 为什么要有这个 crate
@@ -140,7 +141,7 @@ pub struct InputState {
     pub dt_ms: f32,
     /// 系统的语言偏好（有序，最偏好的在前）—— 对应浏览器的 `navigator.languages`。
     ///
-    /// 宿主经 [`zephyra_platform::Platform::system_languages`] 读，读不到给空表。
+    /// 宿主经 `zephyra_platform::Platform::system_languages` 读，读不到给空表。
     /// **空表不是"英语"**，是"读不到"：上层据此回落默认语言，
     /// 而不是把界面钉死在某一门上。
     ///

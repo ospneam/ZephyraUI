@@ -1,3 +1,4 @@
+#![deny(rustdoc::broken_intra_doc_links)]
 //! `zstylec` 的库入口：解析 `.zstyle` 文本。
 //!
 //! # 为什么既是 bin 又是 lib

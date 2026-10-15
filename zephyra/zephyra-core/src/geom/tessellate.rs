@@ -1263,7 +1263,7 @@ fn z_order(x: f32, y: f32, min_x: f32, min_y: f32, inv_size: f32) -> u32 {
 ///
 /// 这是本模块面向调用方的**主要**接口：SVG 路径进来，三角化顶点出去。
 ///
-/// `tessellate` 是"填充"的入口；要描边请先 [`super::flatten`] 再对每条轮廓调
+/// `tessellate` 是"填充"的入口；要描边请先 [`crate::geom::flatten::flatten`] 再对每条轮廓调
 /// [`super::stroke_outline`]，最后合并 [`triangulate`] —— 描边的轮廓集与填充的
 /// 轮廓集在三角化器眼里没有区别。
 pub fn tessellate(

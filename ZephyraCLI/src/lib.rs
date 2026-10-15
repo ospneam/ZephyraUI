@@ -1,3 +1,4 @@
+#![deny(rustdoc::broken_intra_doc_links)]
 //! `zephyra-cli` 的库入口：命令表、参数解析、退出码。
 //!
 //! # 为什么命令表是数据而不是 `match`

@@ -1,3 +1,4 @@
+#![deny(rustdoc::broken_intra_doc_links)]
 //! ZephyraUI 的 D3D12 渲染后端。
 //!
 //! # 与 `zephyra-winit`（D3D11）的关系

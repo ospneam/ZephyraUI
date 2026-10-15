@@ -35,7 +35,7 @@ pub struct Context<'a> {
     /// `None` 表示「本进程没有图标能力」—— 与 `engine` 同一套降级语义：
     /// 图标节点不产出命令，其余部分完全不受影响。
     ///
-    /// 类型是 `&'static IconSet`（[`IconSet::get`] 返回 `&'static Icon`，
+    /// 类型是 `&'static IconSet`（`IconSet::get` 返回 `&'static Icon`，
     /// 因为解析结果被 `OnceLock` 固化、全程共享），所以借用它零拷贝。
     pub icons: Option<&'static crate::icon::IconSet>,
 }

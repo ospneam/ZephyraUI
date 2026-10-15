@@ -21,11 +21,11 @@
 //!
 //! 因此本模块的**两种**取值必须分开用，混用会得到静默错误的结果：
 //!
-//! - [`WidthClass::of`] 的入参要**先除 scale** —— 官方 `AdaptiveTrigger.MinWindowWidth`
+//! - `WidthClass::of` 的入参要**先除 scale** —— 官方 `AdaptiveTrigger.MinWindowWidth`
 //!   的定义是 "the minimum window width (**in effective pixels**)"。
 //!   本机 1400×800 的客户区是 1120×640 **epx**；按物理像素判会整体错一档
 //!   （1400 判成"大"是对的，但 800 物理宽的窗口判成"小"是错的，它其实 640 epx = "中"）。
-//! - [`columns_for`] 用**布局单位** —— 它要除的是卡片宽度，而卡片宽度是布局单位。
+//! - `columns_for` 用**布局单位** —— 它要除的是卡片宽度，而卡片宽度是布局单位。
 //!
 //! 这个不一致本身记在 `docs/responsive-and-touch.md` §5：把基准改成有效像素是
 //! 独立的一轮，不与响应式混做，否则一次改动同时动了「哪套布局」和「布局有多大」。

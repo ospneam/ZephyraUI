@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+#![deny(rustdoc::broken_intra_doc_links)]
 //! # ZephyraUI — 保留/声明式、GPU 优先的 UI 框架核心
 //!
 //! 一个把「状态」降到「像素」的过程拆成可替换的两半的框架：核心负责**决定画什么**，

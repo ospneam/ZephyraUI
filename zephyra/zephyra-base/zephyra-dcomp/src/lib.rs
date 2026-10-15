@@ -1,3 +1,4 @@
+#![deny(rustdoc::broken_intra_doc_links)]
 //! `zephyra-dcomp`：DirectComposition 呈现后端。
 //!
 //! 一个窗口的**呈现**这件事由本 crate 负责：把渲染好的后缓冲挂进 DComp visual 树，

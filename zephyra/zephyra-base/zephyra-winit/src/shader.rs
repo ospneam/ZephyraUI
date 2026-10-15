@@ -75,7 +75,7 @@ pub const VS_BYTECODE: &[u8] = include_bytes!("../shaders/zephyra.vs.bin");
 ///
 /// # 顺序**必须**与 `filter.rs` 的 `pub enum BlendMode` 一致
 ///
-/// [`PS_FOR_BLEND_MODE`] 按下标取表，所以 `BlendMode as usize` 直接就是索引。
+/// `PS_FOR_BLEND_MODE` 按下标取表，所以 `BlendMode as usize` 直接就是索引。
 /// `the_ps_variant_table_matches_the_blend_mode_enum` 逐项核对 29 个名字。
 ///
 /// `PSMain` 是默认路径（系数可表达模式走固定功能混合方程，PS 只算源色）；

@@ -1,3 +1,4 @@
+#![deny(rustdoc::broken_intra_doc_links)]
 //! # zephyra-winit
 //!
 //! ZephyraUI 的 winit + D3D11 宿主适配层，位于系统适配层 `zephyra/zephyra-base/`
@@ -91,7 +92,7 @@ pub use zephyra_fx::Z_INDEX;
 
 /// 窗口 + GPU + 保留树的组合体。
 ///
-/// 保留树（[`Node`]）跨帧存活 —— 这正是保留式相对即时式的收益：状态与纹理
+/// 保留树（`Node`）跨帧存活 —— 这正是保留式相对即时式的收益：状态与纹理
 /// 得以复用，只有真正变化的子树被重排/重绘。
 ///
 /// # 字段顺序不是随意的

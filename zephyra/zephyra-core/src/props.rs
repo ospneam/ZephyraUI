@@ -156,7 +156,7 @@ pub static IMAGE_SRC: PropertyKey =
 /// - 纹理句柄 → 走 [`crate::paint::Command::Image`]（采样，位图自带 AA）。
 ///
 /// 同时设两者时**图像胜出**（它不需要三角化，且已有位图缓存）。理由见
-/// [`crate::paint::render_rec`] 里那段的说明 —— 那是一条真会被写出来的歧义，
+/// `crate::paint::render_rec` 里那段的说明 —— 那是一条真会被写出来的歧义，
 /// 所以判据写在这里而不留在实现里。
 pub static ICON_NAME: PropertyKey = PropertyKey::new("Icon.Name", PropertyValue::static_str(""));
 

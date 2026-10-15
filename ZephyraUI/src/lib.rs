@@ -1,3 +1,4 @@
+#![deny(rustdoc::broken_intra_doc_links)]
 //! # ZephyraUI — core 之上的 UI 控件层
 //!
 //! 这一层只做一件事：把 [`zephyra_core`] 的属性 / 布局 / 样式机制**组装成控件**。

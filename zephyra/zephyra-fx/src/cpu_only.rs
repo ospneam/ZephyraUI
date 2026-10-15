@@ -61,7 +61,7 @@ pub type CpuTextEngine = crate::TextEngine;
 /// | `view` | 宿主 | 重建声明树 |
 /// | `diff` | core | 逐属性对账 |
 /// | `layout` | core | 递归摆矩形 |
-/// | `paint` | core | **排版 + 字形栅格化**（见 [`Self::paint`] 的警告）|
+/// | `paint` | core | **排版 + 字形栅格化**（见 `Self::paint` 的警告）|
 /// | `expand` | fx | `DisplayList` → 顶点 |
 ///
 /// 拆开之后"哪一段吞掉了帧时间"是**读出来的**，不用靠猜。

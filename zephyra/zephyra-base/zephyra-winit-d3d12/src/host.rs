@@ -462,11 +462,11 @@ impl<V: View> HostWindow<V> {
     /// 1. **句柄转换是本 crate 的事**：应用拿到的是 `&Window`，`HWND` 只有
     ///    拿到 `window.hwnd()` 的那一层才该碰；
     /// 2. **能力降级要在这里收敛**：平台不支持时不该让应用拿到一个"我以为
-    ///    设上了"的结果 —— [`ApplyOutcome`] 逐项如实返回；
+    ///    设上了"的结果 —— [`zephyra_platform::ApplyOutcome`] 逐项如实返回；
     /// 3. **可移植性**：应用调的是宿主方法，Linux 上宿主内部换成别的实现，
     ///    应用代码一个字不改。
     ///
-    /// 返回值即 [`ApplyOutcome`]，逐项说明"哪些真的生效了"。
+    /// 返回值即 [`zephyra_platform::ApplyOutcome`]，逐项说明"哪些真的生效了"。
     ///
     /// 取 `&mut self`：它会记下材质是否生效（影响每帧的 clear 色）。
     pub fn apply_window_chrome(
@@ -794,7 +794,7 @@ impl<V: View> HostWindow<V> {
     /// 阻塞在 `DefWindowProc` 里面 —— winit 自己的 `WndProc` 收到 `WM_SIZE` 后只做
     /// `userdata.send_event(Resized(..))`，**入队**，而主循环取不出来
     /// （winit-0.30.13 `platform_impl/windows/event_loop.rs:1397-1418`）。
-    /// 于是 [`Self::about_to_wait`] 那种「脏了就画」直到拖动结束才跑第一次。
+    /// 于是 `Self::about_to_wait` 那种「脏了就画」直到拖动结束才跑第一次。
     ///
     /// # 修法（照 XAML 的形状，不照直觉的形状）
     ///

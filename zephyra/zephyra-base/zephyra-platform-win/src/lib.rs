@@ -1,8 +1,9 @@
+#![deny(rustdoc::broken_intra_doc_links)]
 //! Windows 实现 [`zephyra_platform::Platform`]。
 //!
 //! # 这里只写**文档确证**的 API
 //!
-//! 每一条对应的文档出处写在 [`docs/win/01-window-attributes.md`]，本文件的
+//! 每一条对应的文档出处写在 docs/developer/win/01-window-attributes.md，本文件的
 //! 注释里也逐条标注。**未文档化的属性一律不用** —— 参照物 Rin-UI 用了
 //! `DWMWA_MICA_EFFECT = 1029`（官方枚举里没有），本仓不跟。
 //!
@@ -35,7 +36,7 @@ pub use version::build_number;
 
 /// Windows 平台实现。
 ///
-/// 无状态：版本号与系统主题都是**读一次**的外部事实，缓存在 [`OnceLock`] 里
+/// 无状态：版本号与系统主题都是**读一次**的外部事实，缓存在 [`std::sync::OnceLock`] 里
 /// （见 [`version::build_number`] 与 [`sys_theme`]），因此本结构体可以零成本复制。
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Windows;

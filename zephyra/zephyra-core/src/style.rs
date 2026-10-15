@@ -87,7 +87,7 @@ impl Node {
     /// 而绘制趟要的是完整的那个，于是单独给一个名字。
     ///
     /// 排版结果会经 [`crate::layout::MeasureResult::shaped`] 存进测量缓存，
-    /// 绘制趟 [`crate::paint::text_command`] 从那里取 —— 于是每帧只有**第一次**
+    /// 绘制趟 `crate::paint::text_command` 从那里取 —— 于是每帧只有**第一次**
     /// 排版，之后的绘制趟复用。
     pub fn shape(&self, ctx: Context<'_>) -> Option<crate::text::ShapedText> {
         let text = self.text()?;

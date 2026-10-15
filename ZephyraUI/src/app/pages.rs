@@ -25,7 +25,7 @@ use crate::controls::{
     tool_tip,
 };
 
-/// **基准画布**（[`app::BASE_VIEWPORT`] = 1400×800）下每个手排行的卡片数。
+/// **基准画布**（[`crate::app::BASE_VIEWPORT`] = 1400×800）下每个手排行的卡片数。
 ///
 /// 它**不是**排布用的常量 —— 排布列数由 [`Gallery::card_columns`] 按可用宽度现算
 /// （窄窗口降列、宽窗口加列，见官方的「重新排列」）。这里的用途是「基准外观不能变」
@@ -365,7 +365,7 @@ fn group_page(g: &Gallery, route: &'static str) -> Element {
         )])
 }
 
-/// 把卡片按 [`COLUMNS`] 切成若干横排行。
+/// 把卡片按 `COLUMNS` 切成若干横排行。
 ///
 /// 与 `clip_grid` 的区别：那个收**静态**的 `&[(&str,&str,&str)]` + 静态 key 表，
 /// 因为内容是编译期常量；这个收**运行时**收集的 `Vec<Element>`（key 来自

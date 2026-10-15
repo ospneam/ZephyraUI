@@ -1,3 +1,4 @@
+#![deny(rustdoc::broken_intra_doc_links)]
 //! 平台能力抽象层 —— **本 crate 一行平台代码都没有**。
 //!
 //! # 为什么要有这一层
@@ -9,7 +10,7 @@
 //! 于是这里只做一件事：**定义"能力"是什么**，不含任何 `cfg(windows)`。
 //! 实现分两个 crate：
 //!
-//! - [`zephyra_platform_win`] —— Windows 实现（DWM / 版本探测 / 系统主题）；
+//! - `zephyra_platform_win` —— Windows 实现（DWM / 版本探测 / 系统主题）；
 //! - [`stub`] —— 其它平台的空实现（**Linux 适配只需改这一个文件**）。
 //!
 //! # 上层怎么用（这决定了本 crate 的形状）

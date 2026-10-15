@@ -171,7 +171,7 @@ pub mod kind {
     /// 分支可言。`kind` 在这里只起一个作用：让调用方一眼看出这批顶点不是正常
     /// 图元，以及在调试打印里区分开。
     ///
-    /// 值取 4.0 是因为它必须**大于** [`kind_thresholds::PATH_MIN`]，否则一旦有人
+    /// 值取 4.0 是因为它必须**大于** `kind_thresholds::PATH_MIN`，否则一旦有人
     /// 让模糊四边形也走 `PSMain`，它会落进多边形分支"直接返回顶点色"——
     /// 症状是模糊结果变成一块纯色，且没有任何错误。
     pub const BLUR: f32 = 4.0;
@@ -205,7 +205,7 @@ pub mod kind_thresholds {
     pub const IMAGE_MIN: f32 = 1.5;
     /// 多边形分支的下界（`kind > 2.5`）。
     ///
-    /// ⚠ 这个阈值必须**大于** [`Self::IMAGE_MIN`]，否则多边形会落进图像分支去
+    /// ⚠ 这个阈值必须**大于** `Self::IMAGE_MIN`，否则多边形会落进图像分支去
     /// 采样纹理 —— 症状是多边形变成"绑在当前批次那张纹理上的采样结果"，
     /// 换个批次颜色就变，看起来像随机噪声而不是形状错误。
     pub const PATH_MIN: f32 = 2.5;
@@ -265,7 +265,7 @@ pub fn expand_indices(quads: usize) -> Vec<u16> {
 ///
 /// 可以用 `Draw( tris*3, 0 )` 配合"顶点缓冲按绘制偏移"省略索引 —— 但
 /// `DrawIndexed` 的 `StartIndexLocation` 与 `BaseVertexLocation` 在
-/// [`crate::base`] 那两个后端里都已接好，混用两条路径反而多一处要维护的约定。
+/// `crate::base` 那两个后端里都已接好，混用两条路径反而多一处要维护的约定。
 /// 索引段的总长是 `quads*6 + tris*3` 个 `u16`，一帧几百字节，可以忽略。
 pub fn expand_indices_with_paths(quads: usize, path_tris: usize) -> (Vec<u16>, u32) {
     let mut out = Vec::with_capacity(quads * 6 + path_tris * 3);
@@ -507,7 +507,7 @@ impl Vertex {
     /// # 抗锯齿
     ///
     /// 不扩几何、不算距离场：三角化后的多边形没有解析距离，边缘 AA 靠 **MSAA**。
-    /// 这与 [`crate::geom`] 的设计约定一致。
+    /// 这与 `crate::geom` 的设计约定一致。
     pub fn path(position: [f32; 2], color: [f32; 4]) -> Vertex {
         // 与 [`Self::quad`] 同一个理由：顶点色在**预乘空间**里，见那里的说明。
         let ca = color[3];

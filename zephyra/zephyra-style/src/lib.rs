@@ -1,3 +1,4 @@
+#![deny(rustdoc::broken_intra_doc_links)]
 //! 声明层：样式表 → 属性值。
 //!
 //! # 这个 crate 负责什么
@@ -6,7 +7,7 @@
 //!
 //! 1. **完整的那件**：把 `.zstyle`（CSS 语法）解析成 [`ir::StyleSheet`]，
 //!    再把这份 IR `apply` 到 `zephyra_core::node::Node` 上。
-//! 2. **半件**：`apply` 需要的 [`PropertyKey`] / [`PropertyValue`] 全部来自
+//! 2. **半件**：`apply` 需要的 [`zephyra_core::property::PropertyKey`] / [`zephyra_core::property::PropertyValue`] 全部来自
 //!    `zephyra-core`——本 crate **不定义任何属性**。
 //!
 //! # 为什么不并进 core

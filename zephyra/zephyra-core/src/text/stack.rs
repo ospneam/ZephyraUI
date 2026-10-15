@@ -70,12 +70,12 @@ impl<S: GlyphSource> TextStack<S> {
     /// 换掉图集的**淘汰策略**（丢谁、按什么顺序重排）。
     ///
     /// 宿主实际持有的是 `TextStack` 而不是 `GlyphAtlas`，所以没有这一层的话
-    /// [`EvictionPolicy`] 就只是个够不着的契约。
+    /// [`super::EvictionPolicy`] 就只是个够不着的契约。
     ///
     /// 换策略**不重建图集**：已有的位图与 uv 全部保留，新策略从下一次放不下时开始
     /// 生效 —— 换策略本身不该让所有幸存者的 uv 失效（那会让宿主白重传一次 4MB）。
     ///
-    /// 两种真实动机见 [`EvictionPolicy`]: 按可见性淘汰（弹窗打开时不留被遮挡的
+    /// 两种真实动机见 [`super::EvictionPolicy`]: 按可见性淘汰（弹窗打开时不留被遮挡的
     /// 背景文字）、以及"只丢不排"以避开每次淘汰都重传整张图集。
     pub fn set_atlas_policy(&mut self, policy: impl super::EvictionPolicy + 'static) {
         self.atlas.set_policy(policy);

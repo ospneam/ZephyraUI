@@ -37,7 +37,7 @@ use crate::controls::{
 
 /// 按 catalog 的 `page` id 造控件展台页。
 ///
-/// 找不到映射时返回 [`degraded`]（**不返回空页**）。
+/// 找不到映射时返回 `degraded`（**不返回空页**）。
 pub fn showcase(g: &Gallery, page: &str) -> Element {
     let body: Vec<Element> = match page {
         // ---------------- Basic input ----------------

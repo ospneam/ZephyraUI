@@ -104,7 +104,7 @@ pub enum Command {
         /// `Arc<TriMesh>` —— 每帧把它克隆成 `Vec` 是**纯浪费**：demo 的 8 个图标
         /// 519 个顶点，每帧拷一遍，拷完当帧丢掉。
         ///
-        /// 消费者（[`crate::geom_clip`] 与各后端）只用 `&[Vertex]` 上的方法
+        /// 消费者（`crate::geom_clip` 与各后端）只用 `&[Vertex]` 上的方法
         /// （`len` / `is_empty` / `iter` / `chunks_exact`），而 `Arc<[T]>` 的
         /// `Deref` 让这些调用**一字不用改**。
         ///
