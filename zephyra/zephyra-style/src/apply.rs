@@ -32,10 +32,21 @@ impl StyleSheet {
     }
 
     /// 应用到一个节点及其全部后代。
+    ///
+    /// 暂存缓冲在这里造**一次**、整棵树共用 —— 见 [`Scratch`] 的说明（这是每帧
+    /// 每节点两次 `Vec` 分配的来源）。
     pub fn apply_to(&self, node: &mut Node) {
-        apply_node(self, node);
+        let mut s = Scratch {
+            names: Vec::new(),
+            want: Vec::new(),
+        };
+        self.apply_to_inner(node, &mut s);
+    }
+
+    fn apply_to_inner<'s>(&'s self, node: &mut Node, s: &mut Scratch<'s>) {
+        apply_node(self, node, s);
         for child in node.children_mut() {
-            self.apply_to(child);
+            self.apply_to_inner(child, s);
         }
     }
 }
@@ -57,36 +68,56 @@ impl zephyra_core::styler::Styler for SheetStyler {
     }
 }
 
+/// 跨节点复用的暂存缓冲。
+///
+/// # 为什么需要它
+///
+/// [`apply_node`] 每个节点要开两个 `Vec`（`names` 与 `want`）。demo 的树约 150 个
+/// 节点，于是**每帧每节点两次堆分配** —— 实测 `demo --bench --alloc-probe` 在
+/// 跳过 `FrameCache::frame()` 后分配数从 326 掉到 152，差额约 170 次/帧正是这里。
+///
+/// 做法是把两个 `Vec` 提到树外传进来、每次用完 `clear()`（保留容量）。这不改变
+/// 任何顺序语义：`want` 仍然是「先算完再写」，`names` 仍然是逐节点快照。
+struct Scratch<'a> {
+    names: Vec<&'a str>,
+    want: Vec<(&'static PropertyKey, &'a PropertyValue)>,
+}
+
 /// 单个节点。抽成自由函数是为了和递归那次调用共用同一段逻辑。
-fn apply_node(sheet: &StyleSheet, node: &mut Node) {
+fn apply_node<'s>(
+    sheet: &'s StyleSheet,
+    node: &mut Node,
+    s: &mut Scratch<'s>,
+) {
     let tag = node.tag();
     // 分类名来自 `.style(...)`——**唯一**入口。
     //
     // ⚠️ 不从 `ElementKey` 取：key 是事件路由的身份，style 才是外观分类。
     // 两者混用会让「这个 key 是不是也能当选择器」变成说不清的问题。
-    let names: Vec<&str> = node.style_names().iter().copied().collect();
+    s.names.clear();
+    s.names.extend(node.style_names().iter().copied());
 
     // 先算「本轮这个节点要写哪些键」，再写、再拆。
     //
     // 顺序语义与原来逐条写**完全一致**：规则按表内顺序遍历，同一个键写第二次
     // 是替换，所以后写的赢（见 `upsert`）。先收集只是为了让「谁该被拆」有个
     // 明确的答案，而不是靠"下一轮有没有人提到它"这种隐式推断。
-    let mut want: Vec<(&'static PropertyKey, &PropertyValue)> = Vec::new();
+    s.want.clear();
     for rule in sheet.rules() {
         if rule.is_empty() {
             continue;
         }
-        if !rule.selector.matches(tag, &names) {
+        if !rule.selector.matches(tag, &s.names) {
             continue;
         }
         for decl in &rule.declarations {
-            match want.iter_mut().find(|(k, _)| std::ptr::eq(*k, decl.key)) {
+            match s.want.iter_mut().find(|(k, _)| std::ptr::eq(*k, decl.key)) {
                 Some(slot) => slot.1 = &decl.value,
-                None => want.push((decl.key, &decl.value)),
+                None => s.want.push((decl.key, &decl.value)),
             }
         }
     }
-    for (key, value) in &want {
+    for (key, value) in &s.want {
         node.set_styled_prop(key, (*value).clone());
     }
     // 拆掉「上一轮写了、这一轮没人写」的键。
@@ -98,5 +129,5 @@ fn apply_node(sheet: &StyleSheet, node: &mut Node) {
     // 之所以长期没人撞上：多数样式表里每条状态规则都和基类规则声明同一批键，
     // 基类每帧把残值盖回去，洞被"恰好"堵住 —— 直到有一条状态规则声明了
     // 基类没有的键（例如只给 `.checked` 加 `border-width`）。
-    node.retain_styled_props(|key| want.iter().any(|(k, _)| std::ptr::eq(*k, key)));
+    node.retain_styled_props(|key| s.want.iter().any(|(k, _)| std::ptr::eq(*k, key)));
 }
