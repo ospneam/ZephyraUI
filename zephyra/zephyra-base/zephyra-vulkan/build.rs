@@ -44,19 +44,14 @@ fn main() {
     .validate(&module)
     .unwrap_or_else(|e| panic!("WGSL 校验失败: {e:?}"));
 
-    let spv = naga::back::spv::write_vec(
-        &module,
-        &info,
-        &naga::back::spv::Options::default(),
-        None,
-    )
-    .unwrap_or_else(|e| panic!("SPIR-V 生成失败: {e}"));
+    let spv =
+        naga::back::spv::write_vec(&module, &info, &naga::back::spv::Options::default(), None)
+            .unwrap_or_else(|e| panic!("SPIR-V 生成失败: {e}"));
 
     let out = std::path::PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR not set"))
         .join("zephyra.spv");
-    let bytes: &[u8] = unsafe {
-        std::slice::from_raw_parts(spv.as_ptr() as *const u8, spv.len() * 4)
-    };
+    let bytes: &[u8] =
+        unsafe { std::slice::from_raw_parts(spv.as_ptr() as *const u8, spv.len() * 4) };
     std::fs::write(&out, bytes).unwrap_or_else(|e| {
         panic!("写 {} 失败: {e}", out.display());
     });

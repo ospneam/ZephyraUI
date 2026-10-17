@@ -17,9 +17,7 @@ use winit::window::{Window, WindowId};
 
 use zephyra_core::context::Context;
 use zephyra_core::frame::{Damage, FrameCache, FrameOutcome};
-use zephyra_core::input::{
-    InputRouter, PointerEvent, PointerPhase, PointerSource, RoutedEvents,
-};
+use zephyra_core::input::{InputRouter, PointerEvent, PointerPhase, PointerSource, RoutedEvents};
 use zephyra_core::node::Node;
 use zephyra_core::theme::{Theme, ThemeVariant};
 
@@ -52,6 +50,12 @@ pub struct HostWindow<V: View> {
     fence: vk::Fence,
     /// 交换链图的帧缓冲（每个图一个）。resize 后重建。
     framebuffers: Vec<vk::Framebuffer>,
+    /// 帧缓冲用的图视图（销毁责任在这里，resize 时先毁再用）。
+    fb_views: Vec<vk::ImageView>,
+    /// 帧缓冲当前尺寸 —— resize 只变尺寸不变图数，必须单独记。
+    fb_extent: (u32, u32),
+    /// `ZEPHYRA_FRAME_DUMP` 是否已经写过一副图。
+    dumped: bool,
     /// 窗口。**最后析构**。
     window: Arc<Window>,
 }
@@ -93,8 +97,10 @@ impl<V: View> HostWindow<V> {
         let (engine, note) = zephyra_fx::text::from_system_font();
         eprintln!("[zephyra] {note}");
 
-        // ⚠ 先用单采样跑通；MSAA 需要 renderpass 加 resolve 附件，后续补。
-        let samples = 1u32;
+        // MSAA 与两个 Windows 后端同档（4×；ZEPHYRA_MSAA=0 可关）。渲染通道
+        // 带 resolve 附件 —— 由硬件在通道结束时自动完成，等价 wgpu 版的
+        //「画进 MSAA、resolve 进 surface」。
+        let samples = gpu.msaa_samples.as_raw();
         let renderer = match Renderer::new(&gpu, 1024, samples) {
             Ok(r) => r,
             Err(e) => {
@@ -141,6 +147,9 @@ impl<V: View> HostWindow<V> {
             cmd,
             fence,
             framebuffers: Vec::new(),
+            fb_views: Vec::new(),
+            fb_extent: (0, 0),
+            dumped: false,
             window,
         }
     }
@@ -235,16 +244,18 @@ impl<V: View> HostWindow<V> {
 
         let theme = self.theme;
         let (diff, damage, redrawn) = {
-            let ctx = Context::with_engine(theme, &self.engine)
-                .with_icons(zephyra_core::icon::builtin());
+            let ctx =
+                Context::with_engine(theme, &self.engine).with_icons(zephyra_core::icon::builtin());
             let element = self.view.view(&ctx);
             let outcome = self
                 .cache
                 .frame(&element, ctx, (size.0 as f32, size.1 as f32));
             match outcome {
-                FrameOutcome::Unchanged => {
-                    (zephyra_core::diff::DiffStats::default(), Damage::Full, false)
-                }
+                FrameOutcome::Unchanged => (
+                    zephyra_core::diff::DiffStats::default(),
+                    Damage::Full,
+                    false,
+                ),
                 FrameOutcome::Updated { stats, damage, .. } => (stats, damage, true),
             }
         };
@@ -302,8 +313,9 @@ impl<V: View> HostWindow<V> {
 
     /// 上屏：开渲染通道 → 画 → 提交 → present。
     pub fn present(&mut self) {
-        // 帧缓冲可能还没建（首次或 resize 后）。
-        if self.framebuffers.is_empty() || self.framebuffers.len() != self.gpu.images.len() {
+        // 帧缓冲可能还没建（首次或 resize 后）。尺寸也要盯：resize 只变尺寸
+        // 不变图数，光比个数会漏掉整段错位的帧缓冲。
+        if self.framebuffers.len() != self.gpu.images.len() || self.fb_extent != self.gpu.extent {
             self.rebuild_framebuffers();
         }
         let (idx, wait_sem) = match self.gpu.acquire() {
@@ -377,8 +389,12 @@ impl<V: View> HostWindow<V> {
             );
             // ⚠ 绘制命令必须**在渲染通道内**录制 —— 这是本次重构的核心：
             // frame() 只做顶点展开与上传（prepare），真正的绘制在这里录。
-            self.renderer
+            let unimplemented = self
+                .renderer
                 .record_draws(self.cmd, zephyra_core::filter::BlendMode::SrcOver);
+            if trace_enabled() && unimplemented > 0 {
+                eprintln!("[trace] 退回默认混合 {unimplemented} 段");
+            }
             self.gpu.device.cmd_end_render_pass(self.cmd);
             self.gpu.device.end_command_buffer(self.cmd).ok();
         }
@@ -389,42 +405,90 @@ impl<V: View> HostWindow<V> {
         unsafe {
             self.gpu.device.device_wait_idle().ok();
         }
+        // 诊断：ZEPHYRA_FRAME_DUMP —— 读回刚画完的那张交换链图（此刻还在
+        // PRESENT_SRC；read_back 自己做布局往返并转回）。1:1 对比的测量工具。
+        if !self.dumped {
+            if let Ok(path) = std::env::var("ZEPHYRA_FRAME_DUMP") {
+                self.dumped = true;
+                let (w, h) = self.gpu.extent;
+                match self.gpu.read_back(self.gpu.images[idx as usize], w, h) {
+                    Ok(data) => {
+                        let px = zephyra_fx::pixels::PixelRead {
+                            data,
+                            order: zephyra_fx::pixels::ChannelOrder::Bgra,
+                            row_pitch: w * 4,
+                            width: w,
+                            height: h,
+                            declared_width: w,
+                            declared_height: h,
+                        };
+                        let colors = px.distinct_colors(2);
+                        if path == "-" {
+                            eprintln!("[dump] {w}x{h} 颜色数 {colors}");
+                        } else {
+                            // `encode_srgb = false`：swapchain 用 UNORM（见 Gpu::new
+                            // 的格式取舍），读回字节 = 着色器线性值直通，与 Windows
+                            // D3D12 完全同构 —— 直接落盘就是「Windows 显示的那个值」。
+                            match zephyra_fx::write_bmp(&path, &px, false) {
+                                Ok(()) => {
+                                    eprintln!("[dump] 已写 {path}（{w}x{h}，颜色数 {colors}）")
+                                }
+                                Err(e) => eprintln!("[dump] 写 {path} 失败: {e}"),
+                            }
+                        }
+                    }
+                    Err(e) => eprintln!("[dump] 读回失败: {e}"),
+                }
+            }
+        }
     }
 
     /// 重建帧缓冲（resize 后或首次 present 时）。
     fn rebuild_framebuffers(&mut self) {
-        // 销毁旧的。
-        for fb in &self.framebuffers {
+        let device = &self.gpu.device;
+        // 销毁旧的（fb 引用的交换链图在 resize 后已失效 —— 不销毁就是悬垂句柄）。
+        for fb in self.framebuffers.drain(..) {
             unsafe {
-                self.gpu.device.destroy_framebuffer(*fb, None);
+                device.destroy_framebuffer(fb, None);
             }
         }
-        self.framebuffers.clear();
+        for v in self.fb_views.drain(..) {
+            unsafe {
+                device.destroy_image_view(v, None);
+            }
+        }
         let (w, h) = self.gpu.extent;
+        // MSAA 时帧缓冲 = [MSAA 视图, 交换链视图]（两附件，与渲染通道一致）。
+        let msaa = self.renderer.ensure_msaa(&self.gpu, (w, h));
+        let range = vk::ImageSubresourceRange {
+            aspect_mask: vk::ImageAspectFlags::COLOR,
+            base_mip_level: 0,
+            level_count: 1,
+            base_array_layer: 0,
+            layer_count: 1,
+        };
         for &img in &self.gpu.images {
             let view = unsafe {
-                self.gpu.device.create_image_view(
+                device.create_image_view(
                     &vk::ImageViewCreateInfo::builder()
                         .image(img)
                         .view_type(vk::ImageViewType::TYPE_2D)
                         .format(self.gpu.format)
-                        .subresource_range(vk::ImageSubresourceRange {
-                            aspect_mask: vk::ImageAspectFlags::COLOR,
-                            base_mip_level: 0,
-                            level_count: 1,
-                            base_array_layer: 0,
-                            layer_count: 1,
-                        })
+                        .subresource_range(range)
                         .build(),
                     None,
                 )
             }
             .expect("image view");
+            let attachments = match msaa {
+                Some(m) => vec![m, view],
+                None => vec![view],
+            };
             let fb = unsafe {
-                self.gpu.device.create_framebuffer(
+                device.create_framebuffer(
                     &vk::FramebufferCreateInfo::builder()
                         .render_pass(self.renderer.msaa_render_pass)
-                        .attachments(&[view])
+                        .attachments(&attachments)
                         .width(w)
                         .height(h)
                         .layers(1)
@@ -433,8 +497,10 @@ impl<V: View> HostWindow<V> {
                 )
             }
             .expect("framebuffer");
+            self.fb_views.push(view);
             self.framebuffers.push(fb);
         }
+        self.fb_extent = (w, h);
     }
 
     /// 把当前输入状态推给视图。
@@ -567,10 +633,21 @@ impl<V: View> ApplicationHandler for HostWindow<V> {
         use winit::event::{ElementState, MouseButton, WindowEvent};
         match event {
             WindowEvent::CloseRequested if id == self.window.id() => event_loop.exit(),
-            WindowEvent::Resized(size) => {
+            WindowEvent::Resized(_) => {
+                // 先销毁帧缓冲/视图再 resize：旧 fb 引用着即将被销毁的交换链图，
+                // 顺序反了就是悬垂句柄 —— 下一次 present 踩到的可能是已回收的内存。
+                for fb in self.framebuffers.drain(..) {
+                    unsafe {
+                        self.gpu.device.destroy_framebuffer(fb, None);
+                    }
+                }
+                for v in self.fb_views.drain(..) {
+                    unsafe {
+                        self.gpu.device.destroy_image_view(v, None);
+                    }
+                }
                 self.gpu.resize(&self.window);
                 self.dirty = true;
-                self.framebuffers.clear();
             }
             WindowEvent::ScaleFactorChanged { .. } => {
                 self.cache.invalidate();
@@ -604,7 +681,10 @@ impl<V: View> ApplicationHandler for HostWindow<V> {
 }
 
 fn trace_enabled() -> bool {
-    matches!(std::env::var("ZEPHYRA_TRACE").as_deref(), Ok("1") | Ok("true"))
+    matches!(
+        std::env::var("ZEPHYRA_TRACE").as_deref(),
+        Ok("1") | Ok("true")
+    )
 }
 
 fn window_handle_of(window: &Window) -> zephyra_platform::WindowHandle {

@@ -24,4 +24,3 @@ mod surface;
 pub use host::HostWindow;
 pub use renderer::{RenderCtx, Renderer, TextureTable};
 pub use surface::{Gpu, SurfaceError};
-

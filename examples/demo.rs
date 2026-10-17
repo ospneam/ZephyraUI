@@ -50,6 +50,10 @@ mod alloc_probe;
 //
 // 下面那个 `#[cfg(any(...))]` 是同一个判据；它在本文件出现多次，每次都指同
 // 一件事。Rust 没有 cfg 别名，所以只能写全 —— 少写「平台」那一维就是上面那个坑。
+/// Linux 后端（winit + 裸 Vulkan/ash，不用 wgpu）。与上面两个互斥 —— 同一个
+/// 二进制只编一个，理由见 `zephyra-winit-d3d12/Cargo.toml` 的文件头。
+#[cfg(all(not(windows), feature = "linux-vk"))]
+use zephyra_vulkan::HostWindow;
 #[cfg(all(windows, feature = "d3d11", not(feature = "d3d12")))]
 use zephyra_winit::HostWindow;
 /// 宿主后端。
@@ -64,10 +68,6 @@ use zephyra_winit::HostWindow;
 /// - 无：只跑 `--dump-cpu`（不开窗口），适合无显示器的环境。
 #[cfg(all(windows, feature = "d3d12"))]
 use zephyra_winit_d3d12::HostWindow;
-/// Linux 后端（winit + 裸 Vulkan/ash，不用 wgpu）。与上面两个互斥 —— 同一个
-/// 二进制只编一个，理由见 `zephyra-winit-d3d12/Cargo.toml` 的文件头。
-#[cfg(all(not(windows), feature = "linux-vk"))]
-use zephyra_vulkan::HostWindow;
 
 // `View` / `InputState` / `Z_INDEX` **不是**宿主 crate 的东西 —— 它们住在
 // `zephyra-fx`，三个宿主 crate 只是再导出。所以从这儿直接导入、不加 cfg：

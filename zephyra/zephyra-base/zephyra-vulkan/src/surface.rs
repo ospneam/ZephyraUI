@@ -116,10 +116,7 @@ impl Gpu {
                             .api_version(vk::API_VERSION_1_1)
                             .build(),
                     )
-                    .enabled_extension_names(&[
-                        ext_names[0].as_ptr(),
-                        ext_names[1].as_ptr(),
-                    ])
+                    .enabled_extension_names(&[ext_names[0].as_ptr(), ext_names[1].as_ptr()])
                     .build(),
                 None,
             )
@@ -129,8 +126,8 @@ impl Gpu {
         // ── Wayland surface ──
         let khr_surface = ash::extensions::khr::Surface::new(&entry, &instance);
         let khr_wayland = ash::extensions::khr::WaylandSurface::new(&entry, &instance);
-        let (dpy, wl_surface) = wayland_handles(window)
-            .map_err(|e| SurfaceError::new("wayland handles", e))?;
+        let (dpy, wl_surface) =
+            wayland_handles(window).map_err(|e| SurfaceError::new("wayland handles", e))?;
         let surface = unsafe {
             khr_wayland.create_wayland_surface(
                 &vk::WaylandSurfaceCreateInfoKHR::builder()
@@ -152,12 +149,10 @@ impl Gpu {
                     .any(|f| f.queue_flags.contains(vk::QueueFlags::GRAPHICS) && f.queue_count > 0)
             })
             .ok_or_else(|| SurfaceError::new("no physical device", "no graphics queue"))?;
-        let queue_family = unsafe {
-            instance.get_physical_device_queue_family_properties(physical)
-        }
-        .iter()
-        .position(|f| f.queue_flags.contains(vk::QueueFlags::GRAPHICS) && f.queue_count > 0)
-        .unwrap() as u32;
+        let queue_family = unsafe { instance.get_physical_device_queue_family_properties(physical) }
+            .iter()
+            .position(|f| f.queue_flags.contains(vk::QueueFlags::GRAPHICS) && f.queue_count > 0)
+            .unwrap() as u32;
         let swapchain_name = std::ffi::CString::new("VK_KHR_swapchain").unwrap();
         let device = unsafe {
             instance.create_device(
@@ -182,8 +177,9 @@ impl Gpu {
         } else {
             vk::SampleCountFlags::TYPE_4
         };
-        let caps = unsafe { khr_surface.get_physical_device_surface_capabilities(physical, surface) }
-            .map_err(|e| SurfaceError::new("surface capabilities", e.to_string()))?;
+        let caps =
+            unsafe { khr_surface.get_physical_device_surface_capabilities(physical, surface) }
+                .map_err(|e| SurfaceError::new("surface capabilities", e.to_string()))?;
         let (w, h) = if caps.current_extent.width == u32::MAX {
             let s = window.inner_size();
             (s.width, s.height)
@@ -195,18 +191,33 @@ impl Gpu {
         }
         let formats = unsafe { khr_surface.get_physical_device_surface_formats(physical, surface) }
             .map_err(|e| SurfaceError::new("surface formats", e.to_string()))?;
+        // ⚠ 1:1 的关键取舍：优先 **UNORM（非 sRGB）**，与 Windows D3D12 同一行为。
+        //
+        // 实测（WSL2/llvmpipe，2026-10）：sRGB 附件按规范被硬件**自动编码** ——
+        // 着色器写线性值 16，swapchain 落 71（= encode(16)），屏幕观感比 Windows
+        // 亮一档。Windows 那边的交换链是 B8G8R8A8_UNORM（非 sRGB），着色器值
+        // 直通。要「输出一致」，两边必须同一种直通行为 —— 所以这里选 UNORM。
         let format = formats
             .iter()
             .map(|f| f.format)
-            .find(|f| *f == vk::Format::B8G8R8A8_SRGB)
+            .find(|f| *f == vk::Format::B8G8R8A8_UNORM)
             .or_else(|| {
                 formats
                     .iter()
                     .map(|f| f.format)
                     .find(|f| *f == vk::Format::R8G8B8A8_UNORM)
             })
+            .or_else(|| {
+                formats
+                    .iter()
+                    .map(|f| f.format)
+                    .find(|f| *f == vk::Format::B8G8R8A8_SRGB)
+            })
             .ok_or_else(|| SurfaceError::new("surface format", "no supported format"))?;
-        if !caps.supported_usage_flags.contains(vk::ImageUsageFlags::TRANSFER_SRC) {
+        if !caps
+            .supported_usage_flags
+            .contains(vk::ImageUsageFlags::TRANSFER_SRC)
+        {
             return Err(SurfaceError::new(
                 "swapchain usage",
                 "TRANSFER_SRC not supported (needed for frame dump)",
@@ -233,9 +244,14 @@ impl Gpu {
                     .min_image_count(caps.min_image_count.max(2))
                     .image_format(format)
                     .image_color_space(vk::ColorSpaceKHR::SRGB_NONLINEAR)
-                    .image_extent(vk::Extent2D { width: w, height: h })
+                    .image_extent(vk::Extent2D {
+                        width: w,
+                        height: h,
+                    })
                     .image_array_layers(1)
-                    .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_SRC)
+                    .image_usage(
+                        vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_SRC,
+                    )
                     .image_sharing_mode(vk::SharingMode::EXCLUSIVE)
                     .pre_transform(caps.current_transform)
                     .composite_alpha(alpha)
@@ -316,9 +332,14 @@ impl Gpu {
                     .min_image_count(caps.min_image_count.max(2))
                     .image_format(self.format)
                     .image_color_space(vk::ColorSpaceKHR::SRGB_NONLINEAR)
-                    .image_extent(vk::Extent2D { width: w, height: h })
+                    .image_extent(vk::Extent2D {
+                        width: w,
+                        height: h,
+                    })
                     .image_array_layers(1)
-                    .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_SRC)
+                    .image_usage(
+                        vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_SRC,
+                    )
                     .image_sharing_mode(vk::SharingMode::EXCLUSIVE)
                     .pre_transform(caps.current_transform)
                     .composite_alpha(caps.supported_composite_alpha)
@@ -411,7 +432,8 @@ impl Gpu {
                     .memory_type_index(pick_type(
                         &self.instance,
                         self.physical,
-                        vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+                        vk::MemoryPropertyFlags::HOST_VISIBLE
+                            | vk::MemoryPropertyFlags::HOST_COHERENT,
                     )?)
                     .build(),
                 None,
@@ -479,8 +501,41 @@ impl Gpu {
                             .layer_count(1)
                             .build(),
                     )
-                    .image_extent(vk::Extent3D { width: w, height: h, depth: 1 })
+                    .image_extent(vk::Extent3D {
+                        width: w,
+                        height: h,
+                        depth: 1,
+                    })
                     .build()],
+            );
+            // ⚠ 拷完必须转回 PRESENT_SRC：调用方紧接着要 present，而布局回不去
+            // 的话后续 present 是非法状态。漏掉的症状是「第一次 dump 后窗口黑屏」。
+            let sub = vk::ImageSubresourceRange {
+                aspect_mask: vk::ImageAspectFlags::COLOR,
+                base_mip_level: 0,
+                level_count: 1,
+                base_array_layer: 0,
+                layer_count: 1,
+            };
+            let back = vk::ImageMemoryBarrier::builder()
+                .src_access_mask(vk::AccessFlags::TRANSFER_READ)
+                .dst_access_mask(vk::AccessFlags::MEMORY_READ)
+                .old_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
+                .new_layout(vk::ImageLayout::PRESENT_SRC_KHR)
+                .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                .image(image)
+                .subresource_range(sub)
+                .build();
+            let backs = [back];
+            self.device.cmd_pipeline_barrier(
+                cmd,
+                vk::PipelineStageFlags::TRANSFER,
+                vk::PipelineStageFlags::BOTTOM_OF_PIPE,
+                vk::DependencyFlags::empty(),
+                &[],
+                &[],
+                &backs,
             );
             self.device.end_command_buffer(cmd).ok();
         }
@@ -499,9 +554,13 @@ impl Gpu {
                 .ok();
             self.device.wait_for_fences(&[fence], true, u64::MAX).ok();
         }
-        let ptr = unsafe { self.device.map_memory(bmem, 0, byte_len, vk::MemoryMapFlags::empty()) }
-            .map_err(|e| SurfaceError::new("map_memory", e.to_string()))?;
-        let data = unsafe { std::slice::from_raw_parts(ptr as *const u8, byte_len as usize) }.to_vec();
+        let ptr = unsafe {
+            self.device
+                .map_memory(bmem, 0, byte_len, vk::MemoryMapFlags::empty())
+        }
+        .map_err(|e| SurfaceError::new("map_memory", e.to_string()))?;
+        let data =
+            unsafe { std::slice::from_raw_parts(ptr as *const u8, byte_len as usize) }.to_vec();
         // 清理（读回是一次性的，每次都建/销）。
         unsafe {
             self.device.unmap_memory(bmem);
@@ -519,7 +578,9 @@ impl Gpu {
     }
 }
 
-fn wayland_handles(window: &Window) -> Result<(*mut std::ffi::c_void, *mut std::ffi::c_void), String> {
+fn wayland_handles(
+    window: &Window,
+) -> Result<(*mut std::ffi::c_void, *mut std::ffi::c_void), String> {
     use raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle};
     let dpy = match window.display_handle().map_err(|e| e.to_string())?.as_raw() {
         RawDisplayHandle::Wayland(h) => h.display.as_ptr(),
@@ -539,6 +600,10 @@ pub(crate) fn pick_type(
 ) -> Result<u32, SurfaceError> {
     let props = unsafe { instance.get_physical_device_memory_properties(physical) };
     (0..props.memory_type_count)
-        .find(|i| props.memory_types[*i as usize].property_flags.contains(want))
+        .find(|i| {
+            props.memory_types[*i as usize]
+                .property_flags
+                .contains(want)
+        })
         .ok_or_else(|| SurfaceError::new("memory type", format!("no type with {want:?}")))
 }

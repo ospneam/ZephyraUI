@@ -126,6 +126,11 @@ impl TextureTable {
     pub fn is_empty(&self) -> bool {
         self.index.is_empty()
     }
+    /// 名字 → 纹理视图（record_draws 逐 run 绑定时用）。
+    fn view_of(&self, name: &str) -> Option<vk::ImageView> {
+        let slot = *self.index.get(name)?;
+        self.slots.get(slot as usize)?.as_ref().map(|t| t.view)
+    }
     pub fn remove(&mut self, name: &str) -> Option<u32> {
         let slot = self.index.remove(name)?;
         if let Some(t) = self.slots.get_mut(slot as usize) {
@@ -171,6 +176,10 @@ pub struct Renderer {
     atlas_view: vk::ImageView,
     atlas_memory: vk::DeviceMemory,
     atlas_size: u32,
+    /// 图集已上传到的 revision（变了才重传 —— 与 wgpu 版 sync_atlas 同构）。
+    atlas_revision_uploaded: u64,
+    /// MSAA 目标当前尺寸（None = 未建）。
+    msaa_size: Option<(u32, u32)>,
     /// 图像纹理表。
     textures: TextureTable,
     /// MSAA 渲染通道。
@@ -214,17 +223,20 @@ impl Renderer {
         // ── 描述符集布局 ──
         let desc_layout = unsafe {
             device.create_descriptor_set_layout(
+                // ⚠ 必须与 WGSL 声明逐条一致：binding 0 = `texture_2d<f32>`（采样图像），
+                // binding 1 = `sampler`（采样器）。原来写成两个 COMBINED_IMAGE_SAMPLER
+                // —— 与管线布局不匹配，症状是「画面全空且零错误」。
                 &vk::DescriptorSetLayoutCreateInfo::builder().bindings(&[
                     vk::DescriptorSetLayoutBinding {
                         binding: 0,
-                        descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                        descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
                         descriptor_count: 1,
                         stage_flags: vk::ShaderStageFlags::FRAGMENT,
                         ..Default::default()
                     },
                     vk::DescriptorSetLayoutBinding {
                         binding: 1,
-                        descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                        descriptor_type: vk::DescriptorType::SAMPLER,
                         descriptor_count: 1,
                         stage_flags: vk::ShaderStageFlags::FRAGMENT,
                         ..Default::default()
@@ -268,7 +280,11 @@ impl Renderer {
             gpu,
             atlas_side,
             atlas_side,
+            // 图集用非 sRGB：alpha 通道是**覆盖率**不是颜色 —— 传输函数会破坏它
+            //（与 wgpu 版 Rgba8Unorm 同一条理由）。
             vk::Format::R8G8B8A8_UNORM,
+            vk::SampleCountFlags::TYPE_1,
+            vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
         )?;
 
         // ── 渲染通道 ──
@@ -279,11 +295,17 @@ impl Renderer {
         let desc_pool = unsafe {
             device.create_descriptor_pool(
                 &vk::DescriptorPoolCreateInfo::builder()
-                    .max_sets(16)
-                    .pool_sizes(&[vk::DescriptorPoolSize {
-                        ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                        descriptor_count: 32,
-                    }]),
+                    .max_sets(256)
+                    .pool_sizes(&[
+                        vk::DescriptorPoolSize {
+                            ty: vk::DescriptorType::SAMPLED_IMAGE,
+                            descriptor_count: 512,
+                        },
+                        vk::DescriptorPoolSize {
+                            ty: vk::DescriptorType::SAMPLER,
+                            descriptor_count: 512,
+                        },
+                    ]),
                 None,
             )
         }
@@ -319,6 +341,8 @@ impl Renderer {
             atlas_view,
             atlas_memory,
             atlas_size: atlas_side,
+            atlas_revision_uploaded: u64::MAX,
+            msaa_size: None,
             textures: TextureTable::new(),
             msaa_render_pass,
             single_render_pass,
@@ -353,7 +377,19 @@ impl Renderer {
         pixels: &[u8],
         (width, height): (u32, u32),
     ) -> Result<(), SurfaceError> {
-        // 简化：只支持覆盖写入（不管理槽位复用）。
+        // 图像纹理用 sRGB 格式（彩色），与 wgpu 版 Rgba8UnormSrgb 对应。
+        let (image, view, memory) = create_image_texture(
+            &self.device,
+            gpu,
+            width,
+            height,
+            vk::Format::R8G8B8A8_SRGB,
+            vk::SampleCountFlags::TYPE_1,
+            vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
+        )?;
+        if !pixels.is_empty() {
+            upload_image(gpu, image, pixels, (width, height))?;
+        }
         let slot = if let Some(&s) = self.textures.index.get(name) {
             s
         } else {
@@ -362,9 +398,59 @@ impl Renderer {
             self.textures.slots.push(None);
             s
         };
-        // 上传像素到图集纹理（简化：总是写到图集）。
-        let _ = (gpu, pixels, width, height, slot);
+        // 覆盖写入时销毁旧句柄 —— 不销毁就是显存泄漏，而 demo 会反复注册同名纹理。
+        if let Some(old) = self
+            .textures
+            .slots
+            .get_mut(slot as usize)
+            .and_then(|s| s.take())
+        {
+            unsafe {
+                self.device.destroy_image_view(old.view, None);
+                self.device.destroy_image(old.image, None);
+                self.device.free_memory(old.memory, None);
+            }
+        }
+        self.textures.slots[slot as usize] = Some(ImageTexture {
+            name: name.to_string(),
+            image,
+            view,
+            memory,
+        });
         Ok(())
+    }
+
+    /// MSAA 目标视图（`samples <= 1` 时 None）。尺寸变化时重建。
+    pub fn ensure_msaa(&mut self, gpu: &Gpu, size: (u32, u32)) -> Option<vk::ImageView> {
+        if self.samples <= 1 {
+            return None;
+        }
+        if self.msaa_size != Some(size) {
+            if let (Some(i), Some(v), Some(m)) = (self.msaa_image, self.msaa_view, self.msaa_memory)
+            {
+                unsafe {
+                    self.device.destroy_image_view(v, None);
+                    self.device.destroy_image(i, None);
+                    self.device.free_memory(m, None);
+                }
+            }
+            let (image, view, memory) = create_image_texture(
+                &self.device,
+                gpu,
+                size.0,
+                size.1,
+                gpu.format,
+                vk::SampleCountFlags::from_raw(self.samples),
+                // MSAA 目标只当颜色附件：采样/拷贝都走 resolve 后的交换链图。
+                vk::ImageUsageFlags::COLOR_ATTACHMENT,
+            )
+            .expect("MSAA target");
+            self.msaa_image = Some(image);
+            self.msaa_view = Some(view);
+            self.msaa_memory = Some(memory);
+            self.msaa_size = Some(size);
+        }
+        self.msaa_view
     }
 
     /// 帧准备：展开顶点 + 上传（**不碰**命令缓冲）。
@@ -374,8 +460,29 @@ impl Renderer {
     /// Vulkan 的命令缓冲必须**先 begin 再录**，而帧里（`frame()`）命令缓冲还没开始
     /// 录制 —— 命令要等 `present()` 开渲染通道之后才录。wgpu 版没这个问题，因为
     /// `record()` 内部自己开 encoder 自己提交。拆成两段正是这个差异的直接映射。
-    pub fn prepare(&mut self, gpu: &Gpu, ctx: &RenderCtx<'_>) -> Result<RenderReport, SurfaceError> {
+    pub fn prepare(
+        &mut self,
+        gpu: &Gpu,
+        ctx: &RenderCtx<'_>,
+    ) -> Result<RenderReport, SurfaceError> {
         let mut report = RenderReport::default();
+
+        // 图集：内容变了才重传（判据 revision）。长度核对防「图集尺寸 ≠ 建好的纹理」
+        // —— 不匹配时跳过（打一行），比把越界拷进纹理好查。
+        if ctx.atlas_revision != self.atlas_revision_uploaded {
+            if !ctx.atlas_pixels.is_empty()
+                && ctx.atlas_size == self.atlas_size
+                && ctx.atlas_pixels.len() == (self.atlas_size * self.atlas_size * 4) as usize
+            {
+                upload_image(
+                    gpu,
+                    self.atlas_image,
+                    ctx.atlas_pixels,
+                    (self.atlas_size, self.atlas_size),
+                )?;
+            }
+            self.atlas_revision_uploaded = ctx.atlas_revision;
+        }
 
         // 展开顶点。
         let mut scratch = std::mem::take(&mut self.scratch);
@@ -394,8 +501,7 @@ impl Renderer {
             let tris = scratch.paths.len() / 3;
             scratch.path_index_start =
                 quad::expand_indices_with_paths_into(quads, tris, &mut scratch.indices);
-            report.vertex_bytes =
-                (scratch.vertices.len() * mem::size_of::<Vertex>()) as u64;
+            report.vertex_bytes = (scratch.vertices.len() * mem::size_of::<Vertex>()) as u64;
             self.upload_geometry(gpu, &scratch, &mut report)?;
         }
         self.scratch = scratch;
@@ -404,72 +510,88 @@ impl Renderer {
 
     /// 录制绘制命令。**必须在渲染通道内调用**（`present()` 的
     /// `cmd_begin_render_pass` 之后）。
-    pub fn record_draws(&mut self, cmd: vk::CommandBuffer, default_blend: BlendMode) {
+    pub fn record_draws(&mut self, cmd: vk::CommandBuffer, default_blend: BlendMode) -> u32 {
         if self.scratch.vertices.is_empty() {
-            return;
+            return 0;
         }
-        // ⚠ 描述符集在循环**前**分配：`scratch` 一旦被不可变借用，就不能再调
-        // `&mut self` 的 `update_descriptor`（E0502）。所有 run 眼下都兜底到图集，
-        // 所以一个描述符集就够 —— 这与 wgpu 版「矩形/字形/多边形绑图集」同构。
-        let desc_set = match self.update_descriptor(self.atlas_view) {
-            Ok(s) => s,
-            Err(_) => return,
-        };
-        let scratch = &self.scratch;
+        // 第一遍只收集 (视图, 管线, 索引起点, 数量)：`&self.scratch` 借用期间不能调
+        // `&mut self` 的 `update_descriptor`（E0502）—— 所以 per-run 的描述符集
+        // 分配放到借用结束后的第二遍。
+        let mut draws: Vec<(vk::ImageView, vk::Pipeline, u32, u32)> = Vec::new();
+        let mut unimplemented = 0u32;
+        {
+            let scratch = &self.scratch;
+            let path_first = scratch.path_first;
+            let path_index_start = scratch.path_index_start;
+            for run in scratch.runs() {
+                if run.vertex_count == 0 {
+                    continue;
+                }
+                // 纹理绑定：图像 run 用自己的视图，其余兜底图集
+                //（与 wgpu 版「矩形/字形/多边形绑图集」同构）。
+                let tex_view = match &run.texture {
+                    Some(name) => self.textures.view_of(name).unwrap_or(self.atlas_view),
+                    None => self.atlas_view,
+                };
+                // 段落定位：`runs` 记**顶点**下标，而 draw 要**索引**下标。
+                let (index_start, index_count) = if run.first_vertex >= path_first {
+                    (
+                        path_index_start + (run.first_vertex - path_first),
+                        run.vertex_count,
+                    )
+                } else {
+                    ((run.first_vertex / 4) * 6, (run.vertex_count / 4) * 6)
+                };
+                let pipeline = match self.pipeline_for_blend(run.blend) {
+                    Some(p) => p,
+                    None => {
+                        unimplemented += 1;
+                        self.pipeline_for_blend(default_blend)
+                            .expect("default 必有管线")
+                    }
+                };
+                draws.push((tex_view, pipeline, index_start as u32, index_count as u32));
+            }
+        }
         unsafe {
-            self.device.cmd_bind_vertex_buffers(cmd, 0, &[self.vertex_buffer], &[0]);
+            self.device
+                .cmd_bind_vertex_buffers(cmd, 0, &[self.vertex_buffer], &[0]);
             self.device
                 .cmd_bind_index_buffer(cmd, self.index_buffer, 0, vk::IndexType::UINT16);
+            // 每帧重置描述符池：per-run 分配，max_sets 256 足够单帧任何 run 数。
+            self.device
+                .reset_descriptor_pool(self.desc_pool, vk::DescriptorPoolResetFlags::empty())
+                .ok();
         }
-        let path_first = scratch.path_first;
-        let path_index_start = scratch.path_index_start;
-        for run in scratch.runs() {
-            if run.vertex_count == 0 {
-                continue;
-            }
-            // 纹理绑定（图像纹理暂用图集兜底）。
-            let tex_view = self.atlas_view;
-            // 段落定位：`runs` 记**顶点**下标，而 draw 要**索引**下标。
-            let (index_start, index_count) = if run.first_vertex >= path_first {
-                (
-                    path_index_start + (run.first_vertex - path_first),
-                    run.vertex_count,
-                )
-            } else {
-                ((run.first_vertex / 4) * 6, (run.vertex_count / 4) * 6)
+        for (tex_view, pipeline, index_start, index_count) in draws {
+            let desc_set = match self.update_descriptor(tex_view) {
+                Ok(s) => s,
+                Err(_) => continue,
             };
-            // 混合模式 → 管线。系数不可表达的 14 档退回 default（与 wgpu 版同策略）。
-            let pipeline = match self.pipeline_for_blend(run.blend) {
-                Some(p) => p,
-                None => self
-                    .pipeline_for_blend(default_blend)
-                    .expect("default 必有管线"),
-            };
-            let _ = tex_view;
+            let sets = [desc_set];
             unsafe {
-                self.device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline);
+                self.device
+                    .cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline);
                 self.device.cmd_bind_descriptor_sets(
                     cmd,
                     vk::PipelineBindPoint::GRAPHICS,
                     self.pipeline_layout,
                     0,
-                    &[desc_set],
+                    &sets,
                     &[],
                 );
-                self.device.cmd_draw_indexed(
-                    cmd,
-                    index_count as u32,
-                    1,
-                    index_start as u32,
-                    0,
-                    0,
-                );
+                self.device
+                    .cmd_draw_indexed(cmd, index_count, 1, index_start, 0, 0);
             }
         }
+        unimplemented
     }
 
     /// 更新描述符集（纹理 + 采样器）。
-    fn update_descriptor(&mut self, tex_view: vk::ImageView) -> Result<vk::DescriptorSet, SurfaceError> {
+    fn update_descriptor(
+        &mut self,
+        tex_view: vk::ImageView,
+    ) -> Result<vk::DescriptorSet, SurfaceError> {
         let desc_set = unsafe {
             self.device.allocate_descriptor_sets(
                 &vk::DescriptorSetAllocateInfo::builder()
@@ -478,20 +600,34 @@ impl Renderer {
             )
         }
         .map_err(|e| SurfaceError::new("allocate descriptor set", e.to_string()))?[0];
+        // 两个 write 对应两个 binding（图像 / 采样器分开声明）。数组绑局部变量 ——
+        // 悬垂指针的教训在 dev-log 里，不重复。
+        let image_infos = [vk::DescriptorImageInfo {
+            sampler: vk::Sampler::null(),
+            image_view: tex_view,
+            image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+        }];
+        let sampler_infos = [vk::DescriptorImageInfo {
+            sampler: self.sampler,
+            image_view: vk::ImageView::null(),
+            image_layout: vk::ImageLayout::UNDEFINED,
+        }];
+        let writes = [
+            vk::WriteDescriptorSet::builder()
+                .dst_set(desc_set)
+                .dst_binding(0)
+                .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
+                .image_info(&image_infos)
+                .build(),
+            vk::WriteDescriptorSet::builder()
+                .dst_set(desc_set)
+                .dst_binding(1)
+                .descriptor_type(vk::DescriptorType::SAMPLER)
+                .image_info(&sampler_infos)
+                .build(),
+        ];
         unsafe {
-            self.device.update_descriptor_sets(
-                &[vk::WriteDescriptorSet::builder()
-                    .dst_set(desc_set)
-                    .dst_binding(0)
-                    .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                    .image_info(&[vk::DescriptorImageInfo {
-                        sampler: self.sampler,
-                        image_view: tex_view,
-                        image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-                    }])
-                    .build()],
-                &[],
-            );
+            self.device.update_descriptor_sets(&writes, &[]);
         }
         Ok(desc_set)
     }
@@ -516,7 +652,10 @@ impl Renderer {
         // 顶点。
         if vbytes as u64 > self.vertex_capacity {
             // 扩容（简化：panic，实际应重建）。
-            panic!("vertex buffer overflow: {vbytes} > {}", self.vertex_capacity);
+            panic!(
+                "vertex buffer overflow: {vbytes} > {}",
+                self.vertex_capacity
+            );
         }
         unsafe {
             let ptr = device
@@ -704,11 +843,10 @@ fn create_graphics_pipeline(
         .build();
 
     let infos = [info];
-    let pipeline = unsafe {
-        device.create_graphics_pipelines(vk::PipelineCache::null(), &infos, None)
-    }
-    .map_err(|e| SurfaceError::new("create graphics pipeline", format!("{:?}", e)))?
-    .remove(0);
+    let pipeline =
+        unsafe { device.create_graphics_pipelines(vk::PipelineCache::null(), &infos, None) }
+            .map_err(|e| SurfaceError::new("create graphics pipeline", format!("{:?}", e)))?
+            .remove(0);
     Ok(pipeline)
 }
 
@@ -720,20 +858,11 @@ fn blend_state_for(mode: &BlendMode) -> vk::PipelineColorBlendAttachmentState {
         Src => (vk::BlendFactor::ONE, vk::BlendFactor::ZERO),
         Dst => (vk::BlendFactor::ZERO, vk::BlendFactor::ONE),
         SrcOver => (vk::BlendFactor::ONE, vk::BlendFactor::ONE_MINUS_SRC_ALPHA),
-        DstOver => (
-            vk::BlendFactor::ONE_MINUS_DST_ALPHA,
-            vk::BlendFactor::ONE,
-        ),
+        DstOver => (vk::BlendFactor::ONE_MINUS_DST_ALPHA, vk::BlendFactor::ONE),
         SrcIn => (vk::BlendFactor::DST_ALPHA, vk::BlendFactor::ZERO),
         DstIn => (vk::BlendFactor::ZERO, vk::BlendFactor::SRC_ALPHA),
-        SrcOut => (
-            vk::BlendFactor::ONE_MINUS_DST_ALPHA,
-            vk::BlendFactor::ZERO,
-        ),
-        DstOut => (
-            vk::BlendFactor::ZERO,
-            vk::BlendFactor::ONE_MINUS_SRC_ALPHA,
-        ),
+        SrcOut => (vk::BlendFactor::ONE_MINUS_DST_ALPHA, vk::BlendFactor::ZERO),
+        DstOut => (vk::BlendFactor::ZERO, vk::BlendFactor::ONE_MINUS_SRC_ALPHA),
         SrcAtop => (
             vk::BlendFactor::DST_ALPHA,
             vk::BlendFactor::ONE_MINUS_SRC_ALPHA,
@@ -748,14 +877,8 @@ fn blend_state_for(mode: &BlendMode) -> vk::PipelineColorBlendAttachmentState {
         ),
         Plus => (vk::BlendFactor::ONE, vk::BlendFactor::ONE),
         Multiply => (vk::BlendFactor::DST_COLOR, vk::BlendFactor::ZERO),
-        Screen => (
-            vk::BlendFactor::ONE,
-            vk::BlendFactor::ONE_MINUS_SRC_COLOR,
-        ),
-        _ => (
-            vk::BlendFactor::ONE,
-            vk::BlendFactor::ONE_MINUS_SRC_ALPHA,
-        ),
+        Screen => (vk::BlendFactor::ONE, vk::BlendFactor::ONE_MINUS_SRC_COLOR),
+        _ => (vk::BlendFactor::ONE, vk::BlendFactor::ONE_MINUS_SRC_ALPHA),
     };
     vk::PipelineColorBlendAttachmentState {
         blend_enable: vk::TRUE,
@@ -778,30 +901,80 @@ fn create_render_pass(
     format: vk::Format,
     samples: u32,
 ) -> Result<vk::RenderPass, SurfaceError> {
-    let color_attachment = vk::AttachmentDescription::builder()
-        .format(format)
-        .samples(vk::SampleCountFlags::from_raw(samples))
-        .load_op(vk::AttachmentLoadOp::DONT_CARE)
-        .store_op(vk::AttachmentStoreOp::STORE)
-        .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
-        .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
-        .initial_layout(vk::ImageLayout::UNDEFINED)
-        .final_layout(vk::ImageLayout::PRESENT_SRC_KHR)
-        .build();
-
-    let color_ref = vk::AttachmentReference::builder()
-        .attachment(0)
-        .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-        .build();
+    // MSAA 时是「目标 + resolve」两附件：resolve 由硬件在通道结束时自动完成，
+    // 等价 wgpu 版「画进 MSAA、resolve 进 surface」—— 也就是没有额外 blit。
+    // 单采样时一附件、直接画进交换链图。
+    let mut attachments = Vec::new();
+    let mut color_refs = Vec::new();
+    let mut resolve_refs = Vec::new();
+    if samples > 1 {
+        attachments.push(
+            vk::AttachmentDescription::builder()
+                .format(format)
+                .samples(vk::SampleCountFlags::from_raw(samples))
+                .load_op(vk::AttachmentLoadOp::CLEAR)
+                // 内容由 resolve 保留在附件 1 —— MSAA 本体帧末即弃。
+                .store_op(vk::AttachmentStoreOp::DONT_CARE)
+                .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
+                .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
+                .initial_layout(vk::ImageLayout::UNDEFINED)
+                .final_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+                .build(),
+        );
+        attachments.push(
+            vk::AttachmentDescription::builder()
+                .format(format)
+                .samples(vk::SampleCountFlags::TYPE_1)
+                .load_op(vk::AttachmentLoadOp::DONT_CARE)
+                .store_op(vk::AttachmentStoreOp::STORE)
+                .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
+                .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
+                .initial_layout(vk::ImageLayout::UNDEFINED)
+                .final_layout(vk::ImageLayout::PRESENT_SRC_KHR)
+                .build(),
+        );
+        color_refs.push(
+            vk::AttachmentReference::builder()
+                .attachment(0)
+                .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+                .build(),
+        );
+        resolve_refs.push(
+            vk::AttachmentReference::builder()
+                .attachment(1)
+                .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+                .build(),
+        );
+    } else {
+        attachments.push(
+            vk::AttachmentDescription::builder()
+                .format(format)
+                .samples(vk::SampleCountFlags::TYPE_1)
+                .load_op(vk::AttachmentLoadOp::CLEAR)
+                .store_op(vk::AttachmentStoreOp::STORE)
+                .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
+                .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
+                .initial_layout(vk::ImageLayout::UNDEFINED)
+                .final_layout(vk::ImageLayout::PRESENT_SRC_KHR)
+                .build(),
+        );
+        color_refs.push(
+            vk::AttachmentReference::builder()
+                .attachment(0)
+                .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+                .build(),
+        );
+    }
 
     let subpass = vk::SubpassDescription::builder()
         .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
-        .color_attachments(&[color_ref])
+        .color_attachments(&color_refs)
+        .resolve_attachments(if samples > 1 { &resolve_refs } else { &[] })
         .build();
 
     let info = vk::RenderPassCreateInfo::builder()
-        .attachments(&[color_attachment])
-        .subpasses(&[subpass])
+        .attachments(&attachments)
+        .subpasses(std::slice::from_ref(&subpass))
         .build();
 
     unsafe { device.create_render_pass(&info, None) }
@@ -813,13 +986,8 @@ fn create_shader_module(
     device: &ash::Device,
     code: &[u32],
 ) -> Result<vk::ShaderModule, SurfaceError> {
-    unsafe {
-        device.create_shader_module(
-            &vk::ShaderModuleCreateInfo::builder().code(code),
-            None,
-        )
-    }
-    .map_err(|e| SurfaceError::new("shader module", e.to_string()))
+    unsafe { device.create_shader_module(&vk::ShaderModuleCreateInfo::builder().code(code), None) }
+        .map_err(|e| SurfaceError::new("shader module", e.to_string()))
 }
 
 /// 从 SPIR-V 里提取指定入口的字节码。
@@ -839,12 +1007,7 @@ fn parse_spv_entry(spv: &[u8], _entry: &str) -> Result<Vec<u32>, SurfaceError> {
     let words = spv.len() / 4;
     let mut out = Vec::with_capacity(words);
     for i in 0..words {
-        let b = [
-            spv[i * 4],
-            spv[i * 4 + 1],
-            spv[i * 4 + 2],
-            spv[i * 4 + 3],
-        ];
+        let b = [spv[i * 4], spv[i * 4 + 1], spv[i * 4 + 2], spv[i * 4 + 3]];
         out.push(u32::from_le_bytes(b));
     }
     Ok(out)
@@ -882,9 +1045,8 @@ fn create_host_buffer(
         )
     }
     .map_err(|e| SurfaceError::new("host buffer memory", e.to_string()))?;
-    unsafe { device.bind_buffer_memory(buffer, mem, 0) }.map_err(|e| {
-        SurfaceError::new("bind buffer memory", e.to_string())
-    })?;
+    unsafe { device.bind_buffer_memory(buffer, mem, 0) }
+        .map_err(|e| SurfaceError::new("bind buffer memory", e.to_string()))?;
     Ok((buffer, mem, size))
 }
 
@@ -896,6 +1058,8 @@ fn create_image_texture(
     width: u32,
     height: u32,
     format: vk::Format,
+    samples: vk::SampleCountFlags,
+    usage: vk::ImageUsageFlags,
 ) -> Result<(vk::Image, vk::ImageView, vk::DeviceMemory), SurfaceError> {
     let image = unsafe {
         device.create_image(
@@ -909,9 +1073,9 @@ fn create_image_texture(
                 })
                 .mip_levels(1)
                 .array_layers(1)
-                .samples(vk::SampleCountFlags::TYPE_1)
+                .samples(samples)
                 .tiling(vk::ImageTiling::OPTIMAL)
-                .usage(vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST)
+                .usage(usage)
                 .sharing_mode(vk::SharingMode::EXCLUSIVE)
                 .initial_layout(vk::ImageLayout::UNDEFINED)
                 .build(),
@@ -934,9 +1098,8 @@ fn create_image_texture(
         )
     }
     .map_err(|e| SurfaceError::new("image texture memory", e.to_string()))?;
-    unsafe { device.bind_image_memory(image, mem, 0) }.map_err(|e| {
-        SurfaceError::new("bind image memory", e.to_string())
-    })?;
+    unsafe { device.bind_image_memory(image, mem, 0) }
+        .map_err(|e| SurfaceError::new("bind image memory", e.to_string()))?;
     let view = unsafe {
         device.create_image_view(
             &vk::ImageViewCreateInfo::builder()
@@ -956,6 +1119,165 @@ fn create_image_texture(
     }
     .map_err(|e| SurfaceError::new("image view", e.to_string()))?;
     Ok((image, view, mem))
+}
+
+/// 经暂存缓冲把像素上传到一张图像，并把布局转到 SHADER_READ_ONLY。
+///
+/// 一次性命令 + 等 fence —— 图集/纹理只在 revision 变化时重传（帧循环之外），
+/// 同步等待的开销是可接受的；把它们挪进帧命令缓冲只会让时序复杂化。
+fn upload_image(
+    gpu: &Gpu,
+    image: vk::Image,
+    pixels: &[u8],
+    (w, h): (u32, u32),
+) -> Result<(), SurfaceError> {
+    let device = &gpu.device;
+    let byte_len = pixels.len() as vk::DeviceSize;
+    let buffer = unsafe {
+        device.create_buffer(
+            &vk::BufferCreateInfo::builder()
+                .size(byte_len)
+                .usage(vk::BufferUsageFlags::TRANSFER_SRC)
+                .sharing_mode(vk::SharingMode::EXCLUSIVE)
+                .build(),
+            None,
+        )
+    }
+    .map_err(|e| SurfaceError::new("staging buffer", e.to_string()))?;
+    let req = unsafe { device.get_buffer_memory_requirements(buffer) };
+    let mem = unsafe {
+        device.allocate_memory(
+            &vk::MemoryAllocateInfo::builder()
+                .allocation_size(req.size)
+                .memory_type_index(crate::surface::pick_type(
+                    &gpu.instance,
+                    gpu.physical,
+                    vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+                )?)
+                .build(),
+            None,
+        )
+    }
+    .map_err(|e| SurfaceError::new("staging memory", e.to_string()))?;
+    unsafe { device.bind_buffer_memory(buffer, mem, 0) }
+        .map_err(|e| SurfaceError::new("bind staging", e.to_string()))?;
+    unsafe {
+        let ptr = device
+            .map_memory(mem, 0, byte_len, vk::MemoryMapFlags::empty())
+            .map_err(|e| SurfaceError::new("map staging", e.to_string()))?;
+        std::ptr::copy_nonoverlapping(pixels.as_ptr(), ptr as *mut u8, pixels.len());
+        device.unmap_memory(mem);
+    }
+    let cmd = unsafe {
+        device.allocate_command_buffers(
+            &vk::CommandBufferAllocateInfo::builder()
+                .command_pool(gpu.command_pool)
+                .level(vk::CommandBufferLevel::PRIMARY)
+                .command_buffer_count(1)
+                .build(),
+        )
+    }
+    .map_err(|e| SurfaceError::new("upload cmd", e.to_string()))?[0];
+    let range = vk::ImageSubresourceRange {
+        aspect_mask: vk::ImageAspectFlags::COLOR,
+        base_mip_level: 0,
+        level_count: 1,
+        base_array_layer: 0,
+        layer_count: 1,
+    };
+    let to_dst = vk::ImageMemoryBarrier::builder()
+        .src_access_mask(vk::AccessFlags::empty())
+        .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+        .old_layout(vk::ImageLayout::UNDEFINED)
+        .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+        .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+        .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+        .image(image)
+        .subresource_range(range)
+        .build();
+    let to_read = vk::ImageMemoryBarrier::builder()
+        .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+        .dst_access_mask(vk::AccessFlags::SHADER_READ)
+        .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+        .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+        .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+        .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+        .image(image)
+        .subresource_range(range)
+        .build();
+    let regions = [vk::BufferImageCopy::builder()
+        .image_subresource(
+            vk::ImageSubresourceLayers::builder()
+                .aspect_mask(vk::ImageAspectFlags::COLOR)
+                .base_array_layer(0)
+                .layer_count(1)
+                .build(),
+        )
+        .image_extent(vk::Extent3D {
+            width: w,
+            height: h,
+            depth: 1,
+        })
+        .build()];
+    unsafe {
+        device
+            .begin_command_buffer(
+                cmd,
+                &vk::CommandBufferBeginInfo::builder()
+                    .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT)
+                    .build(),
+            )
+            .map_err(|e| SurfaceError::new("begin upload cmd", e.to_string()))?;
+        let dsts = [to_dst];
+        device.cmd_pipeline_barrier(
+            cmd,
+            vk::PipelineStageFlags::TOP_OF_PIPE,
+            vk::PipelineStageFlags::TRANSFER,
+            vk::DependencyFlags::empty(),
+            &[],
+            &[],
+            &dsts,
+        );
+        device.cmd_copy_buffer_to_image(
+            cmd,
+            buffer,
+            image,
+            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+            &regions,
+        );
+        let reads = [to_read];
+        device.cmd_pipeline_barrier(
+            cmd,
+            vk::PipelineStageFlags::TRANSFER,
+            vk::PipelineStageFlags::FRAGMENT_SHADER,
+            vk::DependencyFlags::empty(),
+            &[],
+            &[],
+            &reads,
+        );
+        device
+            .end_command_buffer(cmd)
+            .map_err(|e| SurfaceError::new("end upload cmd", e.to_string()))?;
+        let fence = device
+            .create_fence(&vk::FenceCreateInfo::default(), None)
+            .map_err(|e| SurfaceError::new("upload fence", e.to_string()))?;
+        let cmds = [cmd];
+        device
+            .queue_submit(
+                gpu.queue,
+                &[vk::SubmitInfo::builder().command_buffers(&cmds).build()],
+                fence,
+            )
+            .map_err(|e| SurfaceError::new("submit upload", e.to_string()))?;
+        device
+            .wait_for_fences(&[fence], true, u64::MAX)
+            .map_err(|e| SurfaceError::new("wait upload", e.to_string()))?;
+        device.destroy_fence(fence, None);
+        device.free_command_buffers(gpu.command_pool, &cmds);
+        device.destroy_buffer(buffer, None);
+        device.free_memory(mem, None);
+    }
+    Ok(())
 }
 
 // offset_of! 宏（stable Rust 1.77+ 有 std::mem::offset_of!）。
