@@ -226,14 +226,25 @@ core：LruEviction（默认）    ← 丢最久未用的，重排按高度降序
   主机侧的纹理与缓冲都没有预算概念，量一多只能靠各自的容量上限兜着。
   （⚠ 字形图集**不在**此列：它满时会按策略淘汰并重排，见下。）
 - **输入设备枚举**：`input` 模块产出的是手势词汇表，真正的设备枚举在宿主。
-- **非 Windows 呈现路径**：`zephyra-winit` 在非 Windows 上直接 `compile_error!`
-  并说明原因，而不是静默退化成"能编译但不出画面"。Linux 侧要么另写一个 Vulkan
-  后端，要么走 Wayland 的 subsurface —— 尚未决定。
-- **效果的 GPU 执行未实现**：core 侧契约已完整（`zephyra::filter` 给出
-  `Filter`/`FilterChain`/`BlendMode`，`Command` 各变体带 `filter` + `blend`，
-  `zephyra-fx::offscreen::plan_offscreens` 算出要多大 RT），但**离屏pass 与
-  PSO 混合状态变体都没接**。所以 `RenderReport` 有两个计数：
-  `unimplemented_filters` / `unimplemented_blends`—— **它们恒为正是当前的常态**，
-  用来区分"没人用效果"与"效果被静默忽略"。
+- ~~**非 Windows 呈现路径**~~ —— **已做**（2026-10）：`zephyra-winit-vk`
+  （winit + wgpu，Vulkan 优先、GL 亦可）。它是**独立 crate**，与两个 Windows 后端
+  互不依赖，理由逐条相同。`zephyra-winit` / `zephyra-winit-d3d12` /
+  `zephyra-dcomp` / `zephyra-platform-win` 仍是 `#![cfg(windows)]`（在别的平台上
+  是空 crate，而不是 `compile_error!`）。
+
+  ⚠ 剩下的缺口是 **14 档 PS 变体混合模式**（`Overlay`..`Luminosity`）。WGSL 里的
+  入口已经写好，但**没接线**：wgpu 下「正在渲染的附件」不能被采样（MSAA 更是根本
+  不支持采样），接通需要「resolve 到中间纹理 → 拷贝 → 第二个通道」。现状是照常画、
+  退回 `SrcOver`，并计入 `RenderReport::unimplemented_blends`。
+- **无 DComp 等价物**：Linux 的合成由合成器 / wgpu surface 负责，本层不再单独
+  提供一条呈现路径（Windows 那边的 `zephyra-dcomp` 是为了让 flip model 与
+  DirectComposition 两条路并存而拆出来的）。
+- **效果（blur / 投影 / 混合）的 GPU 执行**：三个后端都实现了
+  「内容 → 模糊（乒乓）→ 合成」与 PSO 混合变体。`RenderReport` 保留
+  `unimplemented_filters` / `unimplemented_blends` 两个计数器，它们的用途是
+  **区分"没人用效果"与"效果被静默忽略"** —— 命令**照常画**，不 skip，所以症状
+  是"设了没反应"而不是"图元消失"。`zephyra-winit-vk` 上 `unimplemented_filters`
+  实测为 0（demo 的 3 条带滤镜命令全部走离屏），`unimplemented_blends` 为 2
+  （demo 里那两档 PS 变体模式，见上面「14 档」那条）。
   命令**照常画**（不 skip），所以症状是"设了 blur 没反应"，而不是"元素消失"。
   `demo --dump-cpu` 会打印这两个计数与 RT 规划。

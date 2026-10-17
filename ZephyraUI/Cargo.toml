@@ -1,4 +1,4 @@
-[package]
+﻿[package]
 name = "zephyra-ui"
 description = "Widget layer on top of zephyra-core, plus a RinUI-style gallery app (the rewritten Demo)"
 version = "0.1.0"
@@ -11,6 +11,9 @@ publish = false
 [features]
 default = ["d3d12"]
 d3d12 = ["dep:zephyra-winit-d3d12"]
+# Linux 后端（winit + wgpu/Vulkan）。与 d3d12 互斥；Linux 上用它：
+# `cargo build -p zephyra-ui --bin gallery --no-default-features --features linux-vk`
+linux-vk = ["dep:zephyra-vulkan"]
 
 [dependencies]
 zephyra-core = { path = "../zephyra/zephyra-core" }
@@ -21,12 +24,15 @@ zstylec = { path = "../zstylec" }
 zephyra-platform = { path = "../zephyra/zephyra-base/zephyra-platform" }
 # 演示宿主：真开窗口 + GPU 渲染。只有 bin 用它，库层不依赖任何后端。
 zephyra-winit-d3d12 = { path = "../zephyra/zephyra-base/zephyra-winit-d3d12", optional = true }
+zephyra-vulkan = { path = "../zephyra/zephyra-base/zephyra-vulkan", optional = true }
 winit = "0.30"
 
 [[bin]]
 name = "gallery"
-# 后端由特性开关选择（默认 d3d12）；`--dump-cpu` 不需要任何后端。
-required-features = ["d3d12"]
+# ⚠ 没有 `required-features`，理由与 `examples/Cargo.toml` 的 demo bin 相同：
+# Cargo 的 `required-features` 是**与**语义，表达不了「d3d12 或 linux-vk」，
+# 而 Linux 上 d3d12 是空 crate —— 照原样写等于这个 bin 在 Linux 上永远不存在。
+# 后端改由 `bin/gallery.rs` 里的 `#[cfg(feature)]` 分流。
 path = "bin/gallery.rs"
 
 # 文字链探针：不开窗口，直接量「一段文本 → 排版 → 图集 → 顶点」。

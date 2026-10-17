@@ -32,6 +32,11 @@
 //! 不能证明 GPU 侧的采样器设置正确、不能证明混合正确、不能证明图集纹理真的上传成功。
 //! 它证明的是「几何与数据是对的」。
 
+#![cfg(windows)]
+// 本测试要建真实 D3D11 设备，非 Windows 上没有这条路径。
+// 宿主 crate 整个是 `#![cfg(windows)]`，而集成测试是**独立目标**、不受那个门禁保护
+// —— 不在这里补一道，`cargo test --workspace` 在 Linux 上就编不过（实测 2026-10）。
+
 use zephyra_core::core::Point;
 use zephyra_core::paint::{Command, DisplayList, Layer, SortKey};
 use zephyra_core::text::atlas::ATLAS_SIZE;

@@ -16,7 +16,7 @@ zephyra-fx = { path = "../zephyra/zephyra-fx" }
 # dev 模式下直接解析样式表文本（release 侧不该链它，见 zstylec 的文档）
 zstylec = { path = "../zstylec" }
 zephyra-style = { path = "../zephyra/zephyra-style" }
-# 演示宿主：真开窗口 + GPU 渲染。
+# 演示宿主：真开窗口 + GPU 渲染（Linux 上是 wgpu/Vulkan）。
 #
 # # 只有一个后端会被编进来
 #
@@ -26,6 +26,8 @@ zephyra-style = { path = "../zephyra/zephyra-style" }
 # 默认 `d3d12`：它的外壳与呈现链路已逐档验证（见 `zephyra-winit-d3d12/tests/`）。
 zephyra-winit-d3d12 = { path = "../zephyra/zephyra-base/zephyra-winit-d3d12", optional = true }
 zephyra-winit = { path = "../zephyra/zephyra-base/zephyra-winit", optional = true }
+# Linux 后端：裸 Vulkan（ash），**不用 wgpu**。wgpu 版（zephyra-winit-vk）已废弃。
+zephyra-vulkan = { path = "../zephyra/zephyra-base/zephyra-vulkan", optional = true }
 # `Bootstrap` 自举宿主时要实现 `ApplicationHandler`，所以本 crate 直接依赖 winit ——
 # 而不是走 `zephyra_winit::winit` / `zephyra_winit_d3d12::winit` 的再导出。
 #
@@ -41,6 +43,15 @@ winit = "0.30"
 default = ["d3d12"]
 d3d12 = ["dep:zephyra-winit-d3d12"]
 d3d11 = ["dep:zephyra-winit"]
+# Linux 后端（winit + wgpu/Vulkan）。与上面两个**互斥**：同一个二进制只编一个后端，
+# 理由见 `zephyra-winit-d3d12/Cargo.toml` 的文件头。
+#
+# ⚠ `default` 仍然是 `d3d12`，而 d3d12 在 Linux 上是空 crate（`#![cfg(windows)]`）——
+# 所以 Linux 上的命令是 `--no-default-features --features linux-vk`。
+# 那两个 flag 缺一个的后果不一样：只给 `--features linux-vk` 会**同时**编进
+# d3d12（空）与 linux-vk，于是 Linux 上跑起来的是「两个后端都存在」，而画面由
+# `#[cfg]` 选中的那个出 —— 能跑，但多编一遍 D3D12 那条依赖链。
+linux-vk = ["dep:zephyra-vulkan"]
 
 [[bin]]
 name = "foundation"
@@ -48,14 +59,17 @@ path = "foundation.rs"
 
 [[bin]]
 name = "demo"
-# 后端由**特性开关**选择，`--dump-cpu` 那条路不需要任何后端。
+# ⚠ 这里**不再**有 `required-features`。
 #
-# `required-features` 只列了 `d3d12`：默认 feature 就是它，所以平时都能编。
-# 而选 `d3d11` 时用 `--no-default-features --features d3d11` —— 那种情况下
-# `demo.rs` 里的 `#[cfg]` import 会切到 D3D11 的 `HostWindow`，于是这个 bin 反而
-# 编不过。要同时编两个后端需要把 `required-features` 写成 `any`，那属于「先想清楚
-# 两条路同时存在意味着什么」那一步，不该由一个 `required-features` 顺手决定。
-required-features = ["d3d12"]
+# 原来写的是 `required-features = ["d3d12"]`：那时 `demo.rs` 只在 d3d12 下编得过
+# （d3d11 那条路的 `#[cfg]` import 会切到 D3D11 的 `HostWindow`，而 required-features
+# 已经把这个 bin 挡在 d3d11 之外了）。Linux 适配之后这条路走不通：Cargo 的
+# `required-features` 是**与**语义、表达不了「d3d12 或 linux-vk」，而 d3d12 在 Linux
+# 上是空 crate —— 照原样写等于这个 bin 在 Linux 上**永远不存在**。
+#
+# 所以改成「bin 恒可编，后端由 `demo.rs` 里的 `#[cfg(feature)]` 分流」，没开任何
+# 后端 feature 时 `main()` 打印一行提示并退出。这与仓库既有的「选哪后端留在命令里」
+# 一致，而且省掉了「Linux 上 d3d12 是空 crate 却仍是默认 feature」这个陷阱。
 path = "demo.rs"
 
 # hover / press 的端到端断言。不需要窗口也不需要 GPU —— 链路止于 DisplayList。

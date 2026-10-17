@@ -1,0 +1,27 @@
+[package]
+name = "zephyra-platform-linux"
+description = "Linux implementation of the zephyra-platform capability trait (system theme, language, OS version)"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.87"
+license = "MIT OR Apache-2.0"
+publish = false
+
+# 与 `zephyra-platform-win` 同构：应用只依赖 `zephyra-platform` 的 trait，
+# 平台实现各占一个 crate，谁也不认识谁。
+#
+# 进 workspace `members` 但**不进** default-members —— 与 Windows 那两个实现
+# 同一理由：实现里要做的是「向操作系统问事实」，而不该在无差别构建里必然执行。
+# 本 crate 的提问手段（读 `/etc/os-release`、看环境变量、按需拉一次 `gsettings`）
+# 全是纯 `std`，所以这里**没有** unsafe、没有 FFI、没有设备依赖 —— 进不进
+# default-members 只影响「默认构建多编一个极小的 crate」。
+[dependencies]
+zephyra-platform = { path = "../zephyra-platform" }
+
+[lib]
+path = "src/lib.rs"
+
+# 门禁与另外两个实现一致：文档链接不许断。
+[lints.rust]
+# 本 crate 一行 unsafe 都不需要（读文件、看环境变量、拉 gsettings 都是 `std`）。
+unsafe_code = "forbid"

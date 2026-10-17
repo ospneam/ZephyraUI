@@ -29,6 +29,15 @@ members = [
     # default-members：默认构建不该出现 unsafe 与 COM 边界。
     "zephyra/zephyra-base/zephyra-platform",
     "zephyra/zephyra-base/zephyra-platform-win",
+    # Linux 实现：与 `zephyra-platform-win` **同级**，两个平台互不认识。
+    # 同一条理由不进 default-members（"按需选"），但它一行 unsafe 都没有，
+    # 见 Cargo.toml 的说明。
+    "zephyra/zephyra-base/zephyra-platform-linux",
+    # Linux 渲染后端（winit + 裸 Vulkan/ash，**不用 wgpu**）。与两个 Windows 后端互不依赖 —
+    # 理由逐条相同（D3D11 / D3D12 / Vulkan 是三套不同的词汇，硬并会让 `#[cfg]`
+    # 分支淹没真正的逻辑）。同样不进 default-members：默认构建不该编译另一套图形栈。
+    # （wgpu 版 zephyra-winit-vk 已删除 —— 用户明确要求不用 wgpu，raw ash 全链路实测通过。）
+    "zephyra/zephyra-base/zephyra-vulkan",
     "examples",
     # core 之上的 UI 控件层 + RinUI 风格 gallery 应用。
     # 进 members 而**不进** default-members：它的默认 feature 是 d3d12 后端，

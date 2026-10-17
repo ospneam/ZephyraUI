@@ -35,8 +35,14 @@
 //!
 //! 它能告诉你：**形状对不对、位置对不对、有没有内容**。
 //! 它不能告诉你：**抗锯齿边缘和 GPU 完全一致**。
-
-#![cfg(windows)]
+//!
+//! # 为什么这里没有 `#![cfg(windows)]`
+//!
+//! 本模块是**纯 `std`**：顶点流进来，覆盖率在 CPU 上求值，输出一块 `Vec<u8>`。
+//! 它一个系统 API 都不碰，所以任何平台都能编译 ——
+//! 曾经这里挂着 `#![cfg(windows)]`，那是照着同目录的宿主 crate 抄来的，
+//! 于是非 Windows 平台上 `cpu_raster` 整个消失，`cpu_only` 跟着编不过
+//! （`unresolved import crate::cpu_raster`），`--dump-cpu` 这条自验路也一并没了。
 
 use crate::quad::{self, kind, Vertex};
 

@@ -40,8 +40,18 @@ use zephyra_core::props;
 /// 分配计数探针（诊断用，不是产品代码 —— 见该文件头的警告）。
 mod alloc_probe;
 
-#[cfg(all(feature = "d3d11", not(feature = "d3d12")))]
-use zephyra_winit::{HostWindow, InputState, View, Z_INDEX};
+// 判据是「平台 **且** feature」，不是只看 feature。
+//
+// 每个后端 crate 在别的平台上都是**空 crate**（`#![cfg(windows)]`）。而
+// `cargo clippy --workspace --all-targets` 在 Linux 上会用 `examples` 的**默认
+// feature**（`d3d12`）编这个 bin —— 依赖存在但里面是空的，于是 import 报
+// 「找不到 HostWindow」。症状看起来像「Linux 适配把 demo 弄坏了」，真相只是
+// 「默认 feature 指向一个在本平台为空的 crate」。
+//
+// 下面那个 `#[cfg(any(...))]` 是同一个判据；它在本文件出现多次，每次都指同
+// 一件事。Rust 没有 cfg 别名，所以只能写全 —— 少写「平台」那一维就是上面那个坑。
+#[cfg(all(windows, feature = "d3d11", not(feature = "d3d12")))]
+use zephyra_winit::HostWindow;
 /// 宿主后端。
 ///
 /// 由**特性开关**决定编哪个后端进来，而不是运行时切换：同一个二进制里只有一个后端被
@@ -52,8 +62,19 @@ use zephyra_winit::{HostWindow, InputState, View, Z_INDEX};
 /// - `d3d11`：D3D11 后端。本机视口设不进去，窗口是空的 —— 见
 ///   `zephyra-winit/tests/d3d11_draw.rs`。
 /// - 无：只跑 `--dump-cpu`（不开窗口），适合无显示器的环境。
-#[cfg(feature = "d3d12")]
-use zephyra_winit_d3d12::{HostWindow, InputState, View, Z_INDEX};
+#[cfg(all(windows, feature = "d3d12"))]
+use zephyra_winit_d3d12::HostWindow;
+/// Linux 后端（winit + 裸 Vulkan/ash，不用 wgpu）。与上面两个互斥 —— 同一个
+/// 二进制只编一个，理由见 `zephyra-winit-d3d12/Cargo.toml` 的文件头。
+#[cfg(all(not(windows), feature = "linux-vk"))]
+use zephyra_vulkan::HostWindow;
+
+// `View` / `InputState` / `Z_INDEX` **不是**宿主 crate 的东西 —— 它们住在
+// `zephyra-fx`，三个宿主 crate 只是再导出。所以从这儿直接导入、不加 cfg：
+// 加了就会让「本平台没有宿主」这一整个状态编不过，而那个状态是真实存在的
+// （`cargo clippy --workspace --all-targets` 在 Linux 上就是用默认 feature
+// `d3d12` 编这个 bin 的，而 d3d12 在 Linux 上是空 crate）。
+use zephyra_fx::{InputState, View, Z_INDEX};
 
 /// 工具栏按钮的语义名。同时是元素 key —— 所以必须是 `&'static str`。
 const BUTTONS: [&str; 8] = [
@@ -277,6 +298,15 @@ const SRC_CROP_KEYS: [&str; 4] = ["crop:full", "crop:right", "crop:br", "crop:ov
 ///
 /// 这些是**程序生成**的图案，不是图片文件 —— 免得仓库里塞二进制资源，也顺带证明
 /// 纹理上传这条路对任意像素都成立。
+///
+/// ⚠ 跟着「有没有宿主」gate：它只被 `Bootstrap::resumed`（注册纹理）调用，而那个
+/// 结构在「本平台没有宿主」时不编。漏掉这道就会变成一个从未使用的函数，
+/// `cargo clippy -- -D warnings` 因此失败。
+#[cfg(any(
+    all(windows, feature = "d3d12"),
+    all(windows, feature = "d3d11", not(feature = "d3d12")),
+    all(not(windows), feature = "linux-vk"),
+))]
 fn icon_pixels(name: &str) -> (Vec<u8>, u32, u32) {
     const S: u32 = 32;
     let mut px = vec![0u8; (S * S * 4) as usize];
@@ -640,13 +670,38 @@ fn main() {
     // 所以这里不用 `（已移除）`（它需要 sync 上下文，而建窗必须在 loop 回调里）。
     // 正确形态是一个自举的应用类型：在 `resumed` 里用 （已移除） 跑完 async 初始化，
     // 然后把建好的宿主存进自己。
-    let event_loop = winit::event_loop::EventLoop::new().expect("EventLoop::new");
-    let mut app = Bootstrap {
-        inner: None,
-        view: Some(Demo::default()),
-    };
-    if let Err(e) = event_loop.run_app(&mut app) {
-        eprintln!("事件循环退出：{e}");
+    // 没有开任何后端 feature 时**只**跑离线路径（`--dump-cpu` / `--bench` 已在上面
+    // 各自 return 了），窗口路不存在 —— 那时报一行提示而不是编不过。
+    //
+    // ⚠ 这条分支的存在是本轮把 bin 的 `required-features` 去掉换来的：那个字段是
+    // 「与」语义，表达不了「d3d12 或 linux-vk」。
+    // 这里刻意**不用** `return`：两个分支里只有一支会被编进来，而这一支就是
+    // `main` 的尾巴 —— 加 `return` 会被 clippy 判 unneeded，而去掉它对另一支
+    // （真正跑事件循环的那支）毫无影响。
+    #[cfg(not(any(
+        all(windows, feature = "d3d12"),
+        all(windows, feature = "d3d11", not(feature = "d3d12")),
+        all(not(windows), feature = "linux-vk"),
+    )))]
+    eprintln!(
+        "[demo] 没有后端特性：窗口路不可用。用 --dump-cpu（不开窗口）\
+         或加一个后端 feature（d3d12 / d3d11 / linux-vk）"
+    );
+
+    #[cfg(any(
+        all(windows, feature = "d3d12"),
+        all(windows, feature = "d3d11", not(feature = "d3d12")),
+        all(not(windows), feature = "linux-vk"),
+    ))]
+    {
+        let event_loop = winit::event_loop::EventLoop::new().expect("EventLoop::new");
+        let mut app = Bootstrap {
+            inner: None,
+            view: Some(Demo::default()),
+        };
+        if let Err(e) = event_loop.run_app(&mut app) {
+            eprintln!("事件循环退出：{e}");
+        }
     }
 }
 
@@ -966,6 +1021,11 @@ fn bench_cpu() {
 /// A broken look-and-feel file must not stop the program: that would turn
 /// "one wrong property name" into "this app will not start". The bad file is
 /// dropped, the rest still load, and each failure names its file.
+#[cfg(any(
+    all(windows, feature = "d3d12"),
+    all(windows, feature = "d3d11", not(feature = "d3d12")),
+    all(not(windows), feature = "linux-vk"),
+))]
 fn load_stylesheet<V: View>(app: &mut HostWindow<V>) {
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut paths: Vec<std::path::PathBuf> = match std::fs::read_dir(dir) {
@@ -1021,11 +1081,21 @@ fn load_stylesheet<V: View>(app: &mut HostWindow<V>) {
 /// 自举宿主：第一次 `resumed` 时建窗（async），之后把事件转交给 [`HostWindow`]。
 ///
 /// `V` 必须能整份移出（`new_async` 拿走所有权），所以这里存 `Option<V>`。
+#[cfg(any(
+    all(windows, feature = "d3d12"),
+    all(windows, feature = "d3d11", not(feature = "d3d12")),
+    all(not(windows), feature = "linux-vk"),
+))]
 struct Bootstrap<V: View> {
     inner: Option<HostWindow<V>>,
     view: Option<V>,
 }
 
+#[cfg(any(
+    all(windows, feature = "d3d12"),
+    all(windows, feature = "d3d11", not(feature = "d3d12")),
+    all(not(windows), feature = "linux-vk"),
+))]
 impl<V: View + 'static> winit::application::ApplicationHandler for Bootstrap<V> {
     fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
         if self.inner.is_some() {

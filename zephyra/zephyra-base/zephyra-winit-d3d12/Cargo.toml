@@ -40,6 +40,25 @@ description = "ZephyraUI 的 D3D12 渲染后端"
 # 顶点展开、字形图集、纹理名字表、CPU 光栅器来自 `zephyra-fx`。
 zephyra-core = { path = "../../zephyra-core", version = "0.1.0" }
 zephyra-fx = { path = "../../zephyra-fx" }
+# 窗口与事件。**版本必须与 `zephyra-winit` 一致（都是 0.30）**：两个后端要与同一份
+# 应用代码的宿主接口对得上，`ApplicationHandler` 的类型必须是同一个。
+winit = "0.30"
+# 从 winit 窗口取裸 HWND（`Window::window_handle()` 返回它）。
+raw-window-handle = "0.6"
+bytemuck = { version = "1", features = ["derive"] }
+
+# ⚠ 以下三项**必须**留在 `cfg(windows)` 里。
+#
+# `windows` 0.62 在非 Windows 目标上并不是「能用但没东西」—— 它的传递依赖
+# `windows-future` 会直接编译失败（`windows_core::imp::IMarshal` 不存在，
+# `windows_threading::submit` 不存在）。所以这不是洁癖：**不 target-gate 它，
+# 任何非 Windows 的 `cargo check --workspace` 都会在这一步断掉**，
+# 而且断在一个与本仓无关的第三方 crate 里，症状极具误导性。
+#
+# 2026-10 实测：Linux（WSL2 Ubuntu 24.04）上 `cargo check --workspace` 因此在
+# `windows-future` 上失败；改成 target-gate 后本 crate 在 Linux 上是空 crate
+# （`#![cfg(windows)]`），与 `zephyra-winit` / `zephyra-dcomp` 同一形状。
+[target.'cfg(windows)'.dependencies]
 # 呈现路径。与 `zephyra-winit`（D3D11）共用同一个 crate，于是两个后端的
 # swapchain 参数与 DComp 挂树逻辑天然一致 —— 少一份「两个后端悄悄不一致」的余地。
 zephyra-dcomp = { path = "../zephyra-dcomp" }
@@ -48,12 +67,6 @@ zephyra-dcomp = { path = "../zephyra-dcomp" }
 # 这样应用层不出现任何 Win32 代码，而 DWM 细节也不渗进渲染后端。
 zephyra-platform = { path = "../zephyra-platform" }
 zephyra-platform-win = { path = "../zephyra-platform-win" }
-# 窗口与事件。**版本必须与 `zephyra-winit` 一致（都是 0.30）**：两个后端要与同一份
-# 应用代码的宿主接口对得上，`ApplicationHandler` 的类型必须是同一个。
-winit = "0.30"
-# 从 winit 窗口取裸 HWND（`Window::window_handle()` 返回它）。
-raw-window-handle = "0.6"
-bytemuck = { version = "1", features = ["derive"] }
 windows = { version = "0.62", features = [
     "Win32_Foundation",
     "Win32_Graphics_Direct3D",
@@ -71,4 +84,6 @@ path = "src/lib.rs"
 
 [dev-dependencies]
 # 测试要自己建 composition swapchain，所以也需要 `SwapchainDesc` 这个参数类型。
+# 同理只在 Windows 上存在 —— `cargo test --workspace` 在 Linux 上**不会**编它。
+[target.'cfg(windows)'.dev-dependencies]
 zephyra-dcomp = { path = "../zephyra-dcomp" }

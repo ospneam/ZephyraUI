@@ -49,6 +49,11 @@
 //! `d3d12_能把四边形画到像素上` 应当**都通过**。若第一个通过而第二个不通过，
 //! 那才是这个 crate 的问题，可以从第二个测试的失败信息继续查。
 
+#![cfg(windows)]
+// 本测试要建真实 D3D12 设备，非 Windows 上没有这条路径。
+// 宿主 crate 整个是 `#![cfg(windows)]`，而集成测试是**独立目标**、不受那个门禁保护
+// —— 不在这里补一道，`cargo test --workspace` 在 Linux 上就编不过（实测 2026-10）。
+
 use windows::core::Interface as _;
 use windows::Win32::Graphics::Direct3D12::*;
 use windows::Win32::Graphics::Dxgi::CreateDXGIFactory1;

@@ -13,18 +13,36 @@
 //! 对账一次，不一致就 `set_theme`。于是「想切的」与「在用的」始终可分开
 //! 观测 —— 不会出现"点了没反应也不知道为什么"。
 
+// 只被窗口路用（`intent_cell` + `Bootstrap`）⇒ 跟着「有没有宿主」走。
+// 不 gate 的话，在「本平台没有宿主」的状态下它们是未使用导入，而
+// `cargo clippy -- -D warnings` 会因此失败。
+#[cfg(any(
+    all(windows, feature = "d3d12"),
+    all(not(windows), feature = "linux-vk")
+))]
 use std::sync::atomic::{AtomicU8, Ordering};
+#[cfg(any(
+    all(windows, feature = "d3d12"),
+    all(not(windows), feature = "linux-vk")
+))]
 use std::sync::Arc;
 
 use zephyra_core::theme::ThemeVariant;
 use zephyra_ui::app::{resolve_route, Gallery, SUPPORTED};
 
-#[cfg(feature = "d3d12")]
+// `Styler` 只给 `HostWindow::set_styler` 用，与宿主是哪个后端无关 ——
+// 所以它的 gate 是「有没有窗口路」，而不是「哪个后端」。
+// `install()` 同时被 CPU 那几条路（`--bench` / `--dump-cpu`）调用，而那些路
+// 不开 cfg ⇒ `Styler` 必须无条件导入。
 use zephyra_core::styler::Styler;
 use zephyra_style::ir::StyleSheet;
 use zephyra_style::SheetStyler;
 
 /// 主题意图：0 = dark，1 = light。View 写、Bootstrap 读。
+#[cfg(any(
+    all(windows, feature = "d3d12"),
+    all(not(windows), feature = "linux-vk")
+))]
 fn intent_cell(dark: bool) -> Arc<AtomicU8> {
     Arc::new(AtomicU8::new(if dark { 0 } else { 1 }))
 }
@@ -73,23 +91,52 @@ fn main() {
         return;
     }
 
-    #[cfg(feature = "d3d12")]
+    // 三个分支**各自独立**，不共用代码：本仓两个 Windows 后端也是分开的，
+    // 理由见 `zephyra-winit-d3d12/Cargo.toml` 的文件头（两套写法揉进一处 `#[cfg]`
+    // 会让「画面一空时是哪个后端的问题」变得无法回答）。
+    #[cfg(all(windows, feature = "d3d12"))]
     {
-        let event_loop = winit::event_loop::EventLoop::new().expect("EventLoop::new");
-        let theme = intent_cell(!want_light);
-        let view = Gallery::with_theme_intent(theme.clone(), !want_light);
-        let mut app = Bootstrap {
-            inner: None,
-            view: Some(view),
-            theme,
-        };
-        if let Err(e) = event_loop.run_app(&mut app) {
-            eprintln!("事件循环退出：{e}");
-        }
+        run_window_path(want_light);
     }
-    #[cfg(not(feature = "d3d12"))]
+    #[cfg(all(not(windows), feature = "linux-vk"))]
     {
-        eprintln!("[gallery] 需要 d3d12 特性才能开窗口；或用 --dump-cpu");
+        run_window_path(want_light);
+    }
+    #[cfg(not(any(
+        all(windows, feature = "d3d12"),
+        all(not(windows), feature = "linux-vk")
+    )))]
+    {
+        eprintln!(
+            "[gallery] 需要一个后端特性才能开窗口（d3d12 / d3d11 / linux-vk）；\
+             或用 --dump-cpu（不开窗口，CPU 参考图）"
+        );
+    }
+}
+
+/// 窗口路：建事件循环、跑自举宿主。
+///
+/// # 为什么按后端各写一份而不是只写一份
+///
+/// `Bootstrap` 的类型随宿主变（`zephyra_winit_d3d12::HostWindow` vs
+/// `zephyra_winit_vk::HostWindow`），而 `run_app` 要一个**具体**类型。把它写成
+/// 泛型 + trait 会引入一层「宿主接口」抽象 —— 而那正是本仓刻意不引入的东西：
+/// 三个后端各有各的事件与呈现语义，一层薄 trait 只会把差异藏进动态派发。
+#[cfg(any(
+    all(windows, feature = "d3d12"),
+    all(not(windows), feature = "linux-vk")
+))]
+fn run_window_path(want_light: bool) {
+    let event_loop = winit::event_loop::EventLoop::new().expect("EventLoop::new");
+    let theme = intent_cell(!want_light);
+    let view = Gallery::with_theme_intent(theme.clone(), !want_light);
+    let mut app = Bootstrap {
+        inner: None,
+        view: Some(view),
+        theme,
+    };
+    if let Err(e) = event_loop.run_app(&mut app) {
+        eprintln!("事件循环退出：{e}");
     }
 }
 
@@ -579,16 +626,34 @@ fn use_demo_font() {
     );
 }
 
+/// 本次编译选中的宿主类型。
+///
+/// # 为什么是别名而不是在每处写全名
+///
+/// 下面的 `Bootstrap` 与它的 `ApplicationHandler` 实现**两个后端共用**（事件翻译、
+/// 样式表装载、首帧补齐这些逻辑与后端无关），而宿主类型不同。给别名之后，
+/// 共用的那段代码不必带 `#[cfg]`，差异只留在这一行。
+#[cfg(all(windows, feature = "d3d12"))]
+type Host = zephyra_winit_d3d12::HostWindow<Gallery>;
+#[cfg(all(not(windows), feature = "linux-vk"))]
+type Host = zephyra_vulkan::HostWindow<Gallery>;
+
 /// 自举宿主：第一次 `resumed` 时建窗、装样式表、补第一帧。
-#[cfg(feature = "d3d12")]
+#[cfg(any(
+    all(windows, feature = "d3d12"),
+    all(not(windows), feature = "linux-vk")
+))]
 struct Bootstrap {
-    inner: Option<zephyra_winit_d3d12::HostWindow<Gallery>>,
+    inner: Option<Host>,
     view: Option<Gallery>,
     /// 主题意图共享格（View 写、这里读）。
     theme: Arc<AtomicU8>,
 }
 
-#[cfg(feature = "d3d12")]
+#[cfg(any(
+    all(windows, feature = "d3d12"),
+    all(not(windows), feature = "linux-vk")
+))]
 impl winit::application::ApplicationHandler for Bootstrap {
     fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
         if self.inner.is_some() {
@@ -603,7 +668,7 @@ impl winit::application::ApplicationHandler for Bootstrap {
             zephyra_ui::app::shell::CANVAS_W as u32,
             zephyra_ui::app::shell::CANVAS_H as u32,
         );
-        let mut app = zephyra_winit_d3d12::HostWindow::new_lenient_sized(event_loop, view, (w, h));
+        let mut app = Host::new_lenient_sized(event_loop, view, (w, h));
 
         // 样式表是第一优先级证明物：「源码里没有样式」要能看到它接上了。
         app.set_styler(install(build_sheet()));
@@ -638,7 +703,13 @@ impl winit::application::ApplicationHandler for Bootstrap {
 
         self.inner = Some(app);
 
-        // 拖边时逐帧跟随。
+        // 拖边时逐帧跟随 —— **只有 Windows 需要显式装**。
+        //
+        // 它装的是 Win32 窗口子类（`SetWindowLongPtrW` + 定时器），用来在
+        // `WM_SIZE` 里同步处理拖边。Linux 上 winit 的 `Resized` 本来就每次尺寸变化
+        // 都发，而交换链由 wgpu 在 acquire 时按当前尺寸重建 —— 所以那套子类在那边
+        // **没有对应物**，也不该为了「接口同形」放一个空实现：空壳会被误读成
+        //「装上了」，而真实情况是「不需要」。
         //
         // ⚠️ 必须放在 `self.inner = Some(app)` **之后**，理由是地址：
         // 钩子靠裸指针回到宿主（`HostWindow::enable_live_resize` 的文档写了
@@ -646,9 +717,12 @@ impl winit::application::ApplicationHandler for Bootstrap {
         // `Some(app)` 才把它搬进 `self.inner` 的内联存储。装在搬之前的话，
         // 指针指向的是那个即将失效的栈槽 —— 症状是「拖边时偶尔整窗崩掉」，
         // 而且必现不了、更难归因。
-        let inner = self.inner.as_mut().expect("刚放进去的宿主");
-        if let Err(e) = inner.enable_live_resize() {
-            eprintln!("[gallery] 装不上实时 resize 子类，拖边时会退回「拖完才刷新」: {e}");
+        #[cfg(all(windows, feature = "d3d12"))]
+        {
+            let inner = self.inner.as_mut().expect("刚放进去的宿主");
+            if let Err(e) = inner.enable_live_resize() {
+                eprintln!("[gallery] 装不上实时 resize 子类，拖边时会退回「拖完才刷新」: {e}");
+            }
         }
     }
 

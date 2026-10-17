@@ -19,7 +19,17 @@
 //!
 //! 逐项返回 `false`，**不返回错误**（见 [`zephyra_platform::ApplyOutcome`]）。
 
+#![cfg(windows)]
 #![deny(missing_debug_implementations)]
+
+// ⚠ 整个 crate 是 Windows 专属，形状与 `zephyra-winit` / `zephyra-dcomp` 一致。
+//
+// 理由不止「里面有 Win32 调用」：本 crate 直接 `use windows::Win32::...`，而
+// `windows` 只在 `[target.'cfg(windows)'.dependencies]` 里 —— 非 Windows 上
+// 那个依赖根本不存在，于是每一处调用都会变成「找不到 crate」。逐个 item 加
+// `#[cfg]` 会让这个 crate 到处是 cfg，而它的**全部**代码都是 Windows 的。
+//
+// Linux 上对应的实现是 `zephyra-platform-linux`，两者互不认识。
 
 use zephyra_platform::{
     ApplyOutcome, BackdropKind, Capabilities, Platform, ThemePreference, WindowChrome, WindowHandle,

@@ -28,6 +28,11 @@
 //! 全通过 = 代码问题（描述符字段错了），从探针名查。
 //! `CreateBuffer` 就失败 = 环境问题，与本 crate 的代码无关。
 
+#![cfg(windows)]
+// 本测试要建真实 D3D11 设备，非 Windows 上没有这条路径。
+// 宿主 crate 整个是 `#![cfg(windows)]`，而集成测试是**独立目标**、不受那个门禁保护
+// —— 不在这里补一道，`cargo test --workspace` 在 Linux 上就编不过（实测 2026-10）。
+
 use windows::Win32::Graphics::Direct3D::{D3D_DRIVER_TYPE_HARDWARE, D3D_FEATURE_LEVEL_11_0};
 use windows::Win32::Graphics::Direct3D11::*;
 use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_SAMPLE_DESC};

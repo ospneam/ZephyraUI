@@ -1,0 +1,42 @@
+[package]
+name = "zephyra-vulkan"
+description = "ZephyraUI 的 Linux 渲染后端：winit 窗口 + 裸 Vulkan(ash) 回放 DisplayList。与两个 Windows 后端互不依赖。"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.87"
+license = "MIT OR Apache-2.0"
+publish = false
+
+# # 为什么是「裸 Vulkan(ash)」而不是 wgpu
+#
+# 用户明确要求（2026-10）：「不要用 wgpu，自己写 Vulkan」。ash 是 Vulkan 的 FFI 绑定
+# （等价于 Windows 侧的 `windows` crate —— 都是绑定，不是框架），本 crate 里每个
+# struct / flag / 函数名都与 Vulkan 规范一一对应，上面没有渲染抽象层。
+#
+# 实测代价（WSL2 Ubuntu 24.04，llvmpipe）：
+#   - 依赖树：ash(0.37) + naga(30, 构建期) + winit(0.30) —— 比 wgpu 那条链小一个量级；
+#   - 构建前置：两者都 dlopen libvulkan，都不需要 pkg-config / vulkan 头文件；
+#   - 代码量：渲染器要比 wgpu 版多写描述符集/管线/帧缓冲等样板 —— 但这些都是
+#     Vulkan 规范里一一对应的概念，没有隐藏抽象。
+#
+# 与 wgpu 版的对照关系：着色器源仍是同一份 WGSL（shaders/zephyra.wgsl），只是
+# 编译产物从运行时换成构建期（naga → SPIR-V），等价于 Windows 侧用 fxc 构建期编 HLSL。
+
+[dependencies]
+zephyra-core = { path = "../../zephyra-core", version = "0.1.0" }
+zephyra-fx = { path = "../../zephyra-fx" }
+zephyra-platform = { path = "../zephyra-platform" }
+zephyra-platform-linux = { path = "../zephyra-platform-linux" }
+winit = "0.30"
+raw-window-handle = "0.6"
+ash = "0.37"
+
+[build-dependencies]
+naga = { version = "30", features = ["wgsl-in", "spv-out"] }
+
+[lib]
+path = "src/lib.rs"
+
+[lints.rust]
+# base 层是系统适配层，允许 unsafe —— 与两个 Windows 后端同一形状。
+unsafe_code = "allow"

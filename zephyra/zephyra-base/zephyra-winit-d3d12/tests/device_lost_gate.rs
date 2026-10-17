@@ -28,6 +28,11 @@
 //! `views` 已经 `clear()` 了（`ResizeBuffers` 要求先放手），而 `size` 还是旧值，
 //! 于是 `sync_swapchain` 每帧都认为「尺寸不一致」并重试 resize。
 
+#![cfg(windows)]
+// 本测试要建真实 D3D12 设备，非 Windows 上没有这条路径。
+// 宿主 crate 整个是 `#![cfg(windows)]`，而集成测试是**独立目标**、不受那个门禁保护
+// —— 不在这里补一道，`cargo test --workspace` 在 Linux 上就编不过（实测 2026-10）。
+
 use zephyra_winit_d3d12::SwapState;
 
 /// 设备已死 ⇒ 一律不画，不管 resize 是什么状态。

@@ -27,6 +27,11 @@
 //! 两条路径**完全一致**（都是 `0x80070057`）→ 没有 ABI 缺陷 → 只能是环境。
 //! 因此本测试标 `#[ignore]`：它记录的结论是"排除"，而不是"待修"。
 
+#![cfg(windows)]
+// 本测试要建真实 D3D12 设备，非 Windows 上没有这条路径。
+// 宿主 crate 整个是 `#![cfg(windows)]`，而集成测试是**独立目标**、不受那个门禁保护
+// —— 不在这里补一道，`cargo test --workspace` 在 Linux 上就编不过（实测 2026-10）。
+
 use windows::core::Interface;
 use windows::Win32::Graphics::Direct3D12::*;
 use windows::Win32::Graphics::Dxgi::CreateDXGIFactory1;

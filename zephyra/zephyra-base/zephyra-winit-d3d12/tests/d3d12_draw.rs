@@ -48,6 +48,11 @@
 //! 前四步任何一步失败都直接 `panic!` 并说清是哪一步 —— 这样失败时第一眼就能知道
 //! 问题在哪一层，而不必去猜「第 0 个像素是不是真的没画」。
 
+#![cfg(windows)]
+// 本测试要建真实 D3D12 设备，非 Windows 上没有这条路径。
+// 宿主 crate 整个是 `#![cfg(windows)]`，而集成测试是**独立目标**、不受那个门禁保护
+// —— 不在这里补一道，`cargo test --workspace` 在 Linux 上就编不过（实测 2026-10）。
+
 use zephyra_core::core::Color;
 use zephyra_core::paint::{Command, DisplayList};
 

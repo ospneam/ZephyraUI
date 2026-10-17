@@ -117,14 +117,23 @@ fn dispatch(bin: &str, argv: Vec<String>, io: &mut dyn Write) -> ExitCode {
 /// `cargo zephyra dev` 时 `argv[0]` 是 `cargo-zephyra.exe`，而用户敲的是
 /// `cargo zephyra dev` —— 原样打印会让帮助里出现一个**没人会敲**的命令
 /// （照着抄会得到 `cargo-zephyra.exe dev`，而那个名字不保证在 PATH 上）。
+///
+/// # ⚠ 为什么**不**用 `Path::file_name()`
+///
+/// `Path` 用平台的分隔符：Unix 上 `\` 是普通字符。于是
+/// `Path::new(r"E:\tools\zephyra.exe").file_name()` 在 Linux 上返回**整串**
+/// （分隔符是 `/`），帮助里就会显示 `E:\tools\zephyra` —— 一个没人会敲、而且在
+/// Linux 上根本不存在的东西。症状是「帮助里的名字对不上」，而它只在**跨平台那一侧**
+/// 显形（本仓 2026-10 第一次在 Linux 上跑 `cargo test --workspace` 时被这条测试逮到）。
+///
+/// 而这不只是「测试数据写成了 Windows 路径」：WSL 互操作里从 bash 调 Windows 版
+/// 可执行文件时，`argv[0]` **真的**就是 `E:\...`。所以两个分隔符都要认。
 pub fn display_name(argv0: Option<String>) -> String {
     let raw = argv0
         .map(|s| {
-            std::path::Path::new(&s)
-                .file_name()
-                .and_then(|f| f.to_str())
-                .unwrap_or("zephyra")
-                .to_string()
+            // 两个平台的分隔符都当分隔符，见函数文档。
+            let tail = s.rsplit(['/', '\\']).next().unwrap_or(&s);
+            if tail.is_empty() { "zephyra" } else { tail }.to_string()
         })
         .unwrap_or_else(|| "zephyra".to_string());
     let stem = raw.strip_suffix(".exe").unwrap_or(&raw);
