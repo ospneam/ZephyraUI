@@ -15,8 +15,15 @@ d3d12 = ["dep:zephyra-winit-d3d12"]
 # `cargo build -p zephyra-ui --bin gallery --no-default-features --features linux-vk`
 linux-vk = ["dep:zephyra-vulkan"]
 
+# 库层要用 `zephyra_bezier`（anim.rs 的 `Easing::curve` 返回 `Bezier`）。
+#
+# ⚠️ 它不是 feature，是**必需依赖**：它是 `anim` 公开 API 的返回类型，
+#    关掉等于改 API 形状，那是破坏性变更而不是可选功能。
+#    真正的"选择性编译"在 workspace 层（bezier 不在 default-members），
+#    不在应用层。
 [dependencies]
 zephyra-core = { path = "../zephyra/zephyra-core" }
+zephyra-bezier = { path = "../zephyra/zephyra-core/extra/zephyra-bezier" }
 zephyra-fx = { path = "../zephyra/zephyra-fx" }
 zephyra-style = { path = "../zephyra/zephyra-style" }
 zstylec = { path = "../zstylec" }

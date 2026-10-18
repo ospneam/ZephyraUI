@@ -41,7 +41,7 @@ pub const VS_BYTECODE: &[u8] = include_bytes!("../shaders/zephyra.vs.bin");
 /// 决定**，放在一起反而会让两边互相牵制。
 ///
 /// 顺序与 `BlendMode` 的声明顺序对应，见 [`ps_for_blend_mode`]。
-pub const PS_VARIANTS: [(&str, &[u8]); 18] = [
+pub const PS_VARIANTS: [(&str, &[u8]); 19] = [
     ("PSMain", include_bytes!("../shaders/zephyra.PSMain.ps.bin")),
     (
         "PSOverlay",
@@ -108,6 +108,10 @@ pub const PS_VARIANTS: [(&str, &[u8]); 18] = [
         "PSComposite",
         include_bytes!("../shaders/zephyra.PSComposite.ps.bin"),
     ),
+    (
+        "PSRefraction",
+        include_bytes!("../shaders/zephyra.PSRefraction.ps.bin"),
+    ),
 ];
 
 /// 第 `i` 个混合模式该用哪个 PS 变体；`None` = 默认 `PSMain` + 固定功能混合。
@@ -140,6 +144,12 @@ pub const PS_BLUR_H: usize = 15;
 pub const PS_BLUR_V: usize = 16;
 /// 离屏结果合成回目标（含投影染色）。
 pub const PS_COMPOSITE: usize = 17;
+/// 折射（液态玻璃）合成 —— 读 `g_dst`（**目标副本**）而不是 `g_tex`（离屏 RT）。
+///
+/// ⚠ 它与 [`PS_COMPOSITE`] 是**互斥**的：一条 pass 只走其中之一。
+/// 两条同时对同一块屏幕做"贴回"会互相覆盖 —— 症状是折射区域变成了模糊结果，
+/// 而两者各自的单测都是绿的（它们本来就不该同时出现）。
+pub const PS_REFRACTION: usize = 18;
 
 /// D3D12 那边不再有单一 `PS_BYTECODE`：见 [`PS_VARIANTS`]。
 ///

@@ -240,7 +240,10 @@ fn link_row() -> Element {
                         )
                         .style("link-icon"),
                     text_label("link-title", title, "text-body-strong"),
-                    caption("link-desc", desc),
+                    // 不用 `caption()`：它没有 `text-max-width`，而 `Text` 按**整行
+                    // 文本宽度**参与布局（既不换行也不裁剪），于是 60 字符的说明
+                    // 会横向溢出到相邻卡片上。折行宽度是排版几何，归样式表。
+                    text_label("link-desc", desc, "link-desc"),
                 ],
             )
         })

@@ -1,0 +1,246 @@
+/* RoundButton、Hyperlink、DropDownButton、ComboBox、SpinBox、ColorPicker
+ * —— Apple HIG 度量。
+ *
+ * 表单控件高 36px，圆角 8px。
+ */
+
+/* ---- RoundButton（正圆 / 全圆角） ---- */
+
+Control.round {
+    width: 44px;
+    height: 44px;
+    corner-radius: 99px;
+    padding: 8px;
+    direction: horizontal;
+    main-align: center;
+    cross-align: center;
+    spacing: 10px;
+    background: @control_tertiary;
+    border-width: 1px;
+    border-color: @control_border;
+}
+
+Control.round.hovered {
+    background: @control_secondary;
+    border-color: @control_border_strong;
+}
+
+Control.round.pressed {
+    background: @control_tertiary;
+}
+
+Control.round.checked {
+    background: @accent_fill;
+    border-color: @accent_fill;
+}
+
+Container.round-icon {
+    width: 18px;
+    height: 18px;
+    icon-color: @content;
+}
+
+Container.round-icon.checked {
+    icon-color: @on_accent_fill;
+}
+
+Text.round-label {
+    text-size: 14px;
+    text-color: @content;
+}
+
+Text.round-label.checked {
+    text-color: @on_accent_fill;
+}
+
+/* ---- Hyperlink（accent 字 + 下划线） ---- */
+
+Control.hyperlink {
+    direction: vertical;
+    cross-align: stretch;
+    spacing: 4px;
+    padding: 4px;
+}
+
+Text.hyperlink-label {
+    text-size: 15px;
+    text-color: @accent_fill;
+}
+
+Container.link-underline {
+    height: 1px;
+    background: @accent_fill;
+}
+
+/* ---- DropDownButton ---- */
+
+Control.drop-down {
+    direction: horizontal;
+    main-align: center;
+    cross-align: center;
+    spacing: 10px;
+    padding: 10px;
+    height: 36px;
+    corner-radius: 8px;
+    background: @control_fill;
+    border-width: 1px;
+    border-color: @control_border;
+}
+
+Control.drop-down.hovered {
+    background: @control_fill_hover;
+    border-color: @control_border_strong;
+}
+
+Control.drop-down.pressed {
+    background: @control_fill_pressed;
+}
+
+Control.drop-down.open {
+    background: @control_secondary;
+}
+
+Text.dd-label {
+    text-size: 15px;
+    text-color: @content;
+}
+
+Container.dd-icon {
+    width: 18px;
+    height: 18px;
+    icon-color: @content_secondary;
+}
+
+Container.dd-chevron {
+    width: 14px;
+    height: 14px;
+    icon-color: @content_secondary;
+}
+
+/* ---- ComboBox ---- */
+
+Control.combo-box {
+    direction: horizontal;
+    main-align: space-between;
+    cross-align: center;
+    spacing: 10px;
+    padding: 10px;
+    height: 36px;
+    width: 220px;
+    corner-radius: 8px;
+    background: @control_fill;
+    border-width: 1px;
+    border-color: @control_border;
+}
+
+Control.combo-box.hovered {
+    background: @control_fill_hover;
+}
+
+Control.combo-box.pressed {
+    background: @control_fill_pressed;
+}
+
+Text.combo-value {
+    text-size: 15px;
+    text-color: @content;
+}
+
+Container.combo-chevron {
+    width: 14px;
+    height: 14px;
+    icon-color: @content_secondary;
+}
+
+/* ---- SpinBox ---- */
+
+Control.spin-box {
+    direction: horizontal;
+    main-align: start;
+    cross-align: center;
+    spacing: 10px;
+    padding: 6px;
+    height: 36px;
+    width: 180px;
+    corner-radius: 8px;
+    background: @control_fill;
+    border-width: 1px;
+    border-color: @control_border;
+}
+
+Control.spin-box.hovered {
+    background: @control_fill_hover;
+}
+
+Text.spin-value {
+    text-size: 15px;
+    text-color: @content;
+}
+
+Control.spin-step {
+    width: 34px;
+    height: 26px;
+    corner-radius: 6px;
+    direction: horizontal;
+    main-align: center;
+    cross-align: center;
+    background: transparent;
+}
+
+Control.spin-step.hovered {
+    background: @control_secondary;
+}
+
+Control.spin-step.pressed {
+    background: @control_tertiary;
+}
+
+Container.spin-step-icon {
+    width: 14px;
+    height: 14px;
+    icon-color: @content_secondary;
+}
+
+/* ---- ColorPicker ---- */
+
+Container.color-picker {
+    direction: vertical;
+    spacing: 10px;
+}
+
+Container.swatch-row {
+    direction: horizontal;
+    spacing: 8px;
+}
+
+Container.swatch {
+    width: 28px;
+    height: 28px;
+    corner-radius: 6px;
+    background: @control_fill;
+    border-width: 1px;
+    border-color: @card_border;
+}
+
+Container.swatch.selected {
+    border-width: 2px;
+    border-color: @content;
+}
+
+/* 16 个默认色格。颜色是字面量，在样式表里而不是源码里。 */
+Container.sw-0 { background: #e81123; }
+Container.sw-1 { background: #ea5800; }
+Container.sw-2 { background: #fff100; }
+Container.sw-3 { background: #00cc6a; }
+Container.sw-4 { background: #00b7c3; }
+Container.sw-5 { background: #0078d4; }
+Container.sw-6 { background: #6b69d6; }
+Container.sw-7 { background: #b146c2; }
+Container.sw-8 { background: #e3008c; }
+Container.sw-9 { background: #8a8886; }
+Container.sw-10 { background: #69797e; }
+Container.sw-11 { background: #4a5459; }
+Container.sw-12 { background: #107c10; }
+Container.sw-13 { background: #016393; }
+Container.sw-14 { background: #881798; }
+Container.sw-15 { background: #5c2e91; }

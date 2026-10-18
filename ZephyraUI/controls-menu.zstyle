@@ -1,0 +1,104 @@
+/* MenuBar、Menu、MenuItem —— Apple HIG 度量。 */
+
+/* ---- MenuBar ---- */
+
+Container.menu-bar {
+    direction: horizontal;
+    spacing: 4px;
+    padding: 6px;
+    cross-align: center;
+}
+
+Container.menu-bar-item {
+    height: 34px;
+    padding: 10px;
+    corner-radius: 8px;
+    direction: horizontal;
+    main-align: center;
+    cross-align: center;
+    background: transparent;
+}
+
+Container.menu-bar-item.hovered {
+    background: @control_secondary;
+}
+
+Container.menu-bar-item.open {
+    background: @control_tertiary;
+}
+
+Text.bar-item-label {
+    text-size: 15px;
+    text-color: @content;
+}
+
+/* ---- Menu（内联卡） ---- */
+
+Container.menu {
+    direction: vertical;
+    spacing: 0px;
+    padding: 6px;
+    width: 220px;
+    cross-align: stretch;
+    corner-radius: 10px;
+    background: @card;
+    border-width: 1px;
+    border-color: @card_border;
+}
+
+Container.menu-item {
+    height: 36px;
+    padding: 10px;
+    corner-radius: 6px;
+    direction: horizontal;
+    main-align: start;
+    cross-align: center;
+    spacing: 10px;
+    background: transparent;
+}
+
+Container.menu-item.hovered {
+    background: @control_secondary;
+}
+
+Container.menu-item.pressed {
+    background: @control_tertiary;
+}
+
+Text.menu-item-label {
+    text-size: 15px;
+    text-color: @content;
+}
+
+Container.menu-check {
+    width: 14px;
+    height: 14px;
+    corner-radius: 4px;
+    background: transparent;
+}
+
+Container.menu-check.checked {
+    background: @accent_fill;
+}
+
+Container.menu-arrow {
+    width: 14px;
+    height: 14px;
+    icon-color: transparent;
+}
+
+Container.menu-arrow.on {
+    icon-color: @content_secondary;
+}
+
+/* 分组标题：菜单里的分类小标题（不可交互，只做视觉分层）。 */
+Text.menu-label {
+    text-size: 13px;
+    text-color: @content_secondary;
+}
+
+/* 分隔线 */
+Container.menu-separator {
+    height: 1px;
+    background: @divider;
+}

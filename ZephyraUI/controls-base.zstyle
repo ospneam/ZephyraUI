@@ -1,0 +1,52 @@
+/* 基础控件：Glyph、Divider、Typography —— Apple HIG 度量。
+ *
+ * 排版档位照 Apple HIG 的 San Francisco 字体比例：
+ *   title 22 / subtitle 17 / body 15 / caption 13。
+ */
+
+/* ---- 通用叶子 ---- */
+
+Container.glyph {
+    width: 22px;
+    height: 22px;
+    icon-color: @content;
+}
+
+/* 分隔线 */
+Container.divider {
+    height: 1px;
+    background: @divider;
+}
+
+Container.divider-v {
+    width: 1px;
+    height: 22px;
+    background: @divider;
+}
+
+/* ---- 排版档位 ---- */
+
+Text.text-title {
+    text-size: 22px;
+    text-color: @content;
+}
+
+Text.text-subtitle {
+    text-size: 17px;
+    text-color: @content;
+}
+
+Text.text-body {
+    text-size: 15px;
+    text-color: @content;
+}
+
+Text.text-body-strong {
+    text-size: 15px;
+    text-color: @content;
+}
+
+Text.text-caption {
+    text-size: 13px;
+    text-color: @content_secondary;
+}

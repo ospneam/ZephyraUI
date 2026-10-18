@@ -1,7 +1,12 @@
-// 本文件由 responsive.rs 的 #[cfg(test)] mod tests 抽出 —— 测试代码与生产代码分离。
-// 模块路径不变（src 里的声明用 #[path] 指过来），所以 use super::* 与私有可见性都照旧。
+//! 响应式与触控判据单元测试：断点、列数、触控目标。
+//!
+//! 从 `src/tests/responsive_tests.rs` 移入 `tests/` —— 所有被测项均为 `pub`，
+//! 移到集成测试后不需要改可见性。
 
-use super::*;
+use zephyra_ui::responsive::{
+    columns_for, touch_px, WidthClass, TOUCH_GAP_EPX, TOUCH_MIN_EPX, TOUCH_OPTIMAL_EPX,
+    TOUCH_ROW_HEIGHT_EPX, TOUCH_ROW_WIDTH_EPX,
+};
 
 /// 断点按官方的三个边界值判，一格都不偏。
 ///
@@ -52,7 +57,7 @@ fn breakpoint_uses_effective_not_physical_pixels() {
 
 /// scale 退化时不能 panic、也不能判出荒谬结果。
 #[test]
-fn scale_退化时退回_1_0() {
+fn scale_degenerate_falls_back_to_1_0() {
     for bad in [0.0, -1.0, f32::NAN, f32::INFINITY] {
         assert_eq!(
             WidthClass::of_viewport((900.0, 600.0), bad),

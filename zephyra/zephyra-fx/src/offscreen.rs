@@ -240,6 +240,27 @@ pub struct OffscreenPass {
     /// 纯模糊相反 —— 离屏结果**就是**这条命令的最终形态；再画一次原图等于
     /// "模糊 + 清晰"叠在一起，视觉上完全看不出模糊。
     pub redraw_original: bool,
+    /// 折射参数；`None` = 这条链不折射。
+    ///
+    /// # 为什么折射**不是**一种 blur step
+    ///
+    /// 模糊趟读的是 `g_tex`（离屏 RT，即元素自己），而折射必须读**目标副本**
+    /// （`g_dst`，元素背后已经画在屏幕上的东西）。两者是**不同的纹理**，所以
+    /// 折射不能塞进 `blurs` —— 那样会被 ping-pong 逻辑接上，采样到 RT 而不是
+    /// 屏幕背景，症状是"玻璃边缘把元素自己的轮廓糊开了"，看起来像 bug 而
+    /// 不像接线错误。
+    ///
+    /// 它是一个**合成期**参数：合成阶段同时能拿到 RT 结果与背景副本。
+    pub refraction: Option<Refraction>,
+}
+
+/// 折射（液态玻璃）的执行参数。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Refraction {
+    /// 折射强度（像素）：边缘处背景被推开的最大距离。
+    pub strength: f32,
+    /// 色散量。>0 时 R / B 通道相对 G 沿法线偏移不同的比例。
+    pub dispersion: f32,
 }
 
 /// 一次模糊趟。
@@ -299,6 +320,7 @@ pub fn pass_for_chain(filter: &FilterChain, content: Rect) -> OffscreenPass {
     let mut tint = None;
     let mut offset = zephyra_core::core::Point::new(0.0, 0.0);
     let mut redraw_original = false;
+    let mut refraction = None;
 
     // `filters[0]` 最先执行 —— 见 `FilterChain` 的顺序语义。
     for f in filter.filters() {
@@ -323,6 +345,22 @@ pub fn pass_for_chain(filter: &FilterChain, content: Rect) -> OffscreenPass {
                 tint = Some(*color);
                 redraw_original = true;
             }
+            zephyra_core::filter::Filter::Refraction {
+                strength,
+                dispersion,
+            } => {
+                // 后者覆盖前者，与 `tint` 同一条语义：链是就地依次执行，
+                // 同一种效果出现两次时后者赢。
+                refraction = Some(Refraction {
+                    strength: *strength,
+                    dispersion: *dispersion,
+                });
+                // ⚠ 合成阶段输出的是**被扰动的背景**，不是这个元素本身 ——
+                // 所以元素自己的描边 / 文字 / 图标必须在合成**之后**再画一遍。
+                // 与 `DropShadow` 同一条理由（那是"额外一层"），但方向相反：
+                // 投影是"原图在影子之上"，折射是"原图在扰动过的背景之上"。
+                redraw_original = true;
+            }
         }
     }
 
@@ -340,6 +378,7 @@ pub fn pass_for_chain(filter: &FilterChain, content: Rect) -> OffscreenPass {
         blurs,
         tint,
         redraw_original,
+        refraction,
     }
 }
 
@@ -476,6 +515,78 @@ pub fn composite_quad(
     v[2].position = [x1, y1];
     v[3].position = [x0, y1];
     v
+}
+
+/// 折射合成趟的铺满四边形。
+///
+/// # 与 [`composite_quad`] 的字段约定**不同**（这是本函数存在的原因）
+///
+/// 折射要算元素的 SDF，而 SDF 需要**元素自己**的半宽半高与圆角半径；
+/// 模糊趟的 `local` / `half_size` 走的是**源 RT**。两者必须分开填：
+///
+/// | 字段 | 模糊 / 合成 | 折射 |
+/// |---|---|---|
+/// | `local` | 源 RT 内的像素坐标 | **元素内**的像素坐标（算 SDF） |
+/// | `half_size` | 源 RT 的尺寸（`nointerpolation`） | **元素**的半宽半高 |
+/// | `uv` | `local / src_size` | 元素内归一化坐标（采样背景用） |
+/// | `corner` | `(0, tintAmount)` | `(圆角半径, 折射强度)` |
+/// | `color` | 染色色 | `.r` = 色散量 |
+///
+/// 折射的合成阶段不染色，所以 `color` 的前三个通道空着，`.r` 让给色散。
+/// 这看着像是"挪用字段"，而它确实是 —— 但加一整个新顶点字段会让 `Vertex`
+/// 从 52 字节涨到 56，进而要同步改**两个**后端的 `VERTEX_LAYOUT` 与
+/// 着色器语义分配（后者有重叠陷阱，见 `zephyra.hlsl` 的 `VSIn` 注释）。
+/// 为一个 per-pass 常量付那个代价不划算。
+///
+/// 屏幕 uv 由着色器从 `VSOut.ndc` 推出（`ndc * 0.5 + 0.5`），不占顶点字段 ——
+/// 那条已经在 `zephyra.hlsl` 的 `VSOut` 注释里写明为什么。
+///
+/// # 元素在 RT 里的位置
+///
+/// `element_rect_in_rt` = 元素在离屏纹理里的子矩形，由调用方从
+/// `FilterChain::origin_in` 与内容矩形算出。算错时折射仍然"有效果"，
+/// 只是边缘高光的位置整体偏了 —— 那种错极难察觉，所以该值由入参显式
+/// 给出，不在内部猜。
+pub fn refraction_composite_quad(
+    dst_screen: Rect,
+    dst_size: (f32, f32),
+    element_rect_in_rt: Rect,
+    corner_radius: f32,
+    refraction: Refraction,
+) -> [crate::quad::Vertex; 4] {
+    let ew = element_rect_in_rt.width.max(1e-6);
+    let eh = element_rect_in_rt.height.max(1e-6);
+    // 几何（position）铺满**屏幕矩形**，`half_size` 是**元素**的半宽半高。
+    // 两个尺寸分别处理，理由同 `composite_quad`。
+    let sw = dst_size.0.max(1e-6);
+    let sh = dst_size.1.max(1e-6);
+    let (x0, x1) = (
+        dst_screen.x / sw * 2.0 - 1.0,
+        (dst_screen.x + dst_screen.width) / sw * 2.0 - 1.0,
+    );
+    let (y0, y1) = (
+        1.0 - dst_screen.y / sh * 2.0,
+        1.0 - (dst_screen.y + dst_screen.height) / sh * 2.0,
+    );
+    let half = [ew * 0.5, eh * 0.5];
+    let v = |position: [f32; 2], local: [f32; 2]| crate::quad::Vertex {
+        position,
+        local,
+        // 元素内归一化：0..1 对应元素的左/上边到右/下边。
+        uv: [local[0] / ew, local[1] / eh],
+        // `.r` = 色散量（见上面的表）。
+        color: [refraction.dispersion, 0.0, 0.0, 1.0],
+        // x = 圆角半径，y = 折射强度。
+        corner: [corner_radius, refraction.strength],
+        half_size: half,
+        kind: crate::quad::kind::BLUR,
+    };
+    [
+        v([x0, y0], [0.0, 0.0]),
+        v([x1, y0], [ew, 0.0]),
+        v([x1, y1], [ew, eh]),
+        v([x0, y1], [0.0, eh]),
+    ]
 }
 
 /// 把只含 `cmd` 的新列表准备好，让调用方 `expand` 出局部几何。

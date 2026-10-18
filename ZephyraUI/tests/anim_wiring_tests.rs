@@ -14,7 +14,7 @@
 //!
 //! # 为什么第 4 条要看"最后一档等于不透明"
 //!
-//! `.enter-8` 是 `opacity: 0.91` 而不是 1.0（见 `gallery.zstyle` 的注释：
+//! `.enter-8` 是 `opacity: 0.91` 而不是 1.0（见 `shell.zstyle` 的注释：
 //! 8 档量化下每档 1/8，最后一档落在 91%）。这本身是个取舍：如果 `.enter-8`
 //! 写成 1.0，那么从 `enter-7`(0.78) 到 `enter-8`(1.0) 会有一次可见跳变；
 //! 写成 0.91 再由"放完之后不发分类名"补上最后一跳，跳变只有 9%，
@@ -264,12 +264,12 @@ fn huge_interval_is_clamped() {
 ///
 /// # 为什么真的去读 zstyle 而不是把表抄一份到测试里
 ///
-/// 抄一份就变成**两处真相**：改了 `gallery.zstyle` 里的 0.91 而测试里还写 0.91，
+/// 抄一份就变成**两处真相**：改了样式表里的 0.91 而测试里还写 0.91，
 /// 测试照样绿，而画面已经错了。这里读真表。
 fn opacity_of(class: &str) -> f32 {
     use std::path::Path;
     let dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let css = std::fs::read_to_string(dir.join("gallery.zstyle")).expect("读 gallery.zstyle");
+    let css = std::fs::read_to_string(dir.join("shell.zstyle")).expect("读 shell.zstyle");
     let needle = format!("Container.page.{class} {{");
     let start = css
         .find(&needle)

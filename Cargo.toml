@@ -21,7 +21,7 @@ members = [
     "ZephyraCLI",
     "zephyra/zephyra-base/zephyra-winit",
     "zephyra/zephyra-base/zephyra-winit-d3d12",
-    "zephyra/zephyra-base/zephyra-camera",
+    "zephyra/zephyra-base/extra/zephyra-camera",
     "zephyra/zephyra-base/zephyra-dcomp",
     # 平台能力抽象 + Windows 实现。`zephyra-platform` 本身**不含平台代码**
     # （可进 default-members，但暂无独立产物需要默认构建，故一并归到"按需选"）。
@@ -38,6 +38,17 @@ members = [
     # 分支淹没真正的逻辑）。同样不进 default-members：默认构建不该编译另一套图形栈。
     # （wgpu 版 zephyra-winit-vk 已删除 —— 用户明确要求不用 wgpu，raw ash 全链路实测通过。）
     "zephyra/zephyra-base/zephyra-vulkan",
+    # ---- extra ----
+    #
+    # `extra/` 是"不是所有项目都需要"的包的存放处。两个位置按**判据**分：
+    #
+    #   zephyra-core/extra/     零依赖 + 无 GPU 可单测的纯逻辑
+    #   zephyra-base/extra/     要碰平台 / 允许 unsafe 的
+    #
+    # 判据与 `zephyra-base/README.md` 的分层判据同源。
+    # `zephyra-camera` 原本住在 base 根目录，现已归入 base/extra/ —— 它正是
+    # 这一层的样板：`default = []`，开 `capture` 才带 nokhwa。
+    "zephyra/zephyra-core/extra/zephyra-bezier",
     "examples",
     # core 之上的 UI 控件层 + RinUI 风格 gallery 应用。
     # 进 members 而**不进** default-members：它的默认 feature 是 d3d12 后端，
@@ -46,10 +57,10 @@ members = [
     # 显式选中——「选哪后端、编哪个 bin」都留在命令里。
     "ZephyraUI",
 ]
-# `zephyra-camera` 与 `zephyra-dcomp` 进 members 但**不进** default-members：它们是
-# 成员（可以被 `-p` 选中、共享工作区的依赖解析），但不会被无差别的 `cargo build` /
-# `cargo test` 编译。这就是"选择编译"落在 Cargo 层面的形式——比在源码里 `#[cfg]`
-# 一大块更细，因为连依赖解析都省掉了。
+# `extra/` 下的包（`zephyra-bezier` / `zephyra-camera`）与 `zephyra-dcomp` 进 members
+# 但**不进** default-members：它们是成员（可以被 `-p` 选中、共享工作区的依赖解析），
+# 但不会被无差别的 `cargo build` / `cargo test` 编译。这就是"选择编译"落在 Cargo
+# 层面的形式——比在源码里 `#[cfg]` 一大块更细，因为连依赖解析都省掉了。
 #
 # `zephyra-dcomp` 排除的理由比 camera 更强一层：它需要 `unsafe`（COM / DXGI），
 # 放进 default-members 会让"无差别构建"这个动作本身开始编译 unsafe 代码。

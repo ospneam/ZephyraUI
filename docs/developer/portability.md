@@ -57,7 +57,7 @@ zephyra-fx                      DisplayList → 顶点流 / 字形图集 / 纹�
 | 滤镜（blur / 投影） | 三个后端都实现了「内容 → 模糊（乒乓）→ 合成」 | **已通**。实测 demo 3 条带滤镜命令全部走离屏，`unimplemented_filters = 0` |
 | `zephyra-dcomp` | DirectComposition | Linux 无对应物，**保持 Windows-only**。呈现由 `wgpu::Surface` 负责（X11 走 XCB / GLX，Wayland 走 `wl_surface`） |
 | 逐窗口深色 / 圆角 / 材质 | DWM 属性 | `false`。逐项理由见 `zephyra-platform-linux` 的模块文档与 `stub.rs` |
-| 设备枚举（摄像头等） | `zephyra-camera` 的像素格式处理是纯 `std`；采集走 nokhwa | 未在 Linux 上实测（`--features capture`） |
+| 设备枚举（摄像头等） | `zephyra-base/extra/zephyra-camera` 的像素格式处理是纯 `std`；采集走 nokhwa | 未在 Linux 上实测（`--features capture`） |
 | 跨帧局部重绘 | 三个后端都做不到 | 同样的理由：flip model / swapchain 下 present 之后后缓冲内容未定义（见 base README） |
 
 ## 5. 验收口径

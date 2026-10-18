@@ -77,6 +77,29 @@ pub enum Filter {
         offset: Point,
         sigma: f32,
     },
+    /// 折射（"液态玻璃"）：把元素**背后**的画面按边缘法线推开再显示。
+    ///
+    /// # 与 [`Filter::Blur`] 的根本区别
+    ///
+    /// `Blur` 模糊的是元素**自己**的离屏内容（RT_A 里只有它一条命令）；
+    /// 折射模糊/位移的是元素**背后**已经画在屏幕上的东西 —— 也就是
+    /// `g_dst` 那张目标副本。两者读的是**不同的纹理**，所以它们的离屏
+    /// 内容不能互换。这也是本变体存在的全部理由：没有"读背景"这个动作，
+    /// 液态玻璃做不出来。
+    ///
+    /// # 参数
+    ///
+    /// - `strength`：折射强度，**像素**。边缘处背景被推开的最大距离。
+    /// - `dispersion`：色散量（0..1 常用）。>0 时 R / B 通道相对 G 通道
+    ///   沿法线方向偏移不同的量，于是边缘出现彩色描边 —— 真实玻璃的色散。
+    ///   0 = 单通道位移，无色散。
+    ///
+    /// # 为什么 `redraw_original` 必须是 `true`
+    ///
+    /// 合成阶段输出的是**被扰动的背景**，不是这个元素本身。元素自己的内容
+    /// （描边、文字、图标）要在那之后再照常画一遍 —— 与 `DropShadow`
+    /// 同一条理由：影子/折射都是**额外**的一层。
+    Refraction { strength: f32, dispersion: f32 },
 }
 
 impl Filter {
@@ -123,6 +146,19 @@ impl Filter {
                     bottom: (r + offset.y).max(0.0),
                 }
             }
+            // 折射的采样会**往元素外**多读 `strength` 那么多像素（边缘处背景被
+            // 推开的方向是朝外的），所以离屏矩形必须留出这一圈，否则边缘的
+            // 位移在 RT 边界被硬切 —— 症状是玻璃边缘出现一道平直的硬边，
+            // 而那看起来像"边框画歪了"而不是"离屏算小了"。
+            Filter::Refraction { strength, .. } => {
+                let s = if param_active(*strength) { *strength } else { 0.0 };
+                Outset {
+                    left: s,
+                    top: s,
+                    right: s,
+                    bottom: s,
+                }
+            }
         }
     }
 
@@ -136,8 +172,26 @@ impl Filter {
                 blur_radius(*sigma_x) <= 0.0 && blur_radius(*sigma_y) <= 0.0
             }
             Filter::DropShadow { .. } => false,
+            // 两个参数**分别**判：strength=0 但 dispersion>0 时仍然有效果
+            //（R/B 相对 G 偏移），所以不能"strength 为 0 就整条链恒等"。
+            //
+            // ⚠ 这里必须是 `!A && !B`，**不能**写成 `!(A && B)` —— 那是
+            //    「两个都不生效才算恒等」的**反面**（`||` 的语义），
+            //    会让「只有色散」被误判成恒等。
+            Filter::Refraction {
+                strength,
+                dispersion,
+            } => !param_active(*strength) && !param_active(*dispersion),
         }
     }
+}
+
+/// 折射的某个参数是否**真的在起作用**。
+///
+/// 抽出成函数而不是内联两个比较：`is_identity` 与 `outsets` 都要用同一条
+/// 判据（`strength=0` 在两处必须得出同一个结论），而内联写两遍就有漂移的机会。
+fn param_active(v: f32) -> bool {
+    v.is_finite() && v > 0.0
 }
 
 /// blur 的 σ → 半径，挡掉非有限值。

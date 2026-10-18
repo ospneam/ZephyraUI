@@ -1,0 +1,171 @@
+/* Button、ToolButton、PillButton —— Apple HIG 度量。
+ *
+ * 圆角 8px（HIG 连续圆角），按钮高 36px，pill 保持全圆角。
+ * 状态链：variant 规则在前，hovered/pressed 在后（后者赢）。
+ */
+
+/* ---- Button ---- */
+
+Control.button {
+    direction: horizontal;
+    main-align: center;
+    cross-align: center;
+    spacing: 10px;
+    padding: 10px;
+    corner-radius: 8px;
+    height: 36px;
+    border-width: 1px;
+}
+
+Control.button.standard {
+    background: @control_fill;
+    border-color: @control_border;
+}
+
+Control.button.accent {
+    background: @accent_fill;
+    border-color: @accent_fill;
+}
+
+Control.button.subtle {
+    background: transparent;
+    border-color: transparent;
+}
+
+/* 状态规则：只碰 border 这类与变体无关的量；background 全部走 3 名交叉规则。 */
+Control.button.hovered {
+    border-color: @control_border_strong;
+}
+
+Control.button.standard.hovered {
+    background: @control_fill_hover;
+}
+
+Control.button.standard.pressed {
+    background: @control_fill_pressed;
+}
+
+Control.button.subtle.hovered {
+    background: @control_secondary;
+}
+
+Control.button.subtle.pressed {
+    background: @control_tertiary;
+}
+
+/* accent 的三个交叉态都保持强调底。 */
+Control.button.accent.hovered {
+    background: @accent_fill;
+}
+
+Control.button.accent.pressed {
+    background: @accent_fill;
+}
+
+Text.btn-label {
+    text-size: 15px;
+    text-color: @content;
+}
+
+Text.btn-label.accent {
+    text-color: @on_accent_fill;
+}
+
+Container.btn-icon {
+    width: 18px;
+    height: 18px;
+    icon-color: @content_secondary;
+}
+
+Container.btn-icon.hovered {
+    icon-color: @content;
+}
+
+Container.btn-icon.accent {
+    icon-color: @on_accent_fill;
+}
+
+/* ---- ToolButton（44×44） ---- */
+
+Control.tool-button {
+    width: 44px;
+    height: 44px;
+    corner-radius: 10px;
+    padding: 10px;
+    direction: horizontal;
+    main-align: center;
+    cross-align: center;
+    background: @control_fill;
+    border-width: 1px;
+    border-color: @control_border;
+}
+
+Control.tool-button.hovered {
+    background: @control_fill_hover;
+    border-color: @control_border_strong;
+}
+
+Control.tool-button.pressed {
+    background: @control_fill_pressed;
+}
+
+Container.tool-icon {
+    width: 22px;
+    height: 22px;
+    icon-color: @content;
+}
+
+/* ---- PillButton ---- */
+
+Control.pill {
+    direction: horizontal;
+    main-align: center;
+    cross-align: center;
+    spacing: 10px;
+    padding: 12px;
+    height: 36px;
+    corner-radius: 99px;
+    background: @control_fill;
+    border-width: 1px;
+    border-color: @control_border;
+}
+
+Control.pill.checked {
+    background: @accent_fill;
+    border-color: @accent_fill;
+}
+
+Control.pill.hovered {
+    background: @control_fill_hover;
+}
+
+Control.pill.checked.hovered {
+    background: @accent_fill;
+}
+
+Control.pill.pressed {
+    background: @control_fill_pressed;
+}
+
+Control.pill.checked.pressed {
+    background: @accent_fill;
+}
+
+Text.pill-label {
+    text-size: 14px;
+    text-color: @content;
+}
+
+Text.pill-label.checked {
+    text-color: @on_accent_fill;
+}
+
+Container.pill-icon {
+    width: 18px;
+    height: 18px;
+    icon-color: @content_secondary;
+}
+
+Container.pill-icon.checked {
+    icon-color: @on_accent_fill;
+}

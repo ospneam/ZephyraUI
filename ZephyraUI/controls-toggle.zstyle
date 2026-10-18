@@ -1,0 +1,200 @@
+/* CheckBox、RadioButton、ToggleSwitch —— Apple HIG 度量。
+ *
+ * 指示器 22×22，开关 44×24（把手 14）。
+ */
+
+Control.check-box {
+    direction: horizontal;
+    cross-align: center;
+    spacing: 10px;
+    height: 22px;
+}
+
+Control.radio-box {
+    direction: horizontal;
+    cross-align: center;
+    spacing: 10px;
+    height: 22px;
+}
+
+Container.check-indicator {
+    width: 22px;
+    height: 22px;
+    corner-radius: 6px;
+    background: @control_fill;
+    border-width: 1px;
+    border-color: @control_border_strong;
+}
+
+Container.radio-indicator {
+    width: 22px;
+    height: 22px;
+    corner-radius: 99px;
+    background: @control_fill;
+    border-width: 1px;
+    border-color: @control_border_strong;
+}
+
+Container.check-indicator.checked {
+    background: @accent_fill;
+    border-color: @accent_fill;
+}
+
+Container.radio-indicator.checked {
+    background: @accent_fill;
+    border-color: @accent_fill;
+}
+
+Container.check-indicator.hovered {
+    background: @control_secondary;
+}
+
+Container.radio-indicator.hovered {
+    background: @control_secondary;
+}
+
+Container.check-indicator.checked.hovered {
+    background: @accent_fill;
+}
+
+Container.radio-indicator.checked.hovered {
+    background: @accent_fill;
+}
+
+Container.check-mark {
+    width: 10px;
+    height: 10px;
+    corner-radius: 2px;
+    background: transparent;
+}
+
+Container.check-mark.checked {
+    background: @on_accent_fill;
+}
+
+Container.radio-dot {
+    width: 10px;
+    height: 10px;
+    corner-radius: 99px;
+    background: transparent;
+}
+
+Container.radio-dot.checked {
+    background: @on_accent_fill;
+}
+
+Text.check-label {
+    text-size: 15px;
+    text-color: @content_secondary;
+}
+
+Text.check-label.checked {
+    text-color: @content;
+}
+
+Text.check-label.hovered {
+    text-color: @content;
+}
+
+/* ---- ToggleSwitch ---- */
+
+Control.switch {
+    direction: horizontal;
+    cross-align: center;
+    height: 24px;
+}
+
+Container.switch-track {
+    width: 44px;
+    height: 24px;
+    corner-radius: 99px;
+    padding: 5px;
+    direction: horizontal;
+    main-align: start;
+    cross-align: center;
+    background: @control_strong;
+    border-width: 1px;
+    border-color: @content_disabled;
+}
+
+Container.switch-track.on {
+    main-align: end;
+    background: @accent_fill;
+    border-color: @accent_fill;
+}
+
+Container.switch-knob {
+    width: 14px;
+    height: 14px;
+    corner-radius: 99px;
+    background: @content;
+}
+
+/* ---- Slider ---- */
+
+Control.slider {
+    direction: horizontal;
+    cross-align: center;
+    spacing: 14px;
+    height: 36px;
+}
+
+Container.slider-track {
+    width: 240px;
+    height: 6px;
+    corner-radius: 99px;
+    direction: horizontal;
+    main-align: start;
+    cross-align: center;
+    background: @control_strong;
+}
+
+Container.slider-fill {
+    height: 6px;
+    corner-radius: 99px;
+    background: @accent_fill;
+}
+
+Container.slider-thumb {
+    width: 24px;
+    height: 24px;
+    corner-radius: 99px;
+    background: @content;
+    border-width: 2px;
+    border-color: @accent_fill;
+}
+
+Text.slider-value {
+    text-size: 13px;
+    text-color: @content_secondary;
+}
+
+/* ---- ProgressBar ---- */
+
+Control.progress {
+    width: 260px;
+    height: 4px;
+    corner-radius: 99px;
+    direction: horizontal;
+    main-align: start;
+    cross-align: center;
+    background: @control_strong;
+}
+
+Container.progress-fill {
+    height: 4px;
+    corner-radius: 99px;
+    background: @accent_fill;
+}
+
+Container.progress-fill.running {
+    background: @accent_fill;
+}
+
+Container.progress-fill.paused {
+    background: @caution;
+}
+
+Container.progress-fill.error {
+    background: @critical;
+}

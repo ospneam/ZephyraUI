@@ -1,0 +1,15 @@
+/* Collections 页布局 —— Apple HIG 度量。 */
+
+Container.page-collections {
+    direction: vertical;
+    spacing: 20px;
+    cross-align: stretch;
+}
+
+Container.demo-card {
+    direction: vertical;
+    spacing: 10px;
+    padding: 18px;
+    width: 260px;
+    height: 118px;
+}

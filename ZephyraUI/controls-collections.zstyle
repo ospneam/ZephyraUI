@@ -1,0 +1,211 @@
+/* ListView、TableView、SwipeView、Avatar、SettingItem、SettingExpander
+ * —— Apple HIG 度量。
+ *
+ * 列表项高 44px（HIG 最小触控目标），圆角 8px。
+ */
+
+/* ---- ListView ---- */
+
+Container.list-view {
+    direction: vertical;
+    spacing: 4px;
+    padding: 6px;
+    width: 280px;
+    cross-align: stretch;
+    corner-radius: 10px;
+    background: @card;
+    border-width: 1px;
+    border-color: @card_border;
+}
+
+Control.list-row {
+    height: 44px;
+    padding: 10px;
+    corner-radius: 8px;
+    direction: horizontal;
+    main-align: start;
+    cross-align: center;
+    background: transparent;
+}
+
+Control.list-row.hovered {
+    background: @control_secondary;
+}
+
+Control.list-row.selected {
+    background: @control_fill;
+    border-width: 1px;
+    border-color: @control_border;
+}
+
+Text.list-label {
+    text-size: 15px;
+    text-color: @content;
+}
+
+/* ---- TableView ---- */
+
+Container.table-view {
+    direction: vertical;
+    spacing: 0px;
+    width: 440px;
+    corner-radius: 10px;
+    background: @card;
+    border-width: 1px;
+    border-color: @card_border;
+}
+
+Container.table-head-row {
+    direction: horizontal;
+    spacing: 14px;
+    height: 40px;
+    cross-align: center;
+    padding: 14px;
+    background: @surface_alt;
+}
+
+Text.table-head {
+    text-size: 13px;
+    text-color: @content_secondary;
+}
+
+Container.table-row {
+    direction: horizontal;
+    spacing: 14px;
+    height: 44px;
+    cross-align: center;
+    padding: 14px;
+    border-width: 1px;
+    border-color: @divider;
+}
+
+Text.table-cell {
+    text-size: 14px;
+    text-color: @content;
+}
+
+/* ---- SwipeView ---- */
+
+Container.swipe-view {
+    direction: vertical;
+    spacing: 14px;
+    width: 340px;
+}
+
+Container.swipe-card {
+    direction: vertical;
+    spacing: 10px;
+    padding: 18px;
+    height: 110px;
+    corner-radius: 12px;
+    background: @card;
+    border-width: 1px;
+    border-color: @card_border;
+}
+
+Text.swipe-title {
+    text-size: 17px;
+    text-color: @content;
+}
+
+Text.swipe-desc {
+    text-size: 14px;
+    text-color: @content_secondary;
+}
+
+Container.swipe-pips {
+    direction: horizontal;
+    spacing: 8px;
+    main-align: center;
+}
+
+Container.swipe-pip {
+    width: 7px;
+    height: 7px;
+    corner-radius: 99px;
+    background: @control_strong;
+}
+
+Container.swipe-pip.selected {
+    width: 18px;
+    background: @accent_fill;
+}
+
+/* ---- Avatar ---- */
+
+Container.avatar {
+    width: 36px;
+    height: 36px;
+    corner-radius: 99px;
+    background: @control_strong;
+    direction: horizontal;
+    main-align: center;
+    cross-align: center;
+}
+
+Container.avatar.accent {
+    background: @accent_fill;
+}
+
+Text.avatar-text {
+    text-size: 13px;
+    text-color: @content;
+}
+
+Text.avatar-text.accent {
+    text-color: #ffffff;
+}
+
+/* ---- SettingItem / SettingExpander ---- */
+
+Container.setting-item {
+    direction: horizontal;
+    cross-align: center;
+    spacing: 14px;
+    padding: 14px;
+    corner-radius: 8px;
+    background: @card;
+    border-width: 1px;
+    border-color: @card_border;
+    height: 60px;
+    width: 440px;
+}
+
+Container.setting-icon {
+    width: 22px;
+    height: 22px;
+    icon-color: @accent_fill;
+}
+
+Container.setting-expander {
+    direction: vertical;
+    width: 440px;
+    corner-radius: 10px;
+    background: @card;
+    border-width: 1px;
+    border-color: @card_border;
+}
+
+Container.setting-header {
+    direction: horizontal;
+    main-align: space-between;
+    cross-align: center;
+    height: 60px;
+    padding: 14px;
+}
+
+Container.setting-chevron {
+    width: 14px;
+    height: 14px;
+    icon-color: @content_secondary;
+}
+
+Container.setting-chevron.open {
+    icon-color: @content;
+}
+
+Container.setting-content {
+    direction: vertical;
+    spacing: 10px;
+    padding: 14px;
+}

@@ -1,0 +1,14 @@
+/* TextLabel、Caption —— Apple HIG 排版。
+ *
+ * 正文 15px，说明文字 13px。
+ */
+
+Text.text-label {
+    text-size: 15px;
+    text-color: @content;
+}
+
+Text.caption {
+    text-size: 13px;
+    text-color: @content_secondary;
+}

@@ -63,10 +63,13 @@ zephyra/
   zephyra-base/      系统适配层：凡是要问操作系统才能回答的事
     zephyra-winit/     winit + D3D11 宿主
     zephyra-winit-d3d12/  winit + D3D12 后端（独立 crate）
-    zephyra-camera/    摄像头采集与像素格式（可选子包）
     zephyra-dcomp/     DirectComposition 呈现后端（可选子包，Windows-only + unsafe）
     zephyra-platform/    平台无关的 Win32 抽象
     zephyra-platform-win/  Win32 API（unsafe + COM）
+    extra/            「不是所有项目都需要」的包（可选子包，不进 default-members）
+      zephyra-camera/    摄像头采集与像素格式
+  zephyra-core/extra/   同上，但零依赖 + 无 GPU 可单测的纯逻辑
+    zephyra-bezier/      可配置三次方贝塞尔缓动
 zstylec/             .zstyle 编译器（解析 + 检查）
 ZephyraCLI/          命令行：new / check / dev / run / build / info / props
 examples/            验收基线 + 窗口化 demo

@@ -495,3 +495,105 @@ float4 PSComposite(VSOut i) : SV_TARGET {
     float a = t.a * i.color.a;
     return float4(tint * a, a);
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  折射（液态玻璃）
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// # 与模糊的本质区别
+//
+// 模糊读 `g_tex`（离屏 RT，里面**只有这个元素自己**）；折射读 `g_dst`
+// （目标副本 = 元素**背后**已经画在屏幕上的画面）。两者是不同的纹理，
+// 所以本入口是**合成期**的：它同时拿到两者。
+//
+// # 顶点字段约定（与 `PSBlurH` / `PSComposite` 不同，见 `offscreen.rs` 的表）
+//
+// | 字段       | 含义 |
+// |------------|------|
+// | `local`    | **元素内**的像素坐标 |
+// | `half_size`| **元素**的半宽半高（`nointerpolation`）|
+// | `uv`       | 元素内归一化坐标 |
+// | `corner.x` | 圆角半径 |
+// | `corner.y` | 折射强度（**像素**）|
+// | `color.r`  | 色散量 |
+//
+// 屏幕 uv 走 `DstUv(i)`（从 `ndc` 推），不占顶点字段。
+
+/// 圆角矩形 SDF 的**单位外法线**。
+///
+/// # 为什么用有限差分而不是解析梯度
+///
+/// 圆角矩形的解析梯度要在「直边区」与「圆角区」之间分支，而两段的公式不同。
+/// 分支写错时**不会报错**，只会让法线在某个区域偏转 90° —— 症状是玻璃的
+/// 某一侧不折射、另一侧折射方向相反，看起来像"效果只做了一半"。
+///
+/// 有限差分（4 次 SDF 求值）没有分支，也就没有这类错。代价可以忽略：
+/// 本像素着色器里 SDF 求值本来就被 `PSMain` 每片元调一次。
+float2 SdNormal(float2 p, float2 half_size, float radius) {
+    // 步长取 0.75，与 `quad::AA_BAND` 同量级 —— 再小会被浮点噪声淹没，
+    // 再大在 1px 宽的边缘上会跨过整个直边区，梯度反而失真。
+    const float e = 0.75;
+    float2 g;
+    g.x = sd_round_rect(p + float2(e, 0.0), half_size, radius)
+        - sd_round_rect(p - float2(e, 0.0), half_size, radius);
+    g.y = sd_round_rect(p + float2(0.0, e), half_size, radius)
+        - sd_round_rect(p - float2(0.0, e), half_size, radius);
+    float len = length(g);
+    // 元素**正中心**处 SDF 的梯度确实为 0（对称）。那不是错误 ——
+    // 中心本来就没有"边缘方向"。返回 0 让那里的位移为零，正是想要的。
+    return (len > 1e-5) ? (g / len) : float2(0.0, 0.0);
+}
+
+/// 折射合成：把元素**背后**的画面按边缘法线推开后显示出来。
+///
+/// ⚠ 输出的是**被扰动的背景**，不是这个元素本身 —— 所以宿主必须在这趟
+/// 之后再把原命令照常画一遍（`OffscreenPass::redraw_original`）。漏了那一步
+/// 的症状是"玻璃上的描边和文字消失了"，而不是"背景没被扰动"。
+float4 PSRefraction(VSOut i) : SV_TARGET {
+    float radius   = i.corner.x;
+    float strength = i.corner.y;
+    float dispersion = i.color.r;
+
+    // 元素内坐标 → SDF（矩形内为负）。
+    float2 p = i.local - i.half_size;
+    float d = sd_round_rect(p, i.half_size, radius);
+
+    // ⚠ 元素**外**（d > 0）必须完全不输出：那里的背景没有被任何东西遮挡，
+    // 位移它只会凭空撕裂画面。遮罩取 `saturate(-d / edge)`。
+    float edge = max(1.0, min(i.half_size.x, i.half_size.y) * 0.5);
+    float mask = saturate(-d / edge);
+
+    // 边缘处的位移最大，向内部渐弱到 0 —— 这是"厚度"感来源。
+    float falloff = mask;
+
+    float2 n = SdNormal(p, i.half_size, radius);
+
+    // 像素位移 → uv 位移。屏幕尺寸走 `ddx/ddy`，**不占顶点字段** ——
+    // 加一个字段会让 `Vertex` 从 52 涨到 56 字节，进而要同步改两个后端的
+    // `VERTEX_LAYOUT` 与着色器语义分配（后者有索引重叠陷阱，见 `VSIn` 注释）。
+    //
+    // `DstUv` 对 NDC 是**线性**的，所以它的逐像素增量就是"一个像素多少 uv"。
+    // 这比传屏幕尺寸更稳：不需要调用方保证传进来的尺寸与实际一致，
+    // 而那种不一致的��状是折射整体错位，极难归因。
+    float2 uv = DstUv(i);
+    float2 px2uv = float2(ddx(uv.x), ddy(uv.y));
+    float2 off_uv = n * (strength * falloff) * px2uv;
+
+    // 色散：R / B 相对 G 沿法线拉开不同比例，于是边缘出现彩色描边 ——
+    // 真实玻璃的色散。`dispersion = 0` 时三条通道偏移相同，等于无色散。
+    float2 uvR = saturate(uv + off_uv * (1.0 + dispersion));
+    float2 uvG = saturate(uv + off_uv);
+    float2 uvB = saturate(uv + off_uv * (1.0 - dispersion));
+
+    float4 dG = g_dst.SampleLevel(g_smp, uvG, 0);
+    float3 bg = float3(
+        g_dst.SampleLevel(g_smp, uvR, 0).r,
+        dG.g,
+        g_dst.SampleLevel(g_smp, uvB, 0).b
+    );
+
+    // `g_dst` 是预乘的，所以覆盖率取 alpha，rgb 不再乘 —— 与 `PSComposite`
+    // 透传分支同一纪律。
+    float a = dG.a * mask;
+    return float4(bg * a, a);
+}

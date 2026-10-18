@@ -409,6 +409,190 @@ fn blend_mode_creates_no_offscreen_requirement() {
     assert_eq!(count_non_default_blends(&l), 1);
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+//  折射（液态玻璃）
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// 折射的外扩必须等于 `strength`（像素）。
+///
+/// ⚠ 这条钉的是**像素**语义而不是"比例"：折射要把背景往外推 `strength`
+/// 那么多像素，所以离屏矩形少一圈就在边缘被硬切 —— 症状是玻璃边缘出现一道
+/// 平直的硬边，看起来像"边框画歪了"而不是"离屏算小了"。
+#[test]
+fn refraction_outsets_by_strength_in_pixels() {
+    let content = Rect::new(100.0, 50.0, 80.0, 40.0);
+    for s in [1.0f32, 8.0, 24.0] {
+        let f = FilterChain::single(Filter::Refraction {
+            strength: s,
+            dispersion: 0.0,
+        });
+        let b = f.bounds_for(content);
+        assert_eq!(
+            b,
+            Rect::new(100.0 - s, 50.0 - s, 80.0 + 2.0 * s, 40.0 + 2.0 * s),
+            "strength={s} 的外扩不对"
+        );
+    }
+}
+
+/// 非法强度不得让离屏矩形**变小**。
+///
+/// 负 strength / NaN 若直接进 `Outset`，离屏矩形会比元素还小 —— 边缘被切，
+/// 且**不报任何错**。这条与 `Filter::outsets` 里 blur 的同款防御对齐。
+#[test]
+fn refraction_degenerate_strength_does_not_shrink_bounds() {
+    let content = Rect::new(0.0, 0.0, 50.0, 50.0);
+    for bad in [-1.0f32, f32::NAN, f32::INFINITY] {
+        let f = FilterChain::single(Filter::Refraction {
+            strength: bad,
+            dispersion: 0.0,
+        });
+        let b = f.bounds_for(content);
+        assert_eq!(
+            b, content,
+            "strength={bad} 时离屏矩形必须等于内容矩形（不能更小）"
+        );
+    }
+}
+
+/// `strength = 0` 且 `dispersion = 0` 是**恒等** ⇒ 不该开离屏。
+///
+/// 不开离屏省的是两次全 RT 的模糊 + 一次纹理往返。
+#[test]
+fn zero_refraction_is_identity() {
+    let f = FilterChain::single(Filter::Refraction {
+        strength: 0.0,
+        dispersion: 0.0,
+    });
+    assert!(f.is_identity());
+    let content = Rect::new(0.0, 0.0, 10.0, 10.0);
+    assert!(
+        plan_pass(&quad(f, BlendMode::default(), content)).is_none(),
+        "恒等折射不该产出离屏 pass"
+    );
+}
+
+/// 但 `strength = 0` + `dispersion > 0` **不是**恒等。
+///
+/// 色散只需要强度为 0 的法线方向就能生效（R/B 相对 G 偏移）—— 所以这一条
+/// 把两个参数分开判，而不是"strength 为 0 就恒等"。
+#[test]
+fn dispersion_alone_is_still_an_effect() {
+    let f = FilterChain::single(Filter::Refraction {
+        strength: 0.0,
+        dispersion: 0.5,
+    });
+    assert!(!f.is_identity(), "只有色散时仍需离屏");
+}
+
+/// 折射必须把原图**重画一遍**。
+///
+/// ⚠ 这条是折射最容易漏的一步：合成趟输出的是**被扰动的背景**，不是元素本身。
+/// 漏掉 `redraw_original` 时描边、文字、图标全部消失 —— 而"玻璃效果出来了"
+/// 掩盖了"元素没了"，看起来像效果做过头了，不像少画了一步。
+#[test]
+fn refraction_forces_redraw_of_the_original() {
+    let f = FilterChain::single(Filter::Refraction {
+        strength: 12.0,
+        dispersion: 0.0,
+    });
+    let pass = plan_pass(&quad(f, BlendMode::default(), Rect::new(0.0, 0.0, 100.0, 60.0)))
+        .expect("折射应产出 pass");
+    assert!(pass.redraw_original, "折射后必须重画原图");
+    assert_eq!(pass.refraction.expect("折射参数").strength, 12.0);
+}
+
+/// 纯模糊**不**重画原图 —— 与折射相反，两条一起钉住边界。
+#[test]
+fn blur_does_not_redraw_the_original() {
+    let f = FilterChain::single(Filter::Blur {
+        sigma_x: 4.0,
+        sigma_y: 4.0,
+    });
+    let pass = plan_pass(&quad(f, BlendMode::default(), Rect::new(0.0, 0.0, 100.0, 60.0)))
+        .expect("模糊应产出 pass");
+    assert!(
+        !pass.redraw_original,
+        "模糊的结果**就是**最终形态，再画一次原图等于没模糊"
+    );
+    assert!(pass.refraction.is_none());
+}
+
+/// 折射**不是**一种模糊趟：它读的是目标副本，不是离屏 RT。
+///
+/// ⚠ 这条钉的是"别把它塞进 ping-pong 循环"。真塞进去的话它会读到 RT_A
+/// （元素自己）而不是屏幕背景 —— 症状是"玻璃边缘把元素自己的轮廓糊开了"，
+/// 画面上仍然有折射效果，只是对象错了。
+#[test]
+fn refraction_is_not_a_blur_step() {
+    let f = FilterChain::new([
+        Filter::Blur {
+            sigma_x: 3.0,
+            sigma_y: 3.0,
+        },
+        Filter::Refraction {
+            strength: 10.0,
+            dispersion: 0.2,
+        },
+    ]);
+    let pass = plan_pass(&quad(f, BlendMode::default(), Rect::new(0.0, 0.0, 100.0, 60.0)))
+        .expect("应产出 pass");
+    // 模糊仍然是两趟（H + V），折射**没有**增加趟数。
+    assert_eq!(pass.blurs.len(), 2, "折射不得被展开成额外的模糊趟");
+    assert!(pass.refraction.is_some());
+}
+
+/// 同一条链里两次折射，后者赢（与 `tint` 同一语义）。
+#[test]
+fn later_refraction_overrides_earlier_one() {
+    let f = FilterChain::new([
+        Filter::Refraction {
+            strength: 4.0,
+            dispersion: 0.1,
+        },
+        Filter::Refraction {
+            strength: 20.0,
+            dispersion: 0.9,
+        },
+    ]);
+    let pass = plan_pass(&quad(f, BlendMode::default(), Rect::new(0.0, 0.0, 100.0, 60.0)))
+        .expect("应产出 pass");
+    let r = pass.refraction.expect("折射参数");
+    assert_eq!(r.strength, 20.0);
+    assert_eq!(r.dispersion, 0.9);
+}
+
+/// 折射四边形的 SDF 几何必须是**元素**的，不是 RT 的。
+///
+/// ⚠ 这条是折射唯一容易整段搞错的地方：`local` / `half_size` 若填了 RT 的
+/// 尺寸，SDF 仍然"有形状"（于是画面仍然有折射效果），只是边缘高光整体偏移。
+/// 那类错肉眼极难察觉，所以直接断言顶点里的半宽半高。
+#[test]
+fn refraction_quad_carries_element_geometry_not_rt_size() {
+    let element = Rect::new(10.0, 20.0, 120.0, 80.0);
+    let q = crate::offscreen::refraction_composite_quad(
+        Rect::new(0.0, 0.0, 140.0, 120.0), // 屏幕上的 RT bounds
+        (1400.0, 800.0),                  // 屏幕尺寸
+        element,
+        12.0,
+        crate::offscreen::Refraction {
+            strength: 16.0,
+            dispersion: 0.3,
+        },
+    );
+    // `half_size` 是元素的半宽半高，四顶点同值（`nointerpolation`）。
+    for v in &q {
+        assert_eq!(v.half_size, [60.0, 40.0], "half_size 应是元素半宽半高");
+        assert_eq!(v.corner, [12.0, 16.0], "corner 应是（半径, 强度）");
+        assert_eq!(v.color[0], 0.3, "color.r 应携带色散量");
+        assert!((v.uv[0] - v.local[0] / 120.0).abs() < 1e-6);
+        assert!((v.uv[1] - v.local[1] / 80.0).abs() < 1e-6);
+    }
+    // `local` 铺满元素：首尾角分别落在元素的两端。
+    assert_eq!(q[0].local, [0.0, 0.0]);
+    assert_eq!(q[2].local, [120.0, 80.0]);
+}
+
 /// 文本命令的离屏范围是**所有字形的并集**，不是第一个字形。
 ///
 /// 逐字形模糊会把每个字糊成独立一块，视觉上完全不是"这段文字被模糊了"。

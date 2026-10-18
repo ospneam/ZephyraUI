@@ -424,6 +424,32 @@ pub fn command_content_rect(cmd: &Command) -> Option<Rect> {
     }
 }
 
+/// 一条命令的**形状圆角半径**（像素）—— 折射算 SDF 用。
+///
+/// # 为什么不能靠内容矩形反推
+///
+/// 内容矩形只是包围盒。圆角矩形的 SDF 要的是**半径**：同一个包围盒，
+/// 方角与 40px 圆角是两个完全不同的形状，而折射的边缘高光位置完全由半径
+/// 决定 —— 半径错了，高光落在错误的地方，画面仍然"有折射效果"，
+/// 于是极难归因。
+///
+/// # 非矩形命令返回 0
+///
+/// `Path`（图标 / 矢量图形）与 `Text`（一排字形四边形）没有单一的圆角半径：
+/// 前者的形状来自三角化后的多边形，后者是多个独立四边形。给它们一个假的
+/// 半径只会在合成阶段算出一个**看似合理但毫无意义**的 SDF。
+/// 返回 0（方角）是诚实的退化 —— 折射对它们仍然工作，只是不带边缘高光。
+pub fn command_corner_radius(cmd: &Command) -> f32 {
+    match cmd {
+        // 四角相同（`CornerRadius` 只有一个 `radius`），所以取它即可。
+        Command::Quad { radius, .. } => radius.radius,
+        // 图像可以裁成圆角，所以它的半径也是真的。
+        Command::Image { radius, .. } => radius.radius,
+        Command::Path { .. } | Command::Text { .. } => 0.0,
+        Command::PushClip(_) | Command::PopClip => 0.0,
+    }
+}
+
 /// 一条命令的内容矩形是否非空（可以渲出像素）。
 ///
 /// # 为什么要单独判

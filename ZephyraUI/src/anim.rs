@@ -13,6 +13,19 @@
 //!
 //! 纯函数还带来一件实质好处：不依赖 GPU、不依赖窗口，
 //! 于是「缓动算得对不对」可以在 CI 里逐点断言，而不是只能靠肉眼。
+//!
+//! # 求值内核在 `zephyra-core::extra::bezier`
+//!
+//! 本模块只管「官方档位 → 进度」，而三次方贝塞尔的牛顿迭代住在
+//! [`Bezier`](zephyra_core::extra::bezier::Bezier)。拆开的理由：那条求值
+//! 是**与官方表格无关**的通用数学，而 extra 正是放这类东西的地方。
+//!
+//! ⚠️ 本 crate 依赖 `zephyra-bezier`（`zephyra-core/extra/` 下的独立 crate）。
+//!    它不进 workspace `default-members`，所以无差别构建不编译它 ——
+//!    但 `anim` 的公开 API 里有它（[`Easing::curve`] 返回 [`Bezier`]），
+//!    于是选 `zephyra-ui` 时它一定在。
+
+use zephyra_bezier::Bezier;
 
 /// 官方「最低限度」档的时长：淡入 + 淡出，**83 ms**。
 ///
@@ -108,77 +121,40 @@ pub enum Easing {
 }
 
 impl Easing {
+    /// 本曲线的控制点（`Linear` 为 `None`）。
+    ///
+    /// # 为什么这条是**唯一**的真源
+    ///
+    /// 以前控制点写在 [`Easing::at`] 的 `match` 里，于是"这条曲线长什么样"
+    /// 只有一个地方能回答，而**外部无法查询**—— 想在界面上画出曲线预览、
+    /// 或做逐点对照测试，都只能把它复制一份，那必然漂移。
+    ///
+    /// 现在形状由 [`curve`] 单点定义，`at` 只负责求值。改形状只需改这一处。
+    pub const fn curve(self) -> Option<Bezier> {
+        match self {
+            // 官方明确"线性"，不是省事 —— 对应原文。所以它没有控制点。
+            Self::Linear => None,
+            // 官方「直接入口 / 直接退出」cubic-bezier(0,0,0,1)
+            Self::Direct => Some(Bezier::new(0.0, 0.0, 0.0, 1.0)),
+            // 官方「点到点」cubic-bezier(0.55,0.55,0,1)
+            Self::PointToPoint => Some(Bezier::new(0.55, 0.55, 0.0, 1.0)),
+            // 官方「平缓退出」cubic-bezier(1,0,1,1)
+            Self::SoftExit => Some(Bezier::new(1.0, 0.0, 1.0, 1.0)),
+        }
+    }
+
     /// 曲线在 `t` 处的值（`t` 已夹到 0..1）。
     ///
-    /// # 为什么自己求而不引 crate
-    ///
-    /// 三次方贝塞尔的求值是十几行闭式解，引一个 crate 换来的是
-    /// 一条依赖与"不知道它在边界上怎么处理"。这里显式处理两处：
-    ///
-    /// - `t <= 0` / `t >= 1` 直接返回端点（牛顿迭代在端点附近可能不收敛）；
-    /// - 分母为 0（控制点使 `cx*3 - cx*2` 退化）时退回线性 —— 那时曲线本身就是直线。
+    /// 线性直返 `t`（零误差、不迭代）；其余交给 [`curve`] 的求值。
     pub fn at(self, t: f32) -> f32 {
         if !t.is_finite() {
             return 0.0;
         }
-        let t = t.clamp(0.0, 1.0);
-        match self {
-            // 官方明确"线性"，所以这里不是省事，是对应原文。
-            Self::Linear => t,
-            _ => {
-                let (x1, y1, x2, y2) = match self {
-                    Self::Direct => (0.0, 0.0, 0.0, 1.0),
-                    Self::PointToPoint => (0.55, 0.55, 0.0, 1.0),
-                    Self::SoftExit => (1.0, 0.0, 1.0, 1.0),
-                    Self::Linear => unreachable!("上面已分支"),
-                };
-                cubic_bezier(t, x1, y1, x2, y2)
-            }
+        match self.curve() {
+            None => t.clamp(0.0, 1.0),
+            Some(b) => b.at(t),
         }
     }
-}
-
-/// 三次方贝塞尔求值（控制点形式，对应 CSS / WinUI 的 `cubic-bezier(x1,y1,x2,y2)`）。
-///
-/// 参数 `x1..y2` 是**控制点**，不是端点 —— 端点是 (0,0) 与 (1,1)。
-fn cubic_bezier(t: f32, x1: f32, y1: f32, x2: f32, y2: f32) -> f32 {
-    // 曲线参数方程：用 t 求 (x, y)。要的是"给定 x 求 y"，所以先反解 t。
-    let cx = 3.0 * x1;
-    let bx = 3.0 * (x2 - x1) - cx;
-    let ax = 1.0 - cx - bx;
-    let cy = 3.0 * y1;
-    let by = 3.0 * (y2 - y1) - cy;
-    let ay = 1.0 - cy - by;
-
-    let x_of = |s: f32| ((ax * s + bx) * s + cx) * s;
-    let y_of = |s: f32| ((ay * s + by) * s + cy) * s;
-
-    // 牛顿迭代解 `x_of(s) = t`。8 次足够：贝塞尔在这个区间上是单调的且平滑。
-    //
-    // ⚠️ `s` 必须每步夹在 [0,1]。不夹的后果很具体：`x_of(s)=s³` 时
-    // 导数 `3s²` 在 s→0 附近趋 0，于是一次迭代就把 s 推到 16.8，
-    // 之后 `y_of` 溢出、被外层 clamp 成 0.9989 —— 曲线看起来"倒退"，
-    // 而那种抖动与"参数选错"完全不同，极难归因。
-    let mut s = t;
-    for _ in 0..8 {
-        let x = x_of(s) - t;
-        let d = (3.0 * ax * s + 2.0 * bx) * s + cx;
-        if d == 0.0 || !d.is_finite() {
-            break;
-        }
-        let next = s - x / d;
-        if !next.is_finite() {
-            break;
-        }
-        let next = next.clamp(0.0, 1.0);
-        // 已收敛到浮点精度就停：继续迭代只会来回抖。
-        if (next - s).abs() < 1e-6 {
-            s = next;
-            break;
-        }
-        s = next;
-    }
-    y_of(s).clamp(0.0, 1.0)
 }
 
 /// 把「已过去的毫秒数」换算成缓动后的进度（0..1）。
@@ -211,7 +187,3 @@ pub fn step(p: f32) -> Option<u32> {
     let n = (p * STEPS as f32).ceil() as u32;
     Some(n.clamp(1, STEPS))
 }
-
-#[cfg(test)]
-#[path = "tests/anim_tests.rs"]
-mod tests;

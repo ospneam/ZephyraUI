@@ -1,0 +1,158 @@
+/* TextField、TextArea、ScrollableTextArea、AutoSuggestBox、TextInputMenu
+ * —— Apple HIG 度量。
+ *
+ * 输入控件高 36px，圆角 8px。
+ */
+
+/* ---- TextField ---- */
+
+Control.text-field {
+    direction: horizontal;
+    main-align: space-between;
+    cross-align: center;
+    spacing: 10px;
+    padding: 10px;
+    height: 36px;
+    width: 240px;
+    corner-radius: 8px;
+    background: @control_fill;
+    border-width: 1px;
+    border-color: @control_border;
+}
+
+Control.text-field.hovered {
+    background: @control_fill_hover;
+}
+
+Control.text-field.focused {
+    border-color: @accent_fill;
+    border-width: 2px;
+}
+
+Text.field-text {
+    text-size: 15px;
+    text-color: @content;
+}
+
+Text.field-text.placeholder {
+    text-color: @content_disabled;
+}
+
+Control.field-clear {
+    width: 28px;
+    height: 24px;
+    corner-radius: 6px;
+    direction: horizontal;
+    main-align: center;
+    cross-align: center;
+    background: transparent;
+}
+
+Control.field-clear.hovered {
+    background: @control_secondary;
+}
+
+Container.field-clear-icon {
+    width: 14px;
+    height: 14px;
+    icon-color: @content_secondary;
+}
+
+/* ---- TextArea ---- */
+
+Container.text-area {
+    direction: vertical;
+    spacing: 6px;
+    padding: 14px;
+    width: 340px;
+    corner-radius: 8px;
+    background: @control_fill;
+    border-width: 1px;
+    border-color: @control_border;
+}
+
+Text.area-line {
+    text-size: 15px;
+    text-color: @content;
+}
+
+Container.scroll-area {
+    direction: horizontal;
+    spacing: 10px;
+    cross-align: stretch;
+}
+
+Container.scrollbar {
+    width: 7px;
+    corner-radius: 99px;
+    background: @control_fill;
+    direction: vertical;
+    main-align: start;
+    padding: 0px;
+}
+
+Container.scroll-thumb {
+    width: 7px;
+    corner-radius: 99px;
+    background: @control_strong;
+}
+
+/* ---- AutoSuggestBox ---- */
+
+Container.suggest-list {
+    direction: vertical;
+    spacing: 0px;
+    padding: 6px;
+    cross-align: stretch;
+    corner-radius: 10px;
+    background: @card;
+    border-width: 1px;
+    border-color: @card_border;
+}
+
+Container.suggest-row {
+    height: 34px;
+    padding: 10px;
+    corner-radius: 6px;
+    direction: horizontal;
+    main-align: start;
+    cross-align: center;
+    background: transparent;
+}
+
+Container.suggest-row.selected {
+    background: @control_secondary;
+}
+
+Text.suggest-label {
+    text-size: 14px;
+    text-color: @content;
+}
+
+/* ---- TextInputMenu ---- */
+
+Container.context-menu {
+    direction: vertical;
+    spacing: 0px;
+    padding: 6px;
+    width: 200px;
+    cross-align: stretch;
+    corner-radius: 10px;
+    background: @card;
+    border-width: 1px;
+    border-color: @card_border;
+}
+
+Container.menu-item {
+    height: 34px;
+    padding: 10px;
+    corner-radius: 6px;
+    direction: horizontal;
+    main-align: start;
+    cross-align: center;
+    background: transparent;
+}
+
+Container.menu-item.hovered {
+    background: @control_secondary;
+}

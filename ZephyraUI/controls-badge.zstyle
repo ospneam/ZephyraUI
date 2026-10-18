@@ -1,0 +1,109 @@
+/* InfoBadge、DotBadge —— Apple HIG 度量。
+ *
+ * 徽章高 18px，圆角全圆角，字号 13px。
+ */
+
+Control.badge {
+    direction: horizontal;
+    main-align: center;
+    cross-align: center;
+    height: 18px;
+    corner-radius: 99px;
+    padding: 8px;
+    background: @accent_fill;
+    border-width: 1px;
+    border-color: @accent_fill;
+}
+
+Control.badge.success {
+    background: @success;
+    border-color: @success;
+}
+
+Control.badge.caution {
+    background: @caution;
+    border-color: @caution;
+}
+
+Control.badge.error {
+    background: @critical;
+    border-color: @critical;
+}
+
+Control.badge.outline {
+    background: transparent;
+}
+
+Control.badge.outline.success {
+    border-color: @success;
+}
+
+Control.badge.outline.caution {
+    border-color: @caution;
+}
+
+Control.badge.outline.error {
+    border-color: @critical;
+}
+
+Control.badge.info {
+    background: @accent_fill;
+    border-color: @accent_fill;
+}
+
+Control.badge.outline.info {
+    background: transparent;
+    border-color: @accent_fill;
+}
+
+Text.badge-text {
+    text-size: 13px;
+    text-color: @on_accent_fill;
+}
+
+Text.badge-text.outline {
+    text-color: @accent_fill;
+}
+
+Text.badge-text.outline.success {
+    text-color: @success;
+}
+
+Text.badge-text.outline.caution {
+    text-color: @caution;
+}
+
+Text.badge-text.outline.error {
+    text-color: @critical;
+}
+
+Text.badge-text.info {
+    text-color: @on_accent_fill;
+}
+
+Text.badge-text.outline.info {
+    text-color: @accent_fill;
+}
+
+Container.badge-dot {
+    width: 5px;
+    height: 5px;
+    corner-radius: 99px;
+    background: @accent_fill;
+}
+
+Container.badge-dot.info {
+    background: @accent_fill;
+}
+
+Container.badge-dot.success {
+    background: @success;
+}
+
+Container.badge-dot.caution {
+    background: @caution;
+}
+
+Container.badge-dot.error {
+    background: @critical;
+}

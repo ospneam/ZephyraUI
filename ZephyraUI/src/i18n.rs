@@ -436,7 +436,3 @@ fn title_case(s: &str) -> String {
     }
     out
 }
-
-#[cfg(test)]
-#[path = "tests/i18n_tests.rs"]
-mod tests;

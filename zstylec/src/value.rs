@@ -35,6 +35,14 @@ pub fn parse(
     line: u32,
     key: &'static PropertyKey,
 ) -> Result<PropertyValue, ()> {
+    // `filter` 是**函数列表**而不是单个 token，必须在取 token 之前分流：
+    // `Token::Function` 之后要递归进它的参数解析器，而通用分支只看表层。
+    //
+    // ⚠ 这条分流必须放在 `input.next()` **之前** —— 一旦取了 token，函数
+    // 内部的参数解析器就没法从外层那个 `input` 上正确推进了。
+    if std::ptr::eq(key, &zephyra_core::props::FILTER) {
+        return parse_filter_chain(input, p, line);
+    }
     let value = input.next().map_err(|_: cssparser::BasicParseError| ())?;
     match value {
         // ---- 数字 ----
@@ -94,6 +102,162 @@ pub fn parse(
             ));
             Err(())
         }
+    }
+}
+
+/// 解析 `filter:` 的值：逗号分隔的滤镜函数列表。
+///
+/// # 支持的写法
+///
+/// ```text
+/// filter: none
+/// filter: blur(4px)
+/// filter: blur(4px, 6px)
+/// filter: refraction(16px, 0.3)
+/// filter: blur(3px) refraction(12px, 0.25)
+/// filter: drop-shadow(0px 4px 6px #000000a0)
+/// ```
+///
+/// # 为什么用 CSS 的函数语法而不是自定义写法
+///
+/// `blur(...)` / `drop-shadow(...)` 是 **CSS 原生**的 filter 语法。本仓既然
+/// 已经有 `filter` 这个属性名，用同一个语法可以让样式表在别的 CSS 引擎里
+/// 大致也能读 —— 而自定义语法只会让"迁移一份样式表"这件事变成逐行重写。
+///
+/// # `refraction` 是本仓**扩展**，不是 CSS 标准
+///
+/// 它没有 CSS 对应物，因为主流 CSS 里还没有这一档效果。放在这里而不是另起
+/// 一套语法，是为了让它能和 `blur` 混在同一条链里（玻璃面板通常两者都要）。
+///
+/// # 为什么 `dispersion` 可省
+///
+/// 只写 `refraction(16px)` 时色散为 0 —— 单通道位移。多数场景够用，且参数
+/// 越少越不容易写出"看不出差别"的样式。
+fn parse_filter_chain(
+    input: &mut Parser,
+    p: &mut ZstyleParser<'_>,
+    line: u32,
+) -> Result<PropertyValue, ()> {
+    use zephyra_core::filter::{Filter, FilterChain};
+
+    let mut filters: Vec<Filter> = Vec::new();
+    loop {
+        // ⚠ token 必须先落进一个**独立变量**再 match。
+        //
+        // 直接 `match input.next() { ... }` 时，scrutinee 的临时值活到整个
+        // match 结束，于是分支里再调 `input.parse_nested_block(...)` 就是
+        // 「可变借用 + 不可变借用」⇒ E0499。
+        let token = input.next();
+        let function_name: Option<String> = match token {
+            Ok(Token::Ident(w)) if w.eq_ignore_ascii_case("none") => {
+                // `none` 清空已收集的。`filter: blur(2px) none` 按 CSS 是无效的，
+                // 这里宽松处理 —— 报错只会让设计者困惑而不会让他改对。
+                filters.clear();
+                continue;
+            }
+            // 函数名取**自有**副本：`token` 在下一轮就被丢掉了，而
+            // `parse_nested_block` 的闭包还要用它。
+            Ok(Token::Function(name)) => Some(name.as_ref().to_ascii_lowercase()),
+            // 逗号分隔符本身跳过。
+            Ok(Token::Comma) => continue,
+            // 其余（含闭括号）= 列表结束。空白不是 token（cssparser 默认跳过）。
+            Ok(_) | Err(_) => break,
+        };
+        let Some(lower) = function_name else {
+            p.errors.push(unexpected(
+                p,
+                line,
+                "expected a filter function here.",
+                &[
+                    "blur(4px)",
+                    "refraction(16px, 0.3)",
+                    "drop-shadow(0px 4px 6px #000000a0)",
+                    "none",
+                ],
+            ));
+            return Err(());
+        };
+        // ⚠ `parse_nested_block` 是**解析器**上的方法，不是函数名上的 ——
+        // 它负责把「已经进入 `(` 之后」这个状态传给闭包，并吃掉闭括号。
+        // 直接在 `input.next()` 上读参数会立刻拿到 `Err`，于是所有函数都被
+        // 判成「参数缺失」—— 症状是每一条 filter 规则都报错，而函数名明明对。
+        let got = input.parse_nested_block(|args| {
+            // 闭包返回 `ParseError<()>`（而不是 `Result<_, ()>`）—— cssparser
+            // 的 HRTB 要求错误类型与它自己的类型一致。这里从不用它报错：
+            // 解析失败一律回 `None`，由调用方统一生成**带提示**的那条错误。
+            Ok::<_, cssparser::ParseError<()>>(filter_by_name(&lower, args))
+        });
+        match got {
+            Ok(Some(f)) => filters.push(f),
+            _ => {
+                p.errors.push(unexpected(
+                    p,
+                    line,
+                    &format!("unknown or malformed filter '{lower}(...)'."),
+                    &[
+                        "blur(4px)",
+                        "blur(4px, 6px)",
+                        "refraction(16px, 0.3)",
+                        "drop-shadow(0px 4px 6px #000000a0)",
+                        "none",
+                    ],
+                ));
+                return Err(());
+            }
+        }
+    }
+    Ok(PropertyValue::filter(FilterChain::new(filters)))
+}
+
+/// 按函数名解析一个滤镜的参数（`args` 已在函数体内）。
+fn filter_by_name(
+    name: &str,
+    args: &mut Parser,
+) -> Option<zephyra_core::filter::Filter> {
+    use zephyra_core::core::{Color, Point};
+    use zephyra_core::filter::Filter;
+
+    let mut nums: Vec<f32> = Vec::new();
+    let mut col: Option<Color> = None;
+    loop {
+        match args.next() {
+            // `12` 与 `12px` 都收 —— 本仓 1 布局单位 = 1 DIP，px 即 DIP。
+            Ok(Token::Number { value, .. }) => nums.push(*value),
+            Ok(Token::Dimension { value, .. }) => nums.push(*value),
+            Ok(Token::Percentage { unit_value, .. }) => nums.push(*unit_value),
+            Ok(Token::IDHash(h) | Token::Hash(h)) => col = parse_hex_color(h),
+            Ok(Token::Comma) => {}
+            // 闭括号 / 出错 / 任何别的东西都停。
+            _ => break,
+        }
+    }
+    let dim = |i: usize| nums.get(i).copied();
+    match name {
+        // 一个数 = 各向同性；两个 = x / y 分别。
+        "blur" => match (dim(0), dim(1)) {
+            (Some(x), Some(y)) => Some(Filter::Blur {
+                sigma_x: x,
+                sigma_y: y,
+            }),
+            (Some(x), None) => Some(Filter::Blur {
+                sigma_x: x,
+                sigma_y: x,
+            }),
+            _ => None,
+        },
+        // `refraction(强度, 色散?)` —— 色散缺省 0（单通道位移）。
+        "refraction" => dim(0).map(|strength| Filter::Refraction {
+            strength,
+            dispersion: dim(1).unwrap_or(0.0),
+        }),
+        // CSS 顺序是 `offset-x offset-y blur-radius color`。
+        // 至少要两个数（偏移），颜色缺省给一个能看见的。
+        "drop-shadow" if nums.len() >= 2 => Some(Filter::DropShadow {
+            color: col.unwrap_or(Color::rgba(0.0, 0.0, 0.0, 0.4)),
+            offset: Point::new(nums[0], nums[1]),
+            sigma: dim(2).unwrap_or(0.0),
+        }),
+        _ => None,
     }
 }
 

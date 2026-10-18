@@ -1,0 +1,7 @@
+/* Dialogs 页布局 —— Apple HIG 度量。 */
+
+Container.page-dialogs {
+    direction: vertical;
+    spacing: 20px;
+    cross-align: stretch;
+}

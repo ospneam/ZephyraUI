@@ -13,6 +13,11 @@ rust-version.workspace = true
 # winit+D3D11 时就得连 fork 一起搬，框架无法独立版本化与发布。
 #
 # `cargo tree -p zephyra-core` 的输出应当为空——这条约束应当可被 CI 检查。
+#
+# ⚠️ `extra/` 下的包**不是** core 的子模块，是各自独立的 crate ——
+#    靠 workspace `members` 引入但不进 `default-members`，所以无差别的
+#    `cargo build` 既不编译它们，也不把它们算进本 crate 的依赖树。
+#    这条约束因此比"子模块"更硬：真要在 extra 里带依赖，core 完全看不见。
 [dependencies]
 
 [lints.rust]

@@ -46,10 +46,29 @@ cargo run -p zstylec -- check <file.zstyle>  # 也可用 zephyra check（同一�
 `default-members` 只有 core / fx / zephyra-winit / examples，所以裸 `cargo test`
 只跑 **534 条**。另外这些 crate 在 `members` 里但**不在** `default-members`，
 无差别的 `cargo build` / `cargo test` 连编都不编（这是有意的：默认构建不该编译
-unsafe 与设备代码）：`zstylec`、`zephyra-style`、`zephyra-cli`、`zephyra-camera`、
-`zephyra-dcomp`、`zephyra-platform`、`zephyra-platform-win`、
-`zephyra-platform-linux`、`zephyra-winit-d3d12`、`zephyra-winit-vk`、`zephyra-ui`。
+unsafe 与设备代码）：`zstylec`、`zephyra-style`、`zephyra-cli`、
+`zephyra-base/extra/zephyra-camera`、`zephyra-dcomp`、`zephyra-platform`、
+`zephyra-platform-win`、`zephyra-platform-linux`、`zephyra-winit-d3d12`、
+`zephyra-vulkan`、`zephyra-ui`，以及两个 `extra/` 下的全部包
+（`zephyra-core/extra/zephyra-bezier`、`zephyra-base/extra/zephyra-camera`）。
 要跑要编就 `-p` 点名。
+
+### `extra/` —— 「不是所有项目都需要」的包
+
+有**两个** extra 目录，按**判据**分流，而不是按"随便放哪"：
+
+| 位置 | 判据 | 现有成员 |
+|---|---|---|
+| `zephyra/zephyra-core/extra/` | 零依赖 + 无 GPU 可单测的纯逻辑 | `zephyra-bezier` |
+| `zephyra/zephyra-base/extra/` | 要碰平台 / 允许 unsafe | `zephyra-camera` |
+
+**「选择性编译」是 Cargo 层面的事实**：这些包在 `members` 里但不在
+`default-members` 里，所以无差别构建**连依赖解析都不做**。不要在 extra 里
+加 `#[cfg(feature)]` 当作"选择性编译"—— 那只省编译，不省依赖解析。
+
+它们是**独立 crate**，不是 core / base 的子模块。于是 core 的「零依赖」门禁
+比"子模块"更硬：extra 里带依赖，core 完全看不见（`cargo tree -p zephyra-core`
+仍然只有它自己一行）。
 
 那 21 条 `ignored` 全在 `zephyra-winit/` 与 `zephyra-winit-d3d12/` 的测试里（诊断探针：
 `d3d12_draw.rs` / `sweep.rs` / `pso_bisect.rs` 之类），它们会开真窗口、历史上真把设备

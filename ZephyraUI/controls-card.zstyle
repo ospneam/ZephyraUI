@@ -1,0 +1,121 @@
+/* Card、SettingCard、Expander、ClipCard —— Apple HIG 度量。
+ *
+ * 卡片圆角 10px，padding 14px。clip-card 宽度 220px。
+ */
+
+/* ---- Card 族 ---- */
+
+Container.card {
+    background: @card;
+    corner-radius: 10px;
+    padding: 14px;
+    border-width: 1px;
+    border-color: @card_border;
+}
+
+Container.setting-card {
+    background: @card;
+    corner-radius: 10px;
+    padding: 14px;
+    border-width: 1px;
+    border-color: @card_border;
+    direction: horizontal;
+    main-align: space-between;
+    cross-align: center;
+    height: 60px;
+}
+
+Container.setting-texts {
+    direction: vertical;
+    spacing: 4px;
+}
+
+Text.setting-title {
+    text-size: 15px;
+    text-color: @content;
+}
+
+Text.setting-desc {
+    text-size: 13px;
+    text-color: @content_secondary;
+}
+
+Container.setting-control {
+    direction: horizontal;
+    main-align: end;
+    cross-align: center;
+}
+
+Container.clip-card {
+    background: @card_secondary;
+    corner-radius: 10px;
+    padding: 12px;
+    direction: vertical;
+    spacing: 10px;
+    width: 220px;
+    /* 不写 height：描述会换行，行数随文案而变。 */
+}
+
+Container.clip-icon {
+    width: 26px;
+    height: 26px;
+    icon-color: @accent_fill;
+}
+
+Container.clip-texts {
+    direction: vertical;
+    spacing: 4px;
+}
+
+Text.clip-desc {
+    text-size: 13px;
+    text-color: @content_secondary;
+    text-max-width: 196px;
+}
+
+Text.clip-title {
+    text-size: 14px;
+    text-color: @content;
+    text-max-width: 196px;
+}
+
+Container.expander {
+    background: @card;
+    corner-radius: 10px;
+    border-width: 1px;
+    border-color: @card_border;
+    direction: vertical;
+}
+
+Container.expander-header {
+    direction: horizontal;
+    main-align: space-between;
+    cross-align: center;
+    height: 44px;
+    padding: 14px;
+}
+
+Text.expander-title {
+    text-size: 15px;
+    text-color: @content;
+}
+
+Container.expander-chevron {
+    width: 14px;
+    height: 14px;
+    icon-color: @content_secondary;
+}
+
+Container.expander-chevron.closed {
+    icon-color: @content_secondary;
+}
+
+Container.expander-chevron.open {
+    icon-color: @content;
+}
+
+Container.expander-content {
+    direction: vertical;
+    spacing: 10px;
+    padding: 14px;
+}

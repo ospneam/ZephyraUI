@@ -1,0 +1,114 @@
+/* NavigationSubItem、SelectorBar、ErrorPage —— Apple HIG 度量。 */
+
+/* ---- NavigationSubItem ---- */
+
+Control.nav-sub {
+    direction: horizontal;
+    cross-align: center;
+    spacing: 14px;
+    height: 44px;
+    padding: 10px;
+    corner-radius: 8px;
+    background: transparent;
+}
+
+Control.nav-sub.selected {
+    background: @control_secondary;
+}
+
+Control.nav-sub.hovered {
+    background: @control_secondary;
+}
+
+Container.nav-indent {
+    width: 22px;
+    height: 1px;
+    background: transparent;
+}
+
+Container.sub-icon {
+    width: 18px;
+    height: 18px;
+    icon-color: @content_secondary;
+}
+
+Container.sub-icon.selected {
+    icon-color: @accent_fill;
+}
+
+Text.sub-label {
+    text-size: 14px;
+    text-color: @content_secondary;
+}
+
+Text.sub-label.selected {
+    text-color: @content;
+}
+
+/* ---- SelectorBar ---- */
+
+Container.selector-bar {
+    direction: horizontal;
+    spacing: 6px;
+    cross-align: center;
+}
+
+Control.selector-item {
+    height: 34px;
+    padding: 12px;
+    corner-radius: 8px;
+    direction: horizontal;
+    main-align: center;
+    cross-align: center;
+    background: transparent;
+    border-width: 1px;
+    border-color: transparent;
+}
+
+Control.selector-item.hovered {
+    background: @control_secondary;
+}
+
+Control.selector-item.selected {
+    background: @control_fill;
+    border-color: @control_border;
+}
+
+Text.selector-label {
+    text-size: 14px;
+    text-color: @content_secondary;
+}
+
+Text.selector-label.selected {
+    text-color: @content;
+}
+
+/* ---- ErrorPage ---- */
+
+Container.error-page {
+    direction: vertical;
+    main-align: center;
+    cross-align: center;
+    spacing: 10px;
+    padding: 28px;
+}
+
+Container.error-gap {
+    height: 68px;
+}
+
+Container.error-icon {
+    width: 56px;
+    height: 56px;
+    icon-color: @critical;
+}
+
+Text.error-title {
+    text-size: 17px;
+    text-color: @content;
+}
+
+Text.error-message {
+    text-size: 15px;
+    text-color: @content_secondary;
+}

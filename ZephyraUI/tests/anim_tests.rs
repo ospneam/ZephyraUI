@@ -1,7 +1,9 @@
-// 本文件由 anim.rs 的 #[cfg(test)] mod tests 抽出 —— 测试代码与生产代码分离。
-// 模块路径不变（src 里的声明用 #[path] 指过来），所以 use super::* 与私有可见性都照旧。
+//! 动画单元测试：缓动、进度、档位、时长常量。
+//!
+//! 从 `src/tests/anim_tests.rs` 移入 `tests/` —— 所有被测项均为 `pub`，
+//! 移到集成测试后不需要改可见性。
 
-use super::*;
+use zephyra_ui::anim::{progress, step, Easing, BOUNCE_MS, FADE_MS, MS_167, MS_250, MS_333, STEPS};
 
 /// 缓动必须满足不动点的基本性质，否则任何接入都会得到错的外观。
 #[test]

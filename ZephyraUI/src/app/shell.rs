@@ -31,10 +31,10 @@ use crate::controls::{badge, button, nav, text_label, tool_button};
 pub const CANVAS_W: f32 = 1400.0;
 /// 画布高。同 [`CANVAS_W`]：基准值，不是窗口高。
 pub const CANVAS_H: f32 = 800.0;
-/// 标题栏高（RinUI appearance.windowTitleBarHeight）。
-pub const TITLEBAR_H: f32 = 48.0;
-/// 导航栏宽（RinUI gallery 的 navExpandWidth 280 → 收一档取 240）。
-pub const NAV_W: f32 = 240.0;
+/// 标题栏高（Apple HIG toolbar 高度）。
+pub const TITLEBAR_H: f32 = 44.0;
+/// 导航栏宽（Apple HIG 侧栏宽度）。
+pub const NAV_W: f32 = 260.0;
 /// **紧凑档**的导航栏宽：只留图标列（WinUI NavigationView 的 `LeftCompact`）。
 ///
 /// 出处见 `docs/developer/responsive-and-touch.md` §6 引 `responsive-design` 页。取 56
@@ -47,9 +47,11 @@ pub const NAV_H: f32 = CANVAS_H - TITLEBAR_H;
 pub const CONTENT_W: f32 = CANVAS_W - NAV_W - 1.0;
 /// 把置底项推到页面底部的定高占位（布局几何，由几何门禁校准）。
 ///
-/// 校准值随路由项数变化：每加一项（含间距 41px）就把这里减 41。
-/// 当前 10 项 + Settings：289。改错了 `shell_layout_geometry` 立刻红。
-pub const NAV_SPACER: f32 = 248.0;
+/// 校准值随路由项数变化：每加一项（含间距）就把这里减去对应值。
+/// 当前 11 个导航项（40px 高）+ 12px padding + 6px 间距：
+/// 756 - 12*2 - 11*40 - 11*6 - 46（留白余量，让 Settings 落在 ~788）。
+/// 改错了 `shell_layout_geometry` 立刻红。
+pub const NAV_SPACER: f32 = 180.0;
 
 /// 整窗。
 pub fn window(g: &Gallery) -> Element {

@@ -1417,6 +1417,7 @@ impl Renderer {
                 &offscreen::blur_quad(step, pass.rt_size_as_f32(), pass.rt_size_as_f32()),
                 ps,
                 from,
+                None,
                 &to.rtv,
                 pass.rt_size,
                 // blur pass 的输出**完全替换**目标（PS 已算出最终值），所以混合
@@ -1429,6 +1430,23 @@ impl Renderer {
         }
 
         // ---- 3. 合成回目标 ----
+        //
+        // ⚠⚠ 折射必须在**这一步之前**把目标拷一份。
+        //
+        // 折射读的是"元素背后已经画在屏幕上的画面"，所以拷贝的时机必须是
+        // **元素自己的内容被合上去之前** —— 那正是此刻。晚一步拷到的就是
+        // 元素自己，症状是"玻璃边缘把元素自己的轮廓糊开"。
+        let refraction_srv = match pass.refraction {
+            Some(_) => match self.refresh_dst_copy(device, context, env.rtv, env.size) {
+                Some(srv) => Some(srv),
+                None => {
+                    // 建不出副本 ⇒ 降级成普通合成，而不是让整帧失败。
+                    report.unimplemented_filters += 1;
+                    None
+                }
+            },
+            None => None,
+        };
         let final_rt = if src_is_a { &a } else { &b };
         // ⚠ 这里**不**先调 `bind_target`：那会绑回目标，然后 `draw_pass_quad`
         // 立刻又绑成它自己的目标 —— 一次多余的往返。
@@ -1438,20 +1456,55 @@ impl Renderer {
         // 所以删掉那句 `bind_target` 之后全部测试仍然通过 —— 变异测试把它抓出来
         // 才确认它是死代码。真正需要"重绑目标"的是**投影那一步**的重画原图
         // （那里不走 `draw_pass_quad`），见 `render` 里的说明。）
-        let q = offscreen::composite_quad(
-            pass.bounds,
-            env.size_as_f32(),
-            pass.rt_size_as_f32(),
-            pass.tint,
-        );
+        // 折射与普通合成**互斥**：一次只画一趟。两者都在同一块屏幕区域上
+        // "贴回"，同时画会互相覆盖 —— 症状是折射区域变成了模糊结果。
+        let screen = env.size_as_f32();
+        let (q, ps, dst_srv) = match (pass.refraction, refraction_srv) {
+            (Some(r), Some(srv)) => {
+                // 元素在 RT 里的子矩形 = 内容矩形原点 - RT 原点。
+                // ⚠ 这是折射**唯一**的坐标系换算处；算错时折射仍"有效果"，
+                // 只是边缘高光整体偏移 —— 肉眼极难察觉，所以两侧都取自
+                // `OffscreenPass` 已算好的量，不在这里重算。
+                let content = zephyra_core::paint::command_content_rect(&item.command)
+                    .unwrap_or(pass.bounds);
+                let element_in_rt = zephyra_core::core::Rect {
+                    x: content.x - pass.origin.0,
+                    y: content.y - pass.origin.1,
+                    width: content.width,
+                    height: content.height,
+                };
+                (
+                    offscreen::refraction_composite_quad(
+                        pass.bounds,
+                        screen,
+                        element_in_rt,
+                        zephyra_core::paint::command_corner_radius(&item.command),
+                        r,
+                    ),
+                    crate::shader::PS_REFRACTION,
+                    Some(srv),
+                )
+            }
+            _ => (
+                offscreen::composite_quad(
+                    pass.bounds,
+                    screen,
+                    pass.rt_size_as_f32(),
+                    pass.tint,
+                ),
+                crate::shader::PS_COMPOSITE,
+                None,
+            ),
+        };
         // 合成输出的是**预乘**颜色（`Vertex::quad` 已经把顶点色预乘，而
         // `PSComposite` 的透传分支直接返回采样值）⇒ 混合状态是预乘空间的
         // `SrcOver`（`ONE / INV_SRC_ALPHA`），也就是 `blends[3]`。
         self.draw_pass_quad(
             env,
             &q,
-            crate::shader::PS_COMPOSITE,
+            ps,
             final_rt,
+            dst_srv.as_ref(),
             env.rtv,
             env.size,
             BlendSlot::SrcOver,
@@ -1630,6 +1683,12 @@ impl Renderer {
         quad: &[Vertex; 4],
         ps: usize,
         src: &OffscreenRt,
+        // 绑到 `t1`（`g_dst`）的**目标副本**。`None` = 绑 `src.srv`（现状）。
+        //
+        // 只有折射需要真的给一张不同的：`PSRefraction` 读 `g_dst` 取元素**背后**
+        // 的画面，而 `src.srv` 是离屏 RT（元素自己）。混淆这两者的症状是
+        // "玻璃边缘把元素自己的轮廓糊开了"。
+        dst_srv: Option<&ID3D11ShaderResourceView>,
         dst_rtv: &ID3D11RenderTargetView,
         dst_size: (u32, u32),
         blend_slot: BlendSlot,
@@ -1704,7 +1763,10 @@ impl Renderer {
             context.PSSetShaderResources(0, Some(&[Some(src.srv.clone())]));
             // `t1` 也必须绑着有效对象：模糊 / 合成 PS 在 `kind == 4` 时不读它，
             // 但它仍被声明着，悬空 SRV 在某些驱动上会让后续采样返回未定义值。
-            context.PSSetShaderResources(1, Some(&[Some(src.srv.clone())]));
+            //
+            // 折射是唯一的例外 —— 它要的就是目标副本，所以调用方给一张真的。
+            let t1 = dst_srv.unwrap_or(&src.srv);
+            context.PSSetShaderResources(1, Some(&[Some(t1.clone())]));
             context.DrawIndexed(6, 0, 0);
         }
     }

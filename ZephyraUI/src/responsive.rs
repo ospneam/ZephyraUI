@@ -161,14 +161,10 @@ pub fn touch_px(epx: f32, scale: f32) -> f32 {
 /// 否则返回 1 列，而那一列会比可用宽还宽 —— 内容被裁。调用方给的最小卡宽
 /// 应当小于最窄的可用宽度；`Small` 档下应当先降级到单列布局而不是硬挤。
 pub fn columns_for(available: f32, min_card: f32, gap: f32) -> usize {
-    if !(min_card.is_finite() && min_card > 0.0) || !(available.is_finite() && available > 0.0) {
+    if !(min_card.is_finite() && min_card > 0.0 && available.is_finite() && available > 0.0) {
         return 1;
     }
     let stride = min_card + gap;
     let n = ((available + gap) / stride).floor() as isize;
     n.max(1) as usize
 }
-
-#[cfg(test)]
-#[path = "tests/responsive_tests.rs"]
-mod tests;

@@ -1,0 +1,7 @@
+/* Settings 页布局 —— Apple HIG 度量。 */
+
+Container.page-settings {
+    direction: vertical;
+    spacing: 14px;
+    cross-align: stretch;
+}

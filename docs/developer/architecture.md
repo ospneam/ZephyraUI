@@ -123,11 +123,25 @@ Skia 从不把执行放core —— `Blur` 在 core 只是描述，真正跑 pass
 | `zephyra-winit` | 窗口 + 事件循环 + D3D11 设备与呈现 | Windows | 解除forbid（FFI） |
 | `zephyra-winit-d3d12` | 窗口 + D3D12 设备与呈现（与 D3D11 **互不依赖**） | Windows | 需要 |
 | `zephyra-dcomp` | DirectComposition 呈现后端 | Windows | 需要 |
-| `zephyra-camera` | 摄像头采集 + 像素格式（默认 feature 为空） | 全平台 | forbid |
 
-`zephyra-winit-d3d12` 与 `zephyra-camera` / `zephyra-dcomp` 在 workspace
-`members` 里但排除在 `default-members` 之外 —— 前者因为同一个二进制只应有一个
-后端，后两者因为设备代码与 `unsafe` 不该被无差别构建编译。
+## extra —— 「不是所有项目都需要」的包
+
+`extra/` 有**两个**，按判据分流：
+
+| 位置 | 判据 | 现有成员 |
+| --- | --- | --- |
+| `zephyra-core/extra/` | 零依赖 + 无 GPU 可单测的纯逻辑 | `zephyra-bezier` |
+| `zephyra-base/extra/` | 要碰平台 / 允许 unsafe | `zephyra-camera` |
+
+它们在 workspace `members` 里但排除在 `default-members` 之外 —— 于是无差别的
+`cargo build` / `cargo test` **连依赖解析都不做**。这是"选择编译"落在 Cargo
+层面的形式，比在源码里 `#[cfg]` 一大块更细。
+
+`zephyra-camera`（默认 `feature` 为空，开 `capture` 才带 nokhwa）原本住在
+`zephyra-base/` 根目录，已归入 `zephyra-base/extra/`：它正是这一层的样板。
+
+`zephyra-winit-d3d12` 同样不在 `default-members`，理由与 extra 不同：同一个二进制
+只应有一个后端，无差别构建时两个都编既慢，又让"这次改动影响了哪个后端"不清楚。
 
 `zephyra-dcomp` 需要 `unsafe` 与 `windows` 依赖，与通用层的零依赖 /
 `forbid(unsafe_code)` 两条约束都冲突。它也**不依赖 `zephyra-core`**：

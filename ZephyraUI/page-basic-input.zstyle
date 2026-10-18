@@ -1,0 +1,7 @@
+/* Basic Input 页布局 —— Apple HIG 度量。 */
+
+Container.page-basic {
+    direction: vertical;
+    spacing: 22px;
+    cross-align: stretch;
+}

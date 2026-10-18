@@ -1,0 +1,18 @@
+[package]
+name = "zephyra-bezier"
+description = "Configurable cubic-Bezier easing: CSS/WinUI control points, Newton-solved inverse, spring/overshoot support"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+# 零依赖 —— 这是它能待在 core 层 extra 的前提。
+#
+# 求值是十几行闭式算术，引一个 crate 换来的只是"不知道它在边界上怎么处理"。
+# 那个边界（`s` 每步夹取、`y` 不夹、±∞ 的方向）恰恰是本 crate 的全部价值，
+# 自己写才说得清。判据与 `zephyra-base/README.md` 同源：能不能无 GPU 单测。
+[dependencies]
+
+[lints.rust]
+unsafe_code = "forbid"

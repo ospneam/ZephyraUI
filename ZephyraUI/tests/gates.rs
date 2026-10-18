@@ -364,7 +364,7 @@ fn every_page_builds_a_real_tree() {
 /// 只是右下缺一条 —— 那种"看起来像设计如此"的错最难查。
 #[test]
 fn shell_metrics_match_stylesheet() {
-    let css = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("gallery.zstyle"))
+    let css = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("shell.zstyle"))
         .unwrap();
     let want = [
         (
@@ -432,7 +432,7 @@ fn shell_metrics_match_stylesheet() {
 /// 响应式失效，且没有任何报错。
 #[test]
 fn root_container_writes_no_fixed_size() {
-    let css = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("gallery.zstyle"))
+    let css = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("shell.zstyle"))
         .unwrap();
     let start = css
         .split("Container.window {")
@@ -492,26 +492,26 @@ fn shell_layout_geometry() {
         r.width
     );
     assert!(
-        (r.height - 48.0).abs() < 1.0,
-        "标题栏高应是 48，实测 {:.1}",
+        (r.height - 44.0).abs() < 1.0,
+        "标题栏高应是 44，实测 {:.1}",
         r.height
     );
 
     let content = find_by_key(&root, "content").expect("content card");
     let rc = content.rect();
     assert!(
-        (rc.x - 240.0).abs() < 1.0,
-        "内容卡应紧贴导航右侧（x=240），实测 {:.1}",
+        (rc.x - 260.0).abs() < 1.0,
+        "内容卡应紧贴导航右侧（x=260），实测 {:.1}",
         rc.x
     );
     assert!(
-        (rc.width - 1159.0).abs() < 1.0,
-        "内容卡宽应是 1159，实测 {:.1}",
+        (rc.width - 1139.0).abs() < 1.0,
+        "内容卡宽应是 1139，实测 {:.1}",
         rc.width
     );
     assert!(
-        (rc.height - 752.0).abs() < 1.0,
-        "内容卡高应是 752，实测 {:.1}",
+        (rc.height - 756.0).abs() < 1.0,
+        "内容卡高应是 756，实测 {:.1}",
         rc.height
     );
 
@@ -520,8 +520,8 @@ fn shell_layout_geometry() {
     let rs = settings.rect();
     let bottom = rs.y + rs.height;
     assert!(
-        (bottom - 792.0).abs() < 24.0,
-        "Settings 应落在导航栏底部附近（约 792），实测 {bottom:.1}"
+        (bottom - 788.0).abs() < 24.0,
+        "Settings 应落在导航栏底部附近（约 788），实测 {bottom:.1}"
     );
 }
 

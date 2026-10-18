@@ -76,10 +76,27 @@ base 不依赖 `zephyra-controls`（将来若有）。它只依赖核心，或�
 | `zephyra-winit` | 窗口 + 事件循环 + D3D11 设备 + `DisplayList` 回放 | 全平台 | 本 crate 内无 unsafe 块 |
 | `zephyra-winit-d3d12` | 窗口 + D3D12 后端（与 D3D11 **互不依赖**） | Windows | 需要 |
 | `zephyra-dcomp` | DirectComposition 呈现：device/target/visual 树 + composition swapchain | Windows | 需要 |
-| `zephyra-camera` | 摄像头采集 + 像素格式处理（默认 feature 为空） | 全平台 | forbid |
 
-后两者是**可选子包**：在 workspace `members` 里但**不在** `default-members` 里，
-所以无差别的 `cargo build` / `cargo test` 既不编译设备代码、也不编译 unsafe 代码。
+`zephyra-dcomp` 是**可选子包**：在 workspace `members` 里但**不在**
+`default-members` 里，所以无差别的 `cargo build` / `cargo test` 既不编译设备代码、
+也不编译 unsafe 代码。
+
+## extra —— 「不是所有项目都需要」的包
+
+本目录下有 `extra/`，另一个在 `../zephyra-core/extra/`。两者按**同一条判据**分流：
+
+| 位置 | 判据 | 现有成员 |
+| --- | --- | --- |
+| `zephyra-core/extra/` | 零依赖 + 无 GPU 可单测的纯逻辑 | `zephyra-bezier` |
+| `zephyra-base/extra/` | 要碰平台 / 允许 unsafe | `zephyra-camera` |
+
+「选择编译」在这里是 Cargo 层面的事实，不是源码里的 `#[cfg(feature=...)]`：
+这些包在 `members` 里但**不在** `default-members` 里，于是无差别构建**连依赖解析
+都不做**。这比在源码里 gate 更细，也让"哪些代码默认进产物"成为 workspace 配置的
+一条可读记录，而不是散落各处的 feature 转发。
+
+`zephyra-camera`（默认 `feature` 为空，开 `capture` 才带 nokhwa）原本在本目录根下，
+现已归入 `extra/` —— 它是这一层的样板。
 
 ```bash
 cargo test -p zephyra-dcomp --lib           # 纯逻辑断言，不需要窗口

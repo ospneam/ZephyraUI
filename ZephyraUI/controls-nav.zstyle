@@ -1,0 +1,64 @@
+/* NavigationItem —— Apple HIG 度量。
+ *
+ * 导航项高 40px，圆角 8px，左侧强调条 3px。
+ */
+
+Control.nav-item {
+    direction: horizontal;
+    cross-align: center;
+    spacing: 14px;
+    height: 40px;
+    padding: 10px;
+    corner-radius: 8px;
+    background: transparent;
+}
+
+Control.nav-item.selected {
+    background: @control_secondary;
+}
+
+Control.nav-item.hovered {
+    background: @control_secondary;
+}
+
+Control.nav-item.selected.hovered {
+    background: @control_tertiary;
+}
+
+Container.nav-bar {
+    width: 3px;
+    height: 18px;
+    corner-radius: 99px;
+    background: transparent;
+}
+
+Container.nav-bar.selected {
+    background: @accent_fill;
+}
+
+Container.nav-icon {
+    width: 22px;
+    height: 22px;
+    icon-color: @content_secondary;
+}
+
+Container.nav-icon.hovered {
+    icon-color: @content;
+}
+
+Container.nav-icon.selected {
+    icon-color: @accent_fill;
+}
+
+Text.nav-label {
+    text-size: 15px;
+    text-color: @content_secondary;
+}
+
+Text.nav-label.hovered {
+    text-color: @content;
+}
+
+Text.nav-label.selected {
+    text-color: @content;
+}
