@@ -91,8 +91,23 @@ pub fn dialog(
 ///
 /// `days` 是当月 1..=31 中哪些天可见（`None` = 空格）。选中态由 `selected`
 /// 给（1-based 日号）。
-pub fn date_picker(key: &'static str, cells: &'static [Option<u8>], selected: u8) -> Element {
-    let heads = ["日", "一", "二", "三", "四", "五", "六"];
+/// 日历。
+///
+/// # `heads` 为什么由调用方给
+///
+/// 星期头是**文案**，而本仓的规矩是「文案归应用，控件只发 key」（见
+/// `AGENTS.md` 边界 3）。它曾经在这里硬编码中文的「日一二三四五六」——
+/// 于是切到英文界面时，表头仍是中文，而**没有任何地方能改它**：
+/// 应用层拿到的是一个已经写死的 `Control`，既没有参数也没有 `key` 可言。
+///
+/// 改法不是加个开关，而是把数据交回给调用方：控件只负责「按 `cells` 摆格子、
+/// 把 `heads` 摆成表头」，一个字的语义都不管。
+pub fn date_picker(
+    key: &'static str,
+    heads: &'static [&'static str],
+    cells: &'static [Option<u8>],
+    selected: u8,
+) -> Element {
     let mut children = vec![Element::new(NodeTag::Container)
         .with_key("heads")
         .style("dp-heads")

@@ -1,50 +1,42 @@
-﻿[package]
+[package]
 name = "zephyra-ui"
-description = "Widget layer on top of zephyra-core, plus a RinUI-style gallery app (the rewritten Demo)"
-version = "0.1.0"
-edition = "2021"
+description = "ZephyraUI widget layer: Buttons, Toggles, Cards, Dialogs and the rest, expressed as class names. Carries no backend and no app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
 publish = false
 
-# 参照 `examples/Cargo.toml` 的同一套取舍：后端由特性开关选，默认 d3d12。
-# `required-features` 只列 d3d12 —— 选 d3d11 时窗口路编不过，而库层
-# （controls / app）与后端无关，`--dump-cpu` 那条路也不需要任何后端。
-[features]
-default = ["d3d12"]
-d3d12 = ["dep:zephyra-winit-d3d12"]
-# Linux 后端（winit + wgpu/Vulkan）。与 d3d12 互斥；Linux 上用它：
-# `cargo build -p zephyra-ui --bin gallery --no-default-features --features linux-vk`
-linux-vk = ["dep:zephyra-vulkan"]
-
-# 库层要用 `zephyra_bezier`（anim.rs 的 `Easing::curve` 返回 `Bezier`）。
+# 这个 crate 是**库**，不是应用。
 #
-# ⚠️ 它不是 feature，是**必需依赖**：它是 `anim` 公开 API 的返回类型，
-#    关掉等于改 API 形状，那是破坏性变更而不是可选功能。
-#    真正的"选择性编译"在 workspace 层（bezier 不在 default-members），
-#    不在应用层。
+# # 它不依赖任何渲染后端
+#
+# 旧版本这里同时装着控件层和 gallery 应用，于是它依赖 `zephyra-winit-d3d12`
+# 并有一个 `bin/gallery.rs`。代价是：库的使用者被迫拿到一整套图形栈依赖，
+# 而「控件长什么样」与「谁把它画上屏」本就是两件事。
+#
+# 现在后端由**应用**（`gallery/`）用 feature 选，控件库只产出 `Element`。
+#
+# # 它也不含任何应用状态
+#
+# 路由、页面、i18n 文案表都不在这里 —— 那些属于 gallery。判据很简单：
+# **换一个应用还能用吗？** Button 能，导航栏的路由表不能。
 [dependencies]
 zephyra-core = { path = "../zephyra/zephyra-core" }
-zephyra-bezier = { path = "../zephyra/zephyra-core/extra/zephyra-bezier" }
-zephyra-fx = { path = "../zephyra/zephyra-fx" }
+
+# 控件的「排布」要断点与触控目标（`WidthClass` / `columns_for` / `touch_px`），
+# 「随时间变化的外观」要缓动档位（`anim::Easing` / `step`）。两者都在框架层，
+# 不在这里重实现 —— 那正是把它们放在 `zephyra/` 的原因。
 zephyra-style = { path = "../zephyra/zephyra-style" }
-zstylec = { path = "../zstylec" }
-# 平台能力抽象：应用只依赖 trait，Windows 效果的实现与降级都在实现 crate 里。
-zephyra-platform = { path = "../zephyra/zephyra-base/zephyra-platform" }
-# 演示宿主：真开窗口 + GPU 渲染。只有 bin 用它，库层不依赖任何后端。
-zephyra-winit-d3d12 = { path = "../zephyra/zephyra-base/zephyra-winit-d3d12", optional = true }
-zephyra-vulkan = { path = "../zephyra/zephyra-base/zephyra-vulkan", optional = true }
-winit = "0.30"
 
-[[bin]]
-name = "gallery"
-# ⚠ 没有 `required-features`，理由与 `examples/Cargo.toml` 的 demo bin 相同：
-# Cargo 的 `required-features` 是**与**语义，表达不了「d3d12 或 linux-vk」，
-# 而 Linux 上 d3d12 是空 crate —— 照原样写等于这个 bin 在 Linux 上永远不存在。
-# 后端改由 `bin/gallery.rs` 里的 `#[cfg(feature)]` 分流。
-path = "bin/gallery.rs"
+# ⚠️ 控件的**文案**归 gallery，不归这里：同一个 Button 在不同应用里
+# 叫 "确定" / "OK" / "Submit"。控件只发 key，文案表是应用的。
+#
+#    所以 `zephyra_core::i18n`（BCP47 / Messages）**不**在这里出现。
 
-# 文字链探针：不开窗口，直接量「一段文本 → 排版 → 图集 → 顶点」。
-# 存在理由：字形串味/错位在成品图里只是"字看起来不对"，没有数字可对；
-# 这个 bin 把每个字符的 uv、advance、measured size 全打出来。
-[[bin]]
-name = "text-probe"
-path = "bin/text_probe.rs"
+[lib]
+name = "zephyra_ui"
+path = "src/lib.rs"
+
+[lints.rust]
+unsafe_code = "forbid"

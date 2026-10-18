@@ -496,8 +496,12 @@ fn refraction_forces_redraw_of_the_original() {
         strength: 12.0,
         dispersion: 0.0,
     });
-    let pass = plan_pass(&quad(f, BlendMode::default(), Rect::new(0.0, 0.0, 100.0, 60.0)))
-        .expect("折射应产出 pass");
+    let pass = plan_pass(&quad(
+        f,
+        BlendMode::default(),
+        Rect::new(0.0, 0.0, 100.0, 60.0),
+    ))
+    .expect("折射应产出 pass");
     assert!(pass.redraw_original, "折射后必须重画原图");
     assert_eq!(pass.refraction.expect("折射参数").strength, 12.0);
 }
@@ -509,8 +513,12 @@ fn blur_does_not_redraw_the_original() {
         sigma_x: 4.0,
         sigma_y: 4.0,
     });
-    let pass = plan_pass(&quad(f, BlendMode::default(), Rect::new(0.0, 0.0, 100.0, 60.0)))
-        .expect("模糊应产出 pass");
+    let pass = plan_pass(&quad(
+        f,
+        BlendMode::default(),
+        Rect::new(0.0, 0.0, 100.0, 60.0),
+    ))
+    .expect("模糊应产出 pass");
     assert!(
         !pass.redraw_original,
         "模糊的结果**就是**最终形态，再画一次原图等于没模糊"
@@ -535,8 +543,12 @@ fn refraction_is_not_a_blur_step() {
             dispersion: 0.2,
         },
     ]);
-    let pass = plan_pass(&quad(f, BlendMode::default(), Rect::new(0.0, 0.0, 100.0, 60.0)))
-        .expect("应产出 pass");
+    let pass = plan_pass(&quad(
+        f,
+        BlendMode::default(),
+        Rect::new(0.0, 0.0, 100.0, 60.0),
+    ))
+    .expect("应产出 pass");
     // 模糊仍然是两趟（H + V），折射**没有**增加趟数。
     assert_eq!(pass.blurs.len(), 2, "折射不得被展开成额外的模糊趟");
     assert!(pass.refraction.is_some());
@@ -555,8 +567,12 @@ fn later_refraction_overrides_earlier_one() {
             dispersion: 0.9,
         },
     ]);
-    let pass = plan_pass(&quad(f, BlendMode::default(), Rect::new(0.0, 0.0, 100.0, 60.0)))
-        .expect("应产出 pass");
+    let pass = plan_pass(&quad(
+        f,
+        BlendMode::default(),
+        Rect::new(0.0, 0.0, 100.0, 60.0),
+    ))
+    .expect("应产出 pass");
     let r = pass.refraction.expect("折射参数");
     assert_eq!(r.strength, 20.0);
     assert_eq!(r.dispersion, 0.9);
@@ -572,7 +588,7 @@ fn refraction_quad_carries_element_geometry_not_rt_size() {
     let element = Rect::new(10.0, 20.0, 120.0, 80.0);
     let q = crate::offscreen::refraction_composite_quad(
         Rect::new(0.0, 0.0, 140.0, 120.0), // 屏幕上的 RT bounds
-        (1400.0, 800.0),                  // 屏幕尺寸
+        (1400.0, 800.0),                   // 屏幕尺寸
         element,
         12.0,
         crate::offscreen::Refraction {

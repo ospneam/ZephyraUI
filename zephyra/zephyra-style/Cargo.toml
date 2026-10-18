@@ -10,6 +10,10 @@ description = "Declaration layer: turns .zstyle stylesheets into property values
 # 之后的事（量、画）都在 core 与 base。所以它不碰任何系统 API。
 [dependencies]
 zephyra-core = { path = "../zephyra-core", version = "0.1.0" }
+# `anim`（缓动）需要可配置的三次贝塞尔。它住在 core 的 extra 下，所以是
+# **core 层**的能力；但它是一个独立 crate，而 core 的零依赖门禁不允许 core
+# 自己依赖它 —— 于是这条边落在本层（core 之上的纯 CPU 声明层）上。
+zephyra-bezier = { path = "../zephyra-core/extra/zephyra-bezier", version = "0.1.0" }
 
 # ⚠️ 这个 crate 里**不能出现 unsafe**：它只做字符串解析、规则匹配、值映射。
 [lints.rust]

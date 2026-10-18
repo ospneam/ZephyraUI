@@ -1,0 +1,233 @@
+/* gallery 的页面样式 —— Apple HIG 度量。
+ *
+ * 与控件层的分工：控件层说「一个 Button 长什么样」，这里说「Button 摆在
+ * 页面的哪一行、这一行的左右各多宽」。
+ *
+ * # 通用编排件（每页都用）
+ *
+ * | 分类名 | 角色 |
+ * |---|---|
+ * | `.page-*` | 每页的根容器，只给竖排与间距 |
+ * | `.section` | 一个分区：标题 + 主体 |
+ * | `.row` / `.stack` | 横排 / 竖排 |
+ * | `.demo-row` / `.demo-slot` | **控件样例行**：左标签 + 右控件 |
+ *
+ * # `.demo-slot` 为什么给 `main-align: start`
+ *
+ * 默认 `start`，于是所有控件的**左边**对齐 —— 扫第二列时不会因为第一个控件
+ * 特别宽而全部错开。这是「标签固定一小截」这个编排的全部意义。
+ */
+
+/* ---- 通用编排 ---- */
+
+Container.section {
+    direction: vertical;
+    spacing: 12px;
+}
+
+Container.section-body {
+    direction: vertical;
+    spacing: 12px;
+}
+
+Container.row {
+    direction: horizontal;
+    spacing: 12px;
+    cross-align: center;
+}
+
+Container.stack {
+    direction: vertical;
+    spacing: 8px;
+}
+
+/* 控件样例行：左标签固定 132px，右控件靠左排开。 */
+Container.demo-row {
+    direction: horizontal;
+    cross-align: center;
+    spacing: 16px;
+}
+
+Container.demo-slot {
+    direction: horizontal;
+    main-align: start;
+    cross-align: center;
+    spacing: 10px;
+}
+
+Text.demo-label {
+    width: 132px;
+    text-size: 13px;
+    text-color: @content_secondary;
+}
+
+/* ---- 每页根容器 ---- */
+
+Container.page-home     { direction: vertical; spacing: 24px; cross-align: stretch; }
+Container.page-basics   { direction: vertical; spacing: 24px; cross-align: stretch; }
+Container.page-toggles  { direction: vertical; spacing: 24px; cross-align: stretch; }
+Container.page-layout   { direction: vertical; spacing: 24px; cross-align: stretch; }
+Container.page-collections { direction: vertical; spacing: 24px; cross-align: stretch; }
+Container.page-menus    { direction: vertical; spacing: 24px; cross-align: stretch; }
+Container.page-navigation { direction: vertical; spacing: 24px; cross-align: stretch; }
+Container.page-status   { direction: vertical; spacing: 24px; cross-align: stretch; }
+Container.page-dialogs  { direction: vertical; spacing: 24px; cross-align: stretch; }
+Container.page-effects  { direction: vertical; spacing: 24px; cross-align: stretch; }
+Container.page-settings { direction: vertical; spacing: 20px; cross-align: stretch; }
+
+/* ---- 首页 ---- */
+
+/* 横幅：刻意压到 180。旧版 320 占掉一屏的三分之一，而那三分之一里只有三行字。 */
+Container.hero {
+    direction: vertical;
+    spacing: 8px;
+    padding: 28px;
+    height: 180px;
+    corner-radius: 12px;
+    background: #16305c;
+}
+
+Text.hero-title {
+    text-size: 34px;
+    text-color: #ffffff;
+}
+
+Text.hero-sub {
+    text-size: 14px;
+    text-color: #ffffff;
+}
+
+/* 分类入口：小按钮，不是大卡片。
+ *
+ * 它们只是**入口**，不该和上面那些「能真的用」的控件抢视觉重量。
+ * 大卡片会让首页变成一张目录页 —— 而目录页正是用户打开应用想躲开的东西。
+ */
+/* ⚠ zstylec 的 `padding` **只吃单值**（`padding: 10px 16px` 会解析失败），
+ *     且属性表里没有 `margin-*` 与 `min-height`。所以横向内边距只能靠控件
+ *     自己的 `width`，上下靠这里的单值 `padding`。 */
+Control.button.category {
+    height: 34px;
+    padding: 6px;
+    width: 180px;
+    background: @card;
+    border-color: @card_border;
+}
+
+Control.button.category.hovered {
+    background: @control_secondary;
+}
+
+/* 分类入口的行。core 没有折行，所以行数是**排出来的**（见 pages::home
+ * 的 `category_links`），这里只给行本身的间距。 */
+Container.category-row {
+    direction: horizontal;
+    spacing: 10px;
+}
+
+/* ---- 布局页：卡片网格 ---- */
+
+Container.card-grid {
+    direction: horizontal;
+    spacing: 14px;
+    cross-align: stretch;
+}
+
+Container.nav-list {
+    direction: vertical;
+    spacing: 4px;
+    width: 260px;
+}
+
+/* ---- 菜单页 ---- */
+
+/* ---- 液态玻璃页 ---- */
+
+/* ⚠ 这一节的每一处位移都是**配对**的，改一处必须改另一处。
+ *
+ * 折射采样的是「已经画在屏幕上的东西」，所以玻璃块必须与要折射的图案**重叠**。
+ * core 没有浮层 / 负 margin / 绝对定位，于是重叠只有 `translate-y` 一条路：
+ * `.glass-panes` 往上抬的量 = `.glass-stage` 的 padding + 文字块高度。
+ *
+ * 抬歪了不会报错，只是「玻璃块下面没有内容可折射」—— 画面上等于没折射，
+ * 而真正的原因不在着色器里。
+ */
+Container.glass-stage {
+    direction: vertical;
+    padding: 20px;
+    corner-radius: 12px;
+    background: #14294d;
+    /* 固定高：玻璃块靠位移压上来，而位移不改变布局，容器高度得自己留出来。
+     * 255 = 20(padding) + 69(三行文字) + 16(标题) + 8(间距) + 120(玻璃) + 22(余量)。 */
+    height: 255px;
+}
+
+/* 底板自己也是一个竖排容器 —— 不给 `direction` 的话三行字会挤成一行
+ * （默认是横排），而「三行」正是让位移看得见的关键：横排的一行长句
+ * 位移 20 像素也看不出弯。 */
+Container.glass-backdrop {
+    direction: vertical;
+    spacing: 6px;
+}
+
+Text.glass-bg-text {
+    text-size: 15px;
+    text-color: #ffffff;
+}
+
+/* 位移量：把玻璃块从「文字下方」提到「与文字下半段重叠」。
+ * 算式 = 底板高度(20 padding + 3×19 文字 + 2×6 间距 = 89) - 目标起点(191) = -102。
+ * 改 BACKDROP_TEXT 的行数时必须回来重算这个数 —— 歪了就是「玻璃不在图案上」。 */
+Container.glass-panes {
+    direction: horizontal;
+    spacing: 16px;
+    cross-align: stretch;
+    translate-y: -102px;
+}
+
+Container.glass-cell {
+    direction: vertical;
+    spacing: 8px;
+}
+
+Text.glass-title {
+    text-size: 13px;
+    text-color: @content_secondary;
+}
+
+/* 玻璃块本体。
+ *
+ * 折射的**参数在这里**，不在源码里 —— `filter:` 是本次新加的 zstylec 语法
+ * （`refraction(强度, 色散)`）。源码只发 `.weak` / `.medium` / `.strong`
+ * 这三个档位名。
+ *
+ * ⚠ 为什么必须有 `.glass-pane`（不带档位）这一条：它给**底板**。
+ *    `background` 要半透明 —— 不透明的话玻璃后面什么也看不见，
+ *    而那正是「折射看起来没生效」的第二个常见原因。
+ *
+ *    底色用偏亮的白而不是主题的 `surface_alt_translucent`：后者在深色主题下
+ *    与底板几乎同色，玻璃块会整块消失在背景里（实测过一次）。
+ */
+/* ⚠ 宽度必须写死：玻璃块**没有子节点**，而 core 的容器不给宽度就按内容测量 ——
+ * 空容器量出来是 0，于是这块玻璃在画面上根本不存在（实测过一次：标题在、块没了）。
+ * 写死宽度不是「外观写进源码」，它仍然在这张表里。 */
+Container.glass-pane {
+    width: 220px;
+    height: 120px;
+    corner-radius: 12px;
+    background: #ffffff4d;
+    border-color: #ffffff66;
+    border-width: 1px;
+}
+
+/* 三档折射强度。色散随强度一起涨 —— 真实玻璃越厚色散越明显。 */
+Container.glass-pane.weak {
+    filter: refraction(10px, 0.10);
+}
+
+Container.glass-pane.medium {
+    filter: refraction(20px, 0.25);
+}
+
+Container.glass-pane.strong {
+    filter: refraction(32px, 0.45);
+}

@@ -210,10 +210,7 @@ fn parse_filter_chain(
 }
 
 /// 按函数名解析一个滤镜的参数（`args` 已在函数体内）。
-fn filter_by_name(
-    name: &str,
-    args: &mut Parser,
-) -> Option<zephyra_core::filter::Filter> {
+fn filter_by_name(name: &str, args: &mut Parser) -> Option<zephyra_core::filter::Filter> {
     use zephyra_core::core::{Color, Point};
     use zephyra_core::filter::Filter;
 

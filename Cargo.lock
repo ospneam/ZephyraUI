@@ -2375,6 +2375,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "zephyra-gallery"
+version = "0.1.0"
+dependencies = [
+ "winit",
+ "zephyra-core",
+ "zephyra-fx",
+ "zephyra-platform",
+ "zephyra-style",
+ "zephyra-ui",
+ "zephyra-vulkan",
+ "zephyra-winit",
+ "zephyra-winit-d3d12",
+ "zstylec",
+]
+
+[[package]]
 name = "zephyra-platform"
 version = "0.1.0"
 
@@ -2397,6 +2413,7 @@ dependencies = [
 name = "zephyra-style"
 version = "0.1.0"
 dependencies = [
+ "zephyra-bezier",
  "zephyra-core",
 ]
 
@@ -2404,15 +2421,8 @@ dependencies = [
 name = "zephyra-ui"
 version = "0.1.0"
 dependencies = [
- "winit",
- "zephyra-bezier",
  "zephyra-core",
- "zephyra-fx",
- "zephyra-platform",
  "zephyra-style",
- "zephyra-vulkan",
- "zephyra-winit-d3d12",
- "zstylec",
 ]
 
 [[package]]

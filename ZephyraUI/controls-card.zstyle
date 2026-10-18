@@ -5,7 +5,14 @@
 
 /* ---- Card 族 ---- */
 
+/* ⚠ `direction: vertical` 不是可选项：core 的容器**默认横排**，而卡片装的是
+ *   「标题 + 说明」这种该竖着摞的内容。省掉这一行的症状很安静 —— 画面上
+ *   标题与说明仍在，只是**并排**成 "CardA plain surface."，读起来像漏了空格。
+ *   设了它之后 `setting_item` / `expander` / `acrylic_card` 也一并变对，
+ *   因为它们都在卡里塞多行。 */
 Container.card {
+    direction: vertical;
+    spacing: 6px;
     background: @card;
     corner-radius: 10px;
     padding: 14px;

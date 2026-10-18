@@ -1,7 +1,0 @@
-/* Menus 页布局 —— Apple HIG 度量。 */
-
-Container.page-menus {
-    direction: vertical;
-    spacing: 20px;
-    cross-align: stretch;
-}

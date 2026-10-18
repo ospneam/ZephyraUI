@@ -108,7 +108,15 @@ pub fn swipe_view(
     pages: &'static [(&'static str, &'static str)],
     index: usize,
 ) -> Element {
-    let (title, desc) = pages.get(index).copied().unwrap_or(("—", ""));
+    // ⚠ 元组形状必须是 `(id, label)`，与 `list_view` / `selector_bar` 同形。
+    //
+    // 它曾经写成 `(title, desc)`，于是 gallery 照着兄弟控件的形状传
+    // `[("swipe:0", "First card")]` 时，**第一项被当成标题画了出来** ——
+    // 画面上是「swipe:0」这串内部键名，而第二项掉到副标题行。
+    //
+    // 这类错误不崩、不报错：元组两项都是 `&'static str`，编译器分不出谁是
+    // 标题。判据只能是「同一族控件的元组形状一致」这条约定，所以它写在注释里。
+    let (id, label) = pages.get(index).copied().unwrap_or(("swipe:-", "—"));
     let pips: Vec<Element> = (0..pages.len())
         .map(|i| {
             let mut d = Element::new(NodeTag::Container)
@@ -130,11 +138,11 @@ pub fn swipe_view(
                 .with_children([
                     Element::new(NodeTag::Text)
                         .with_key("title")
-                        .with(&props::TEXT, PropertyValue::static_str(title))
+                        .with(&props::TEXT, PropertyValue::static_str(label))
                         .style("swipe-title"),
                     Element::new(NodeTag::Text)
                         .with_key("desc")
-                        .with(&props::TEXT, PropertyValue::static_str(desc))
+                        .with(&props::TEXT, PropertyValue::static_str(id))
                         .style("swipe-desc"),
                 ]),
             Element::new(NodeTag::Container)

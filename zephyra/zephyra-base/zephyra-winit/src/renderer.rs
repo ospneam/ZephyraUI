@@ -1465,8 +1465,8 @@ impl Renderer {
                 // ⚠ 这是折射**唯一**的坐标系换算处；算错时折射仍"有效果"，
                 // 只是边缘高光整体偏移 —— 肉眼极难察觉，所以两侧都取自
                 // `OffscreenPass` 已算好的量，不在这里重算。
-                let content = zephyra_core::paint::command_content_rect(&item.command)
-                    .unwrap_or(pass.bounds);
+                let content =
+                    zephyra_core::paint::command_content_rect(&item.command).unwrap_or(pass.bounds);
                 let element_in_rt = zephyra_core::core::Rect {
                     x: content.x - pass.origin.0,
                     y: content.y - pass.origin.1,
@@ -1486,12 +1486,7 @@ impl Renderer {
                 )
             }
             _ => (
-                offscreen::composite_quad(
-                    pass.bounds,
-                    screen,
-                    pass.rt_size_as_f32(),
-                    pass.tint,
-                ),
+                offscreen::composite_quad(pass.bounds, screen, pass.rt_size_as_f32(), pass.tint),
                 crate::shader::PS_COMPOSITE,
                 None,
             ),

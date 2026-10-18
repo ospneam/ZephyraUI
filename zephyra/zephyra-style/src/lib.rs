@@ -28,6 +28,7 @@
 //! 独立的、更简化的路径（比如烘焙成 style block），那 `apply` 就要写两遍，
 //! 而两套规则会漂移：症状是「dev 里对、release 里错」，极难定位。
 
+pub mod anim;
 pub mod apply;
 pub mod ir;
 

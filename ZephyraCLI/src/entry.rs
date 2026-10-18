@@ -68,7 +68,9 @@ fn dispatch(bin: &str, argv: Vec<String>, io: &mut dyn Write) -> ExitCode {
 
     // ⚠ 未知标志**立刻**报用法错，不静默忽略 —— 见 `Command::flags` 的说明。
     // `--` 之后的位置参数不算标志（它们原样透传给 cargo）。
-    let after_ddash = parsed.positional.iter().position(|x| x == "--").is_some();
+    // `any` 而不是 `position(..).is_some()`：后者会在 clippy 1.93 上触发
+    // `search_is_some`（`-D warnings` 直接红），而这里要的只是「有没有」。
+    let after_ddash = parsed.positional.iter().any(|x| x == "--");
     if !after_ddash {
         for f in &parsed.flags {
             if !cmd.flags.contains(&f.as_str()) {

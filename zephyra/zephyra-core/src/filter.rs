@@ -151,7 +151,11 @@ impl Filter {
             // 位移在 RT 边界被硬切 —— 症状是玻璃边缘出现一道平直的硬边，
             // 而那看起来像"边框画歪了"而不是"离屏算小了"。
             Filter::Refraction { strength, .. } => {
-                let s = if param_active(*strength) { *strength } else { 0.0 };
+                let s = if param_active(*strength) {
+                    *strength
+                } else {
+                    0.0
+                };
                 Outset {
                     left: s,
                     top: s,

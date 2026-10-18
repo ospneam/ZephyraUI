@@ -49,13 +49,14 @@ members = [
     # `zephyra-camera` 原本住在 base 根目录，现已归入 base/extra/ —— 它正是
     # 这一层的样板：`default = []`，开 `capture` 才带 nokhwa。
     "zephyra/zephyra-core/extra/zephyra-bezier",
-    "examples",
-    # core 之上的 UI 控件层 + RinUI 风格 gallery 应用。
-    # 进 members 而**不进** default-members：它的默认 feature 是 d3d12 后端，
-    # 与 `examples` 不同，它编译的是一个完整控件库（编译量更大，且与
-    # acceptance 用的 `examples` 目标不同）。用 `-p zephyra-ui --bin gallery`
-    # 显式选中——「选哪后端、编哪个 bin」都留在命令里。
+    # 控件层（库）。**不依赖任何渲染后端** —— 后端由应用用 feature 选。
+    # 不进 default-members：它要编完整套控件，且对框架自身没有用处。
     "ZephyraUI",
+    # gallery —— `ZephyraUI` 控件层的参考应用。与控件层分开是因为它要选
+    # 渲染后端（d3d12 / d3d11 / linux-vk 互斥），而控件层零后端依赖。
+    # 同样不进 default-members：它编一整套应用。
+    "gallery",
+    "examples",
 ]
 # `extra/` 下的包（`zephyra-bezier` / `zephyra-camera`）与 `zephyra-dcomp` 进 members
 # 但**不进** default-members：它们是成员（可以被 `-p` 选中、共享工作区的依赖解析），

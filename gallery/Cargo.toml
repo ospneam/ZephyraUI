@@ -1,0 +1,74 @@
+[package]
+name = "zephyra-gallery"
+description = "ZephyraUI gallery: the reference application for the zephyra-ui widget layer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+# 这是**应用**，不是库。它与 `ZephyraUI/`（控件层）的分工：
+#
+#   ZephyraUI/   控件长什么样 —— 产出 Element，零后端依赖
+#   gallery/     谁把它们摆在哪一页 —— 路由、状态、宿主、呈现
+#
+# # 后端由 feature 选，一个二进制只编一个
+#
+# 三个后端互不依赖（`zephyra-base/README.md` 有逐条理由），所以
+# d3d12 / d3d11 / linux-vk **互斥**。同时开两个会编进两套图形栈，
+# 而「画面一空时是哪个后端的问题」就没法回答了。
+[features]
+default = ["d3d12"]
+d3d12 = ["dep:zephyra-winit-d3d12"]
+d3d11 = ["dep:zephyra-winit"]
+# Linux 后端（winit + 裸 Vulkan/ash）。与上面两个互斥。
+linux-vk = ["dep:zephyra-vulkan"]
+
+[dependencies]
+zephyra-core = { path = "../zephyra/zephyra-core" }
+zephyra-fx = { path = "../zephyra/zephyra-fx" }
+zephyra-style = { path = "../zephyra/zephyra-style" }
+zephyra-ui = { path = "../ZephyraUI" }
+zstylec = { path = "../zstylec" }
+
+# 平台能力抽象（窗口外观：暗色 / 圆角 / Mica）。应用只依赖 trait，
+# Windows 的实现与 Linux 的降级都在实现 crate 里。
+zephyra-platform = { path = "../zephyra/zephyra-base/zephyra-platform" }
+
+# 演示宿主：真开窗口 + GPU 渲染。只有 bin 用它，库层不依赖任何后端。
+zephyra-winit-d3d12 = { path = "../zephyra/zephyra-base/zephyra-winit-d3d12", optional = true }
+zephyra-winit = { path = "../zephyra/zephyra-base/zephyra-winit", optional = true }
+zephyra-vulkan = { path = "../zephyra/zephyra-base/zephyra-vulkan", optional = true }
+winit = "0.30"
+
+[[bin]]
+name = "gallery"
+# ⚠ 没有 `required-features`：Cargo 的 `required-features` 是**与**语义，
+# 表达不了「d3d12 或 linux-vk」，而 Linux 上 d3d12 是空 crate ——
+# 照原样写等于这个 bin 在 Linux 上永远不存在。
+# 后端改由 `bin/main.rs` 里的 `#[cfg(feature)]` 分流。
+path = "bin/main.rs"
+
+# 文字链探针：不开窗口，直接量「一段文本 → 排版 → 图集 → 顶点」。
+# 存在理由：字形串味/错位在成品图里只是"字看起来不对"，没有数字可对；
+# 这个 bin 把每个字符的 uv、advance、measured size 全打出来。
+[[bin]]
+name = "text-probe"
+path = "bin/text_probe.rs"
+
+[lib]
+name = "zephyra_gallery"
+path = "src/lib.rs"
+
+[lints.rust]
+# ⚠ 这里**不能** `forbid(unsafe_code)`。
+#
+# `src/alloc_probe.rs` 实现 `GlobalAlloc`（数每帧分配次数），而那个 trait 的
+# 方法签名就是 `unsafe fn` —— 没有 unsafe 就**不可能**实现它。
+#
+# 所以改成 `deny`（可以按模块豁免）而不是 `forbid`（一格都不许）：
+# 下面 `alloc_probe` 模块单独 `#![allow(unsafe_code)]`，其余代码仍然全禁。
+#
+# 判据与仓库其余部分一致：**unsafe 只允许出现在「必须直接碰系统/运行时」
+# 的那一小块里**，且那一块要能一眼指出来。
+unsafe_code = "deny"

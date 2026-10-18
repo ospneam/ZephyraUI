@@ -1,6 +1,0 @@
-/* Error Test 页布局 —— Apple HIG 度量。 */
-
-Container.page-error {
-    direction: vertical;
-    cross-align: stretch;
-}
