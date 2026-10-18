@@ -58,6 +58,62 @@ fn laid_out(route: &'static str) -> Node {
     root
 }
 
+/// 覆盖「会改外观的状态」的门禁脚本表 —— `interaction_leaves_no_stale_appearance`
+/// 与 `every_stylesheet_rule_matches_something` 共用。
+///
+/// # 为什么要提成两处共用
+///
+/// 后者要回答「样式表里每条规则都选得中东西吗」，而「有东西可被选中」依赖
+/// **交互态**：`.pressed` 规则只有在按钮被按住时才选得中元素。若只跑默认状态的
+/// 树，它会把所有 `.pressed` / `.checked` 规则误报成死规则 —— 于是唯一的选择
+/// 就是「把死规则检查关掉」，而那正是这条检查要防的事。
+///
+/// ⚠ 往表里加脚本时同步问一句：新状态会不会带出新的 `.class` 规则？会的话
+/// 不加进这里就会出现假阳性，然后有人会去**删规则**而不是加脚本 —— 那比没有
+/// 这条门禁更坏。
+type GateScripts = Vec<(&'static str, fn(&mut Gallery))>;
+
+/// 见 [`GateScripts`]。
+fn interaction_scripts() -> GateScripts {
+    vec![
+        ("切到 basics", |g| g.route = "basics"),
+        ("勾上 alpha", |g| g.checked[0] = true),
+        ("再勾 beta 与 gamma", |g| {
+            g.checked[1] = true;
+            g.checked[2] = true;
+        }),
+        ("全部取消", |g| g.checked = [false, false, false]),
+        ("选中第三个单选项", |g| g.radio = 2),
+        ("选中第一个单选项", |g| g.radio = 0),
+        ("开主开关", |g| g.switch_on = true),
+        ("关掉主开关", |g| g.switch_on = false),
+        ("切到 list 分段", |g| g.seg = "seg:list"),
+        ("切回 grid 分段", |g| g.seg = "seg:grid"),
+        ("展开 expander", |g| g.expanded = true),
+        ("收起 expander", |g| g.expanded = false),
+        ("ComboBox 前进一项", |g| g.combo = (g.combo + 1) % 4),
+        ("ComboBox 前进第二项", |g| g.combo = (g.combo + 1) % 4),
+        ("SpinBox 加一", |g| g.spin += 1),
+        ("SpinBox 减一", |g| g.spin -= 1),
+        ("打开菜单", |g| g.menu_open = Some(1)),
+        ("关掉菜单", |g| g.menu_open = None),
+        ("展开下拉", |g| g.dd_open = true),
+        ("收起下拉", |g| g.dd_open = false),
+        ("切到 collections", |g| g.route = "collections"),
+        ("切到 settings", |g| g.route = "settings"),
+        ("切到 toggles", |g| g.route = "toggles"),
+        ("切到 effects", |g| g.route = "effects"),
+        ("切回 home", |g| g.route = "home"),
+        ("折射参数加一档", |g| {
+            g.glass.nudge(zephyra_gallery::app::glass::Param::Ior, 1);
+        }),
+        ("折射参数减一档", |g| {
+            g.glass
+                .nudge(zephyra_gallery::app::glass::Param::Dispersion, -1);
+        }),
+    ]
+}
+
 /// 递归遍历：父先于子。
 fn walk(node: &Node, f: &mut impl FnMut(&Node)) {
     f(node);
@@ -824,42 +880,8 @@ fn interaction_leaves_no_stale_appearance() {
 
     // 脚本覆盖四类会改外观的状态：路由、勾选、开关、折叠、选中、悬停/按下。
 
-    /// 一条门禁脚本：改哪儿（名字） + 怎么改（闭包）+ 期望（由闭包自己断言）。
-    ///
-    /// 提取成别名的理由：这个闭包类型在同文件里出现三次，每次写全都很长，
-    /// 而它本身并不比它的名字更说明问题。
-    type GateScripts = Vec<(&'static str, fn(&mut Gallery))>;
-
-    let script: GateScripts = vec![
-        ("切到 basics", |g| g.route = "basics"),
-        ("勾上 alpha", |g| g.checked[0] = true),
-        ("再勾 beta 与 gamma", |g| {
-            g.checked[1] = true;
-            g.checked[2] = true;
-        }),
-        ("全部取消", |g| g.checked = [false, false, false]),
-        ("选中第三个单选项", |g| g.radio = 2),
-        ("选中第一个单选项", |g| g.radio = 0),
-        ("开主开关", |g| g.switch_on = true),
-        ("关主开关", |g| g.switch_on = false),
-        ("切到 list 分段", |g| g.seg = "seg:list"),
-        ("切回 grid 分段", |g| g.seg = "seg:grid"),
-        ("展开 expander", |g| g.expanded = true),
-        ("收起 expander", |g| g.expanded = false),
-        ("ComboBox 前进一项", |g| g.combo = (g.combo + 1) % 4),
-        ("ComboBox 前进第二项", |g| g.combo = (g.combo + 1) % 4),
-        ("SpinBox 加一", |g| g.spin += 1),
-        ("SpinBox 减一", |g| g.spin -= 1),
-        ("打开菜单", |g| g.menu_open = Some(1)),
-        ("关掉菜单", |g| g.menu_open = None),
-        ("展开下拉", |g| g.dd_open = true),
-        ("收起下拉", |g| g.dd_open = false),
-        ("切到 collections", |g| g.route = "collections"),
-        ("切到 settings", |g| g.route = "settings"),
-        ("切到 toggles", |g| g.route = "toggles"),
-        ("切到 effects", |g| g.route = "effects"),
-        ("切回 home", |g| g.route = "home"),
-    ];
+    // 一条门禁脚本：改哪儿（名字） + 怎么改（闭包）+ 期望（由闭包自己断言）。
+    let script: GateScripts = interaction_scripts();
 
     let mut g = Gallery::default();
     let mut warm = FrameCache::new();
@@ -1460,4 +1482,609 @@ fn touch_target_converts_to_official_ephemeral_px() {
     );
     let bad = gallery_at(1400, 800, 0.0);
     assert!(bad.touch_target(zephyra_core::responsive::TOUCH_MIN_EPX) > 0.0);
+}
+
+// --------------------------------------------------- 门禁 26：折射参数可调
+
+use zephyra_gallery::app::glass::{
+    Glass, Param, BEZEL, BEZEL_TEXT, DISPERSION, DISPERSION_TEXT, IOR, IOR_TEXT, THICKNESS,
+    THICKNESS_TEXT,
+};
+
+/// 收集树里所有带**局部** `FILTER` 的节点上的折射参数。
+///
+/// # 为什么读 `iter_local` 而不是 `get`
+///
+/// `Node::from_element` 之后样式表还没应用时，树上的属性全是**局部**的；这里
+/// 先取局部值，正是为了在样式表**不含** `filter:` 的前提下读到源码写的值。
+/// 若改用 `get`（查合成后的值），这条门禁会随「样式表里又加回了一档 filter」
+/// 而悄悄改成测样式表 —— 那正是它要防的回归。
+fn refraction_filters(root: &Node) -> Vec<zephyra_core::filter::Filter> {
+    let mut out = Vec::new();
+    walk(root, &mut |n: &Node| {
+        for (k, v) in n.props().iter_local() {
+            if !std::ptr::eq(k, &zephyra_core::props::FILTER) {
+                continue;
+            }
+            if let zephyra_core::property::PropertyValue::Filter(chain) = v {
+                for f in chain.filters() {
+                    if matches!(f, zephyra_core::filter::Filter::Refraction { .. }) {
+                        out.push(*f);
+                    }
+                }
+            }
+        }
+    });
+    out
+}
+
+/// 换一组参数重跑整棵树，返回该树上的折射参数。
+///
+/// ⚠ 走的是**真的** [`Gallery::view`] + `Node::from_element`，不是直接问
+/// `Glass::filter()` —— 后者只会证明查表函数自己对自己成立，而门禁要证明的是
+/// 「树上那个值」跟着参数变了。
+fn filters_at(g: &Gallery) -> Vec<zephyra_core::filter::Filter> {
+    let theme = Theme::builtin(ThemeVariant::Dark);
+    let ctx = Context::new(&theme);
+    let element = g.view(&ctx);
+    let root = Node::from_element(&element);
+    refraction_filters(&root)
+}
+
+/// 参数的四个字段必须随 `Gallery::glass` 变 —— **这是「可调」的定义**。
+///
+/// # 为什么这条必须按**四张表**逐张试，而不是「改一个字段看树变没变」
+///
+/// 只试一个字段的话，另三个字段写死在源码里这条门禁照样绿，而画面上
+/// 「IOR 那一栏的加减按钮点了没反应」。四个字段各试一次，四处死值全被覆盖。
+///
+/// # 恒真防御
+///
+/// 每种参数都要先断言**树里确实有一块玻璃**（`!got.is_empty()`），否则下面
+/// 那句 `assert_ne!` 在「玻璃块根本没造出来」时会因为两边都空而绿。
+#[test]
+fn glass_params_are_not_hard_coded() {
+    use zephyra_core::filter::Filter;
+
+    /// 把某个 `Filter::Refraction` 的四个字段抠出来。
+    fn parts(f: &Filter) -> [f32; 4] {
+        match f {
+            Filter::Refraction {
+                strength,
+                bezel,
+                dispersion,
+                ior,
+            } => [*strength, *bezel, *dispersion, *ior],
+            other => panic!("树上出现了非折射的滤镜 {other:?}"),
+        }
+    }
+
+    let pick = |idx: usize, v: &Vec<Filter>| parts(&v[idx]);
+
+    // ---- 基准树 ----
+    let mut base = Gallery::default();
+    base.route = "effects";
+    let warm = filters_at(&base);
+    assert!(
+        warm.len() >= 3,
+        "液态玻璃页上只有 {} 块玻璃带折射滤镜 —— 这条门禁可能恒真",
+        warm.len()
+    );
+    let b = pick(0, &warm);
+
+    // ---- 逐个参数各挪一档 ----
+    for param in Param::ALL {
+        let mut g = Gallery::default();
+        g.route = "effects";
+        assert!(
+            g.glass.nudge(param, 1),
+            "默认档位下 `{param:?}` 加一档被 clamp 掉了 —— 表的下界取得不对"
+        );
+        let moved = filters_at(&g);
+        assert!(
+            !moved.is_empty(),
+            "改了 `{param:?}` 之后玻璃块从树上消失了 —— 判据本身失效"
+        );
+        let m = pick(0, &moved);
+        let bi = param.index();
+        for (j, (x, y)) in b.iter().zip(m.iter()).enumerate() {
+            if j == bi {
+                assert_ne!(
+                    x, y,
+                    "`{param:?}` 加一档后树上的这个字段（{x} → {y}）没变 —— \
+                     该参数被写死在源码里了，页面上的 [+] 是摆设"
+                );
+            } else {
+                // 其余三个必须**原样不动**。反向判据同样必要：只断「该变的变了」
+                // 挡不住 `nudge` 里错位写到别人字段上的形状，而那种形状在画面上
+                // 是「点厚度、IOR 跳了」。
+                assert_eq!(
+                    x, y,
+                    "`{param:?}` 加一档后第 {j} 个字段也跟着变了（{x} → {y}）—— \
+                     nudge 写错了字段"
+                );
+            }
+        }
+        // 其余三块玻璃必须**跟着一起变**（共用一组参数）—— 若有人给某一块
+        // 单独特判，这一条会绿而画面上三块玻璃参数不一致。
+        for k in 1..moved.len() {
+            assert_eq!(
+                pick(0, &moved),
+                pick(k, &moved),
+                "`{param:?}` 改动后第 {k} 块玻璃与第 0 块参数不一致 —— 玻璃块本该共用一组参数"
+            );
+        }
+    }
+
+    // ---- 步进必须**可逆**：四个各加一档再各减一档，回到基准值 ----
+    //
+    // 判据是「加完减完回到原处」，不是「减一档等于基准」—— 后者只在从基准
+    // 减起时成立，而这里真正的风险是 `nudge` 把加减**同一个方向**实现成两次
+    // 加（那种形状下每条单参数门禁都绿，而画面上 `[−]` 与 `[+]` 效果一样）。
+    let mut round = Gallery::default();
+    round.route = "effects";
+    for param in Param::ALL {
+        assert!(round.glass.nudge(param, 1), "`{param:?}` 加一档被 clamp 了");
+    }
+    for param in Param::ALL.iter().rev() {
+        assert!(
+            round.glass.nudge(*param, -1),
+            "`{param:?}` 加了一档却减不回来 —— 步进不可逆"
+        );
+    }
+    assert_eq!(
+        round.glass,
+        Glass::default(),
+        "四个参数各加一档再各减一档后没回到默认值"
+    );
+    assert_eq!(
+        pick(0, &filters_at(&round)),
+        b,
+        "加减一轮之后树上的折射参数没回到基准值"
+    );
+}
+
+/// 数值表与文本表必须**逐项对齐**。
+///
+/// # 为什么不靠 `format!` 生成文本、而是手写两张表
+///
+/// 因为每帧 `format!` 会走 `Box::leak`（见 `pages::basics::spin_text` 的理由），
+/// 而这一页的参数每帧都要显示。手写两张表的代价就是**可能对不齐**，所以这条
+/// 门禁是它的唯一保险。
+///
+/// # 判据为什么不是「文本能被解析回数值」
+///
+/// 那需要 `str::parse`，而这里要断的是**下标对应关系**：`DISPERSION_TEXT[7]`
+/// 必须是 `DISPERSION[7]` 的显示，不是「某个能被解析的数」。所以逐下标比
+/// `(值, 文本)` 对，并对不上的下标直接点名。
+#[test]
+fn glass_param_tables_line_up() {
+    macro_rules! check {
+        ($name:literal, $vals:expr, $texts:expr) => {{
+            let v: &[f32] = &$vals;
+            let t: &[&str] = &$texts;
+            assert_eq!(
+                v.len(),
+                t.len(),
+                "{}：数值表 {} 项、文本表 {} 项 —— 下标会越界或错位",
+                $name,
+                v.len(),
+                t.len()
+            );
+            for (i, (val, text)) in v.iter().zip(t.iter()).enumerate() {
+                assert!(
+                    !text.is_empty(),
+                    "{} 第 {i} 项文本为空 —— 面板上会是一个空白",
+                    $name
+                );
+                // 文本的数值必须与表里那一项一致（允许文本多带小数位）。
+                let parsed: f32 = text.parse().unwrap_or_else(|e| {
+                    panic!("{} 第 {i} 项文本 {text:?} 不是一个数：{e}", $name)
+                });
+                let tol = if parsed.abs() >= 10.0 { 0.01 } else { 0.006 };
+                assert!(
+                    (parsed - val).abs() <= tol,
+                    "{} 第 {i} 项：文本 {text:?} 解析成 {parsed}，表里却是 {val}",
+                    $name
+                );
+            }
+            // 必须**严格递增** —— 步进靠的是下标 +1，若有两档同值，用户连点两下
+            // 会看到数值不变，症状与「按钮没接线」无法区分。
+            for w in v.windows(2) {
+                assert!(
+                    w[1] > w[0],
+                    "{}：{} 之后是 {} —— 档位没有严格递增，点两下看起来像没反应",
+                    $name,
+                    w[0],
+                    w[1]
+                );
+            }
+        }};
+    }
+
+    check!("THICKNESS", THICKNESS, THICKNESS_TEXT);
+    check!("BEZEL", BEZEL, BEZEL_TEXT);
+    check!("DISPERSION", DISPERSION, DISPERSION_TEXT);
+    check!("IOR", IOR, IOR_TEXT);
+
+    // IOR 必须含 1.00（不折射的诊断档）与 1.50（普通冕牌玻璃）。
+    // 少了 1.00，「公式被改坏了吗」这个判断在页面上就没法做。
+    assert!(
+        IOR.contains(&1.0),
+        "IOR 表里没有 1.00 —— 少了「不折射」这条诊断档"
+    );
+    assert!(
+        IOR.contains(&1.5),
+        "IOR 表里没有 1.50 —— 普通冕牌玻璃那档没了"
+    );
+    // 倒角下限不得为 0（除零，见 `BEZEL` 的文档）。
+    //
+    // ⚠ 判据写成「**每一档**都不小于 2」而不是「第 0 档不小于 2」：后者 clippy
+    // 会判成恒真（编译期已知 `BEZEL[0]` 的值），而前者在中间档被改成 0 时才
+    // 说得清是哪一档出的问题。
+    for (i, b) in BEZEL.iter().enumerate() {
+        assert!(
+            *b >= 2.0,
+            "BEZEL 第 {i} 档是 {b} —— 小于 2 会让着色器里的 `max(color.g, 1.0)` \
+             把整块玻璃都塞进强折射区"
+        );
+    }
+    // 默认档必须落在表内，否则 `Glass::default()` 会越界 panic。
+    let d = Glass::default();
+    assert!(
+        d.thickness < THICKNESS.len(),
+        "默认厚度档 {} 越界",
+        d.thickness
+    );
+    assert!(d.bezel < BEZEL.len(), "默认倒角档 {} 越界", d.bezel);
+    assert!(
+        d.dispersion < DISPERSION.len(),
+        "默认色散档 {} 越界",
+        d.dispersion
+    );
+    assert!(d.ior < IOR.len(), "默认 IOR 档 {} 越界", d.ior);
+}
+
+/// 面板上每个 `[−] [+] 都必须在树上，且点了真的改参数。
+///
+/// # 为什么不能只看「key 在树上」
+///
+/// 「key 在树上」只保证按钮**画出来了**；而 `click()` 的分派是**运行期字符串
+/// 解析**（剥 `glass-` 前缀 → 找 `Param::slug()` → 看后缀），编译器看不出
+/// 「面板发的是 `glass-thickness:dec` 而 `slug()` 返回 `thickness` 但中间少个
+/// 冒号」。所以这里**真的点一遍**再回读参数。
+///
+/// # 恒真防御
+///
+/// 断言 8 个按钮全在树上；按钮少画了就会在这里报，而不是静默通过。
+#[test]
+fn glass_param_keys_all_wired() {
+    let root = laid_out("effects");
+    let mut keys = Vec::new();
+    for param in Param::ALL {
+        keys.push(format!("glass-{}:dec", param.slug()));
+        keys.push(format!("glass-{}:inc", param.slug()));
+    }
+    assert_eq!(keys.len(), 8, "四个参数 × 增减 = 8 个按钮");
+    for k in &keys {
+        assert!(
+            find_by_key(&root, k).is_some(),
+            "液态玻璃页上找不到按钮 {k} —— Param::ALL 与 effects.rs 的面板对不上"
+        );
+    }
+
+    // 逐个点「加」，每次都要求参数真的动了。
+    let mut g = Gallery::default();
+    g.route = "effects";
+    for param in Param::ALL {
+        let before = g.glass;
+        g.click(&format!("glass-{}:inc", param.slug()));
+        assert_ne!(
+            g.glass,
+            before,
+            "点 `glass-{}:inc` 之后参数没变 —— 分派漏了这个 key",
+            param.slug()
+        );
+    }
+    // 再逐个点「减」，回到默认值。
+    for param in Param::ALL.iter().rev() {
+        g.click(&format!("glass-{}:dec", param.slug()));
+    }
+    assert_eq!(g.glass, Glass::default(), "加减一轮之后没回到默认值");
+}
+
+/// 边界上的 `[−] [+] 必须是**无副作用**的 no-op。
+///
+/// # 为什么单独一条
+///
+/// 「已到上限还继续加」若写成了别的形状（例如 `*slot = max` 无条件赋值），
+/// 画面上仍然一切正常，但**上一条门禁的判据就不再可信** —— 因为它靠
+/// 「改参数 → 树变」来证明参数没被写死。`Glass::nudge` 返回 `bool` 就是给这条
+/// 门禁用的，调用方（`click`）刻意忽略它，于是只有这里能验。
+#[test]
+fn glass_param_steppers_are_clamped_without_side_effects() {
+    let mut g = Gallery::default();
+    for param in Param::ALL {
+        // 一路加到顶。默认档不在 0 档，所以先一路减到底再从 0 起数 ——
+        // 否则「加了几次」与「离上限还有几档」永远差一个常数，这条判据就废了。
+        while g.glass.nudge(param, -1) {}
+        let steps = match param {
+            Param::Thickness => THICKNESS.len() - 1,
+            Param::Bezel => BEZEL.len() - 1,
+            Param::Dispersion => DISPERSION.len() - 1,
+            Param::Ior => IOR.len() - 1,
+        };
+        let mut n = 0;
+        while g.glass.nudge(param, 1) {
+            n += 1;
+            assert!(n <= steps, "步进加到了 {n} 次还不停 —— clamp 没生效");
+        }
+        assert_eq!(n, steps, "从 0 档加到顶应是 {steps} 次，实测 {n}");
+        // 顶上一格：no-op。
+        let top = g.glass;
+        assert!(!g.glass.nudge(param, 1), "已到上限却报告「动了」");
+        assert_eq!(g.glass, top, "已到上限再加却改变了状态");
+        // 顶上加两次（防「单次 clamp、双次累积」那种形状）。
+        assert!(!g.glass.nudge(param, 1));
+        assert_eq!(g.glass, top);
+        // 一路减到底：步进次数必须与加法对称（到 0 档的距离相同）。
+        let mut k = 0;
+        while g.glass.nudge(param, -1) {
+            k += 1;
+            assert!(k <= steps, "步进减到了 {k} 次还不停 —— clamp 没生效");
+        }
+        assert_eq!(k, steps, "从顶档减到底应是 {steps} 次，实测 {k}");
+        let bottom = g.glass;
+        assert!(!g.glass.nudge(param, -1), "已到下限却报告「动了」");
+        assert_eq!(g.glass, bottom, "已到下限再减却改变了状态");
+        // 步进**一个**参数不得牵动其它三个 —— `nudge` 里那四条 match 分支若写成了
+        // 「回写整个结构体」，这条会绿而画面上四个值一起跳。
+        let mut probe = Gallery::default();
+        let others = |g: &Glass| -> Vec<usize> { vec![g.thickness, g.bezel, g.dispersion, g.ior] };
+        let before = others(&probe.glass);
+        for p in Param::ALL {
+            probe.glass.nudge(p, 1);
+        }
+        let after = others(&probe.glass);
+        for (i, (b, a)) in before.iter().zip(after.iter()).enumerate() {
+            assert_ne!(
+                b, a,
+                "四个参数都加了一档，但第 {i} 个没变 —— nudge 漏了某个字段"
+            );
+        }
+    }
+}
+
+// --------------------------------------------------- 门禁 27：死规则反查
+
+/// 样式表里每条规则都得**选得中至少一个元素** —— 反方向的门禁。
+///
+/// # 为什么前两条不够
+///
+/// `every_class_name_the_source_emits_exists_in_the_stylesheet` 与
+/// `every_element_is_reachable_by_the_stylesheet` 都是**树 → 表**这一个方向：
+/// 前者查「源码发的每个分类名在表里有规则吗」，后者查「每个元素有分类名或裸规则
+/// 吗」。合起来仍漏掉一整类静默失效：**表里有规则，而树里没有任何元素能被它
+/// 选中**。
+///
+/// # 实测过一次（写这条门禁的直接原因）
+///
+/// 给圆按钮调尺寸时写了 `Control.button.round { width: 28px; height: 28px; }`。
+/// `controls::round_button` 发的是 `NodeTag::Control` + 分类名 `round` ——
+/// **没有** `button` 这个分类名（`button` 是别的控件用的）。于是这条规则一个
+/// 元素都选不中，尺寸**纹丝不动**，而两个方向的门禁全绿：分类名 `round` 有规则、
+/// 元素有分类名。这正是「门禁全绿但界面是错的」那一类。
+///
+/// # 交互态为什么必须跑全
+///
+/// `.pressed` / `.checked` / `.hovered` 规则只在对应状态下选得中元素，所以判据
+/// 取**全部路由 × 全部交互脚本**的并集（[`interaction_scripts`]），而不是只看
+/// 默认状态。
+///
+/// # 为什么不查**控件层**（那 15 张表）
+///
+/// 控件层是**给宿主用的样式库**，它承诺覆盖一整套状态 —— `Text.focused`、
+/// `Container.toast.error`、`Container.ring-track.paused`、`Container.suggest-row.selected`
+/// 都在表里，而本 gallery 的界面**根本不存在**那些状态（没有 toast、没有输入框、
+/// 没有建议列表）。按全表判，这些规则会全部报成死规则，于是唯一的选择是删规则
+/// —— 那是把控件层改成「只服务当前 demo」，比留几条暂时用不上的规则坏得多。
+///
+/// 所以判据按 [`zephyra_gallery::styles::app_only`] 取**应用层**规则：应用层
+/// 描述的就是这个界面，用不上的规则就是真死规则。控件层留待有对应界面时再查。
+///
+/// # 恒真防御
+///
+/// 先断言「参与判定的元素远多于规则数」，否则树遍历没走完时这条会变成「没有规则
+/// 需要检查」而恒真地绿。
+#[test]
+fn every_stylesheet_rule_matches_something() {
+    use std::collections::HashSet;
+    use zephyra_core::id::ElementKey;
+
+    type Shapes = HashSet<(NodeTag, Vec<&'static str>)>;
+
+    // ⚠ 判据**只取应用层**（`shell.zstyle` + `pages.zstyle`）的规则，不看控件层。
+    // 见函数文档「为什么不查控件层」那一节。
+    let mut rules: Vec<(usize, String, zephyra_style::ir::Selector)> = Vec::new();
+    for (sheet_name, src) in zephyra_gallery::styles::app_only() {
+        let parsed = zstylec::parse(sheet_name, src);
+        assert!(
+            parsed.is_ok(),
+            "{sheet_name}.zstyle must parse: {:?}",
+            parsed.errors
+        );
+        for (i, r) in parsed.sheet.rules().iter().enumerate() {
+            rules.push((i, (*sheet_name).to_string(), r.selector.clone()));
+        }
+    }
+
+    let theme = Theme::builtin(ThemeVariant::Dark);
+    let ctx = Context::new(&theme);
+
+    /// 从默认状态重造一个 `Gallery`：路由 + 脚本 + 额外改一处。
+    ///
+    /// # 为什么每次**重造**而不是 clone
+    ///
+    /// `Gallery` 里挂着 `Arc<AtomicU8>`（主题意图，宿主每帧写）与 `Preferences`，
+    /// 派生 `Clone` 会让「门禁克隆了一份宿主状态」变成可能 —— 而那条路一旦走歪，
+    /// 门禁验的就是它自己造的世界。重造只有一条真相来源：`Gallery::default()`。
+    fn build(
+        route: &'static str,
+        script: fn(&mut Gallery),
+        extra: impl FnOnce(&mut Gallery),
+    ) -> Gallery {
+        let mut g = Gallery::default();
+        g.route = route;
+        script(&mut g);
+        extra(&mut g);
+        g
+    }
+
+    /// 看一棵树：登记所有出现过的「类型 + 分类名」形状，并交回可交互的 key。
+    ///
+    /// ⚠ 只登记**形状**不登记节点：`Selector::matches` 看的就是这两样，而把整棵
+    /// 树留在哈希表里在几千次构造下要几百 MB。
+    fn absorb(
+        seen: &mut Shapes,
+        elements: &mut usize,
+        g: &Gallery,
+        ctx: &Context<'_>,
+    ) -> Vec<&'static str> {
+        let element = g.view(ctx);
+        let root = Node::from_element(&element);
+        let mut keys = Vec::new();
+        walk(&root, &mut |n: &Node| {
+            *elements += 1;
+            seen.insert((n.tag(), n.style_names().to_vec()));
+            let interactive = n
+                .props()
+                .iter_local()
+                .any(|(k, _)| std::ptr::eq(k, &zephyra_core::props::INTERACTIVE));
+            if interactive {
+                if let Some(k) = n.key().and_then(|k| k.as_name()) {
+                    keys.push(k);
+                }
+            }
+        });
+        keys.sort_unstable();
+        keys.dedup();
+        keys
+    }
+
+    let routes: Vec<&str> = ROUTES
+        .iter()
+        .map(|(id, _, _)| *id)
+        .chain(std::iter::once(SETTINGS_ROUTE.0))
+        .collect();
+
+    let mut seen: Shapes = HashSet::new();
+    let mut elements = 0usize;
+
+    // ⚠ 记下第一项再迭代：趟 D 要在循环里回头引用它，而 \or x in vec\ 会 move 掉 vec。
+    let first_route = routes[0];
+    for route in routes {
+        // ---- 趟 A：全部交互脚本，只登记形状，顺便攒下这一页出现过的交互 key ----
+        //
+        // ⚠ 形状登记与 key 收集**必须一趟做完**：分两趟就要把树留下来，而树不留
+        // （见 `absorb` 的注释），于是第二趟只能重跑一遍脚本。
+        let mut keys: Vec<&'static str> = Vec::new();
+        for (_, script) in interaction_scripts() {
+            let g = build(route, script, |_| {});
+            for k in absorb(&mut seen, &mut elements, &g, &ctx) {
+                keys.push(k);
+            }
+        }
+        keys.sort_unstable();
+        keys.dedup();
+
+        // ---- 趟 B：逐个交互 key 悬停 / 按住（用**默认**脚本造）----
+        //
+        // 为什么只在默认脚本下造悬停态：`hovered` / `pressed` 的**分类名**与脚本
+        // 无关（`state()` 只看指针落在哪个 key 上），所以「哪些规则会因此被选中」
+        // 只取决于**哪些 key 存在**，而 key 的全集刚在趟 A 里拿到了。
+        //
+        // ⚠ 这也是为什么不能手列 key：漏一个，那个元素身上的 `.hovered` /
+        // `.pressed` 规则就会被误判成死规则，于是这条门禁的第一次失败会教人去
+        // **删规则** —— 那比没有这条门禁更坏。
+        for k in &keys {
+            absorb(
+                &mut seen,
+                &mut elements,
+                &build(route, |_| {}, |g| g.hovered = Some(ElementKey::Name(k))),
+                &ctx,
+            );
+            absorb(
+                &mut seen,
+                &mut elements,
+                &build(
+                    route,
+                    |_| {},
+                    |g| {
+                        g.pressed = Some(ElementKey::Name(k));
+                        g.last_pressed = Some(ElementKey::Name(k));
+                    },
+                ),
+                &ctx,
+            );
+        }
+
+        // ---- 趟 C：断点三档（`.compact` 只在小档出现）----
+        for w in [640.0_f32, 1000.0, 1400.0] {
+            absorb(
+                &mut seen,
+                &mut elements,
+                &build(route, |_| {}, |g| g.viewport = (w, 900.0)),
+                &ctx,
+            );
+        }
+
+        // ---- 趟 D：入场动画的 8 个档 ----
+        //
+        // ⚠ 采样必须**密**于档位数：`enter_class()` 走的是缓动函数
+        // （`anim::progress` → `anim::step`），进度到档位边界的映射不是线性的，
+        // 8 个均匀中点只落进其中 4~5 个桶 —— 于是 `.enter-3` 这类规则会被误判成
+        // 死规则。取 8 倍密度的采样（64 个），代价是几十棵树，可以忽略。
+        //
+        // 只在**第一个路由**上跑：`.page` 与 `.enter-N` 是外壳发的，每个路由都有。
+        if route == first_route {
+            for i in 0..64 {
+                let ms = (i as f32 + 0.5) * zephyra_style::anim::ENTER_MS / 64.0;
+                absorb(
+                    &mut seen,
+                    &mut elements,
+                    &build(route, |_| {}, |g| g.enter_ms = ms),
+                    &ctx,
+                );
+            }
+        }
+    }
+
+    assert!(
+        elements > 5000,
+        "只遍历了 {elements} 个元素 —— 树遍历没走完，这条门禁可能恒真"
+    );
+    assert!(
+        rules.len() > 50,
+        "应用层只有 {} 条规则 —— 判据可能没取到规则",
+        rules.len()
+    );
+
+    let dead: Vec<String> = rules
+        .iter()
+        .filter(|(_, _, sel)| !seen.iter().any(|(tag, names)| sel.matches(*tag, names)))
+        .map(|(i, sheet_name, sel)| {
+            let names: Vec<String> = sel.names.iter().map(|n| format!(".{n}")).collect();
+            format!(
+                "{sheet_name}.zstyle 第 {i} 条 `{}{}`",
+                sel.tag.map(|t| format!("{t:?}")).unwrap_or_default(),
+                names.concat()
+            )
+        })
+        .collect();
+
+    assert!(
+        dead.is_empty(),
+        "样式表里这些规则一个元素都选不中（写了等于没写，而树→表那两条门禁不会报）：\n  {}",
+        dead.join("\n  ")
+    );
 }

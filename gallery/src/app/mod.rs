@@ -19,6 +19,7 @@ use zephyra_core::id::ElementKey;
 use zephyra_core::{context::Context, element::Element};
 use zephyra_fx::{InputState, View};
 
+pub mod glass;
 pub mod pages;
 pub mod shell;
 
@@ -353,6 +354,15 @@ pub struct Gallery {
     /// 数组表示单选，就得额外维护一套「什么时候清掉别的那个」规则，而规则一变就
     /// 出现「两个同时选中」—— 那正是画面上可见、且不报错的失败。
     pub radio: usize,
+    /// 液态玻璃页的四个折射参数（**运行期可调**）。
+    ///
+    /// # 为什么它住在应用状态而不是样式表
+    ///
+    /// 参数写进 `.zstyle` 就只剩三档静态值，而这个页面的职责恰恰是让人**调**
+    /// 它们。见 [`glass::Glass`] 的文档 —— `FILTER` 不在门禁的 APPEARANCE
+    /// 列表里是**有意的**：它的四个参数是物理量（厚度 / 折射率 / 色散 / 倒角
+    /// 宽度），既没有 `@令牌` 对应物，也不随主题变化。
+    pub glass: crate::app::glass::Glass,
     /// 设置页主题总开关。
     pub switch_on: bool,
     /// 设置页通知开关。与主题开关**分开**：共用一个字段的话，勾掉通知会把
@@ -609,6 +619,7 @@ impl Default for Gallery {
             seg: "seg:grid",
             checked: [true, false, false],
             radio: 0,
+            glass: crate::app::glass::Glass::default(),
             switch_on: true,
             notify_on: false,
             volume: 0.62,
@@ -677,7 +688,17 @@ impl Gallery {
     }
 
     /// 应用一次 click（按下与抬起落在同一 key 上）。
-    fn click(&mut self, key: &str) {
+    ///
+    /// # 为什么是 `pub`
+    ///
+    /// 玻璃参数的分派是**运行期字符串解析**（剥 `glass-` 前缀 → 找
+    /// `Param::slug()` → 看 `:dec` / `:inc` 后缀），编译器看不出「面板发的
+    /// key 与解析器认识的 key 对不上」。门禁 `glass_param_keys_all_wired` 要
+    /// **真的点一遍**才能证明接线，所以这里必须开。
+    ///
+    /// 门禁**不能**自己复刻一份分派逻辑再验它 —— 那样验的是门禁自己，
+    /// 面板可以照样点不动。
+    pub fn click(&mut self, key: &str) {
         // ---- 1) 导航（查表，不是 match 列举）----
         //
         // 首页的分类入口与左侧导航栏发的是**同一个 key**（路由 id），所以这一条
@@ -735,8 +756,6 @@ impl Gallery {
             "combo:material" => self.combo = (self.combo + 1) % COMBO_OPTIONS.len(),
             "spin:up" => self.spin = (self.spin + 1).min(100),
             "spin:down" => self.spin = (self.spin - 1).max(0),
-            // RoundButton 演示：两枚都是「点一下换选中态」，但各自独立 ——
-            // 共用一个字段的话，第二枚永远点不动（点了会跟着第一枚一起翻）。
             "round-a" => self.round_on = !self.round_on,
             "round-b" => self.round_on = !self.round_on,
             "dd:demo" => self.dd_open = !self.dd_open,
@@ -764,7 +783,37 @@ impl Gallery {
             // 同理：滑条、表格、Tooltip 都是**展示型**控件，点了不改状态。
             // 那不是漏接，是 core 还没有把它们做成输入设备 —— 已记账在
             // `docs/dev-log/README.md`。别在这里给它们编造一个假动作。
-            _ => {}
+            //
+            // ---- 玻璃参数步进 ----
+            //
+            // key 形如 `glass-thickness:dec`。解析方式是「剥前缀 → 找后缀」，
+            // 而不是四段 `match` —— 加第五个参数时只改 [`Param::ALL`]，
+            // 而漏改这里的话面板会显示却点不动（门禁 `glass_param_keys_all_wired`
+            // 钉住这一点）。
+            //
+            // ⚠ 边界上的 no-op **刻意不产生任何状态变化**：那样「已达上限」与
+            // 「点击没接线」在画面上无法区分。`Glass::nudge` 返回是否真的动了，
+            // 这里忽略它 —— 我们只关心 `glass` 自身变没变。
+            //
+            // ⚠ 这个 `_ =>` 必须待在 `match` 的**最后**：写在中间会把后面所有分支
+            // 变成「不可达」，而 clippy 只报 warning 不报错 —— 症状是圆角按钮、
+            // 下拉、菜单栏全部静默失效。踩过一次。
+            _ => {
+                if let Some(rest) = key.strip_prefix("glass-") {
+                    for param in crate::app::glass::Param::ALL {
+                        let Some(tail) = rest.strip_prefix(param.slug()) else {
+                            continue;
+                        };
+                        let delta = match tail {
+                            ":dec" => -1,
+                            ":inc" => 1,
+                            _ => continue,
+                        };
+                        self.glass.nudge(param, delta);
+                        break;
+                    }
+                }
+            }
         }
     }
 }

@@ -57,3 +57,14 @@
   事前 `D3D12_CREATE_DEVICE_DEBUG`：访问违例。保持显式开启的开关，不依赖它。
 
 - **`docs/win/03-*.md` 缺号。** 原 `win/` 目录本来就是这个状态，没有漏搬。
+
+- **`cargo doc --no-deps --workspace` 在 `zephyra-style` 上红。** `anim.rs` 里两处
+  `[`curve`]` 链接解析不到（该类型在 `anim` 模块内部，路径写法不对），于是整个
+  crate 文档生成失败。**HEAD 上已存在**（用 `git stash` 对照验证过），本轮未碰
+  该 crate。修法是给那两条链接换成正确路径 —— 属于独立的一轮，不塞进别的工作里。
+
+- **`cargo clippy --workspace` 在 `zephyra-vulkan` 上红。** 12 处：未用导入、
+  未用变量、不可达分支，分布在 `host.rs` / `renderer.rs` / `surface.rs`。
+  **HEAD 上已存在**（同法验证），本轮未碰该 crate。这与上面一条一起构成
+  「`--workspace` 的两条门禁目前都不干净」，所以在修掉之前，验收时按
+  **逐 crate** 判而不是按 `--workspace` 判。

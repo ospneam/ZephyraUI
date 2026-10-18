@@ -31,10 +31,17 @@ Container.titlebar.mica {
     background: @surface_alt_translucent;
 }
 
-Text.app-title {
-    text-size: 14px;
-    text-color: @content_secondary;
-}
+/* ⚠ 这里**没有** `Text.app-title` / `Text.page-title` 两条规则。
+ *
+ * 源码发的是 `text_label("app-title", ..., "text-body-strong")` —— 「分类名」是
+ * 第三参数 `"text-body-strong"`，`"app-title"` 只是 **key**（给 hit-test 用的
+ * 身份），core 不会把它当分类名发出去。于是写成 `Text.app-title` 的规则一个
+ * 元素都选不中，标题栏标题实际由控件层的 `Text.text-body-strong` 上色。
+ *
+ * 两条死规则里 `Text.page-title` 的值（22px / @content）与 `Text.text-title`
+ * **逐项相同**，所以删掉它连取值都不变；`Text.app-title`（14px / 二次色）与
+ * 实际生效的 `text-body-strong`（15px / 主色）不同，但那条规则从来没生效过，
+ * 删掉同样不改变画面。判据见门禁 `every_stylesheet_rule_matches_something`。 */
 
 Container.search {
     direction: horizontal;
@@ -136,11 +143,6 @@ Container.header-title {
     spacing: 14px;
 }
 
-Text.page-title {
-    text-size: 22px;
-    text-color: @content;
-}
-
 Container.header-tools {
     direction: horizontal;
     cross-align: center;
@@ -157,12 +159,6 @@ Container.section {
 Container.section-body {
     direction: vertical;
     spacing: 14px;
-}
-
-Container.row {
-    direction: horizontal;
-    spacing: 14px;
-    cross-align: center;
 }
 
 Container.stack {

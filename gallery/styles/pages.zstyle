@@ -30,12 +30,6 @@ Container.section-body {
     spacing: 12px;
 }
 
-Container.row {
-    direction: horizontal;
-    spacing: 12px;
-    cross-align: center;
-}
-
 Container.stack {
     direction: vertical;
     spacing: 8px;
@@ -219,24 +213,63 @@ Container.glass-pane {
     border-width: 1px;
 }
 
-/* 三档。参数顺序是 `refraction(厚度, 倒角带宽, 色散, 折射率)`。
+/* ⚠ 这里**没有** `filter:`。
  *
- * 三个参数的关系（不是相互独立的三个强度）：
+ * 折射参数（厚度 / 倒角带宽 / 色散 / 折射率）由 `pages::effects.rs` 逐帧从
+ * `Gallery::glass` 算出来并直接写在 `props::FILTER` 上，参数面板的 `[−] [+]` 改的就是它。
+ * 写在样式表里的后果不是「多一份默认值」，而是**参数被钉死成三档** ——
+ * 而这一页的职责恰恰是让人调它们。
  *
- * - **厚度** 越大→ 弯曲越多。它是光学量，不是「位移多少像素」。
- * - **倒角带宽** 越宽→ 只有越靠边的那一圈在弯，中间越直。
- * - **折射率** 越大→ 光线偏转越少，玻璃越「硬」。1.5 = 普通冠牌玻璃。
+ * 为什么 `FILTER` 不受「外观不进源码」那条规矩：它的四个参数是**物理量**
+ * （玻璃有多厚、折射率多少），不是**样式**（颜色、间距、圆角）—— 没有
+ * `@令牌` 对应物，也不随主题变化。见 `gallery::glass::Glass::filter` 的文档。
  *
- * 因此三档变的不只是「弯曲强弱」，还有「弯的**区域**」和「玻璃的**材质**」。
- * 这才是 iOS 26 那种「边缘一圈弯、中间透亮」的感觉。 */
-Container.glass-pane.weak {
-    filter: refraction(14px, 18px, 0.08, 1.45);
+ * 这条规则只管**静态**外观：半透明的玻璃体、圆角、描边。 */
+
+/* ---- 折射参数面板 ---- */
+
+/* 四个步进器并排。而不是四行 ——
+ *
+ * 内容卡（`shell::CONTENT_H` 756）减去页头与标题只剩 400 出头，而舞台本身
+ * 就占 255。参数面板只能占一行。而一行四组在 1139 宽下绕结够用（每组约
+ * 260），竖排则要 160px，把舞台抹出客户区。
+ *
+ * ⚠ core 没有折行，所以「一行放不下」不是「自动换到下一行」，
+ * 而是**溢出被裁掉**。病状是右侧一组不见了，且不报错。 */
+Container.glass-params {
+    direction: horizontal;
+    spacing: 20px;
+    cross-align: center;
 }
 
-Container.glass-pane.medium {
-    filter: refraction(28px, 26px, 0.22, 1.5);
+Container.glass-param {
+    direction: horizontal;
+    spacing: 8px;
+    cross-align: center;
 }
 
-Container.glass-pane.strong {
-    filter: refraction(48px, 34px, 0.40, 1.62);
+Text.glass-param-label {
+    text-size: 13px;
+    text-color: @content_secondary;
 }
+
+/* 数值给固定宽度：不给的话一位数→两位数时右侧的 `[+]` 会左右挪，
+ * 而「按钮在动」很容易被误读成「点它有效」。 */
+Text.glass-param-value {
+    text-size: 14px;
+    text-color: @content;
+    width: 44px;
+}
+
+/* ⚠ 这里**没有**步进按钮的尺寸覆写，走控件层 `.round` 的默认 44px 见方。
+ *
+ * 曾经写过 `Control.button.round { width: 28px; height: 28px; }` —— 它一个元素
+ * 都选不中：`controls::round_button` 发的是 `NodeTag::Control` + 分类名 `round`，
+ * **没有** `button` 这个分类名（那是别的控件用的）。尺寸纹丝不动，而
+ * 「分类名存在」「元素有分类名」那两条门禁全绿 —— 这正是新门禁
+ * `every_stylesheet_rule_matches_something` 要抓的形状。
+ *
+ * 保留 44px 而不是改成 28px：本仓的触控尺寸判据（`Gallery::touch_target`）就落在
+ * 44~48 这一档，参数面板是给人**点**的控件，不是给人看的装饰。实测（1400×800
+ * 画布）一行四组共 684px，落在内容卡的 732px 里，压到 28px 省下的 128px 没有
+ * 别的用途。 */
