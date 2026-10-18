@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use ash::vk;
 use winit::application::ApplicationHandler;
-use winit::event_loop::{ActiveEventLoop, EventLoop};
+use winit::event_loop::ActiveEventLoop;
 use winit::window::{Window, WindowId};
 
 use zephyra_core::context::Context;
@@ -172,7 +172,7 @@ impl<V: View> HostWindow<V> {
 
     /// 图像纹理表。
     pub fn textures(&self) -> &crate::renderer::TextureTable {
-        &self.renderer.textures()
+        self.renderer.textures()
     }
 
     /// 注册 / 重传一张图像纹理。
@@ -344,58 +344,17 @@ impl<V: View> HostWindow<V> {
                         .build(),
                 )
                 .ok();
-            self.gpu.device.cmd_begin_render_pass(
-                self.cmd,
-                &vk::RenderPassBeginInfo::builder()
-                    .render_pass(self.renderer.msaa_render_pass)
-                    .framebuffer(fb)
-                    .render_area(vk::Rect2D {
-                        offset: vk::Offset2D { x: 0, y: 0 },
-                        extent: vk::Extent2D {
-                            width: self.gpu.extent.0,
-                            height: self.gpu.extent.1,
-                        },
-                    })
-                    .clear_values(&[vk::ClearValue {
-                        color: vk::ClearColorValue {
-                            float32: [0.0, 0.0, 0.0, 0.0],
-                        },
-                    }])
-                    .build(),
-                vk::SubpassContents::INLINE,
-            );
-            self.gpu.device.cmd_set_viewport(
-                self.cmd,
-                0,
-                &[vk::Viewport {
-                    x: 0.0,
-                    y: 0.0,
-                    width: self.gpu.extent.0 as f32,
-                    height: self.gpu.extent.1 as f32,
-                    min_depth: 0.0,
-                    max_depth: 1.0,
-                }],
-            );
-            self.gpu.device.cmd_set_scissor(
-                self.cmd,
-                0,
-                &[vk::Rect2D {
-                    offset: vk::Offset2D { x: 0, y: 0 },
-                    extent: vk::Extent2D {
-                        width: self.gpu.extent.0,
-                        height: self.gpu.extent.1,
-                    },
-                }],
-            );
             // ⚠ 绘制命令必须**在渲染通道内**录制 —— 这是本次重构的核心：
             // frame() 只做顶点展开与上传（prepare），真正的绘制在这里录。
-            let unimplemented = self
-                .renderer
-                .record_draws(self.cmd, zephyra_core::filter::BlendMode::SrcOver);
+            let unimplemented = self.renderer.record_frame(
+                &self.gpu,
+                self.cmd,
+                fb,
+                zephyra_core::filter::BlendMode::SrcOver,
+            );
             if trace_enabled() && unimplemented > 0 {
                 eprintln!("[trace] 退回默认混合 {unimplemented} 段");
             }
-            self.gpu.device.cmd_end_render_pass(self.cmd);
             self.gpu.device.end_command_buffer(self.cmd).ok();
         }
         let _ = self
@@ -646,7 +605,11 @@ impl<V: View> ApplicationHandler for HostWindow<V> {
                         self.gpu.device.destroy_image_view(v, None);
                     }
                 }
-                self.gpu.resize(&self.window);
+                // ⚠ resize 失败必须显式处理：静默忽略的症状是「窗口拉大后画面
+                // 停在旧尺寸」，而那与「布局算错了」无法区分。
+                if let Err(e) = self.gpu.resize(&self.window) {
+                    eprintln!("[zephyra] resize 失败：{e}");
+                }
                 self.dirty = true;
             }
             WindowEvent::ScaleFactorChanged { .. } => {
@@ -668,10 +631,8 @@ impl<V: View> ApplicationHandler for HostWindow<V> {
                         self.dirty = true;
                     }
                 }
-                ElementState::Released => {
-                    if self.on_pointer_up() {
-                        self.dirty = true;
-                    }
+                ElementState::Released if self.on_pointer_up() => {
+                    self.dirty = true;
                 }
                 _ => {}
             },

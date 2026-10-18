@@ -13,8 +13,11 @@
 //! 实测（2026-10，WSL2 Ubuntu 24.04 + WSLg）：
 //!   - Wayland surface 可用（winit 默认走 Wayland，`libxkbcommon.so.0` 系统自带）；
 //!   - X11 surface 需要 `libxkbcommon-x11.so.0`，系统没有、装它要 sudo（无免密 sudo）。
-//! 所以本 crate 走 **Wayland surface** —— 这是 WSLg 的原生合成路径，少一层
-//! XWayland 转译，对「输出 1:1」这件事少一处缩放/色彩分叉点。
+//!
+//! 结论：走 **Wayland surface**（WSLg 的原生合成路径）。
+//!
+//! 对「输出 1:1」这件事它少两处分叉：少一处缩放（XWayland 下交换链尺寸由
+//! 它协商，Wayland 下由本进程给）、少一处色彩分叉（合成器不再插入色彩管理）。
 //!
 //! # Wayland 特有的两个坑
 //!
@@ -26,8 +29,6 @@ use std::fmt;
 
 use ash::vk;
 use winit::window::Window;
-
-use zephyra_fx::pixels::{ChannelOrder, PixelRead};
 
 /// 渲染失败。**不带**平台错误码回码 —— 回码属于 `docs/dev-log/`。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -69,8 +70,12 @@ pub struct Gpu {
     pub(crate) device: ash::Device,
     pub(crate) queue: vk::Queue,
     pub(crate) physical: vk::PhysicalDevice,
+    /// 只为持有所有权（loader 对象必须活到 Instance/Device 之后）。
+    #[allow(dead_code, reason = "只为持有所有权")]
     pub(crate) queue_family: u32,
     pub(crate) khr_surface: ash::extensions::khr::Surface,
+    /// 只为持有所有权：surface 的销毁要经它，Instance 销毁之前不能 drop。
+    #[allow(dead_code, reason = "只为持有所有权")]
     pub(crate) khr_wayland: ash::extensions::khr::WaylandSurface,
     pub(crate) khr_swapchain: ash::extensions::khr::Swapchain,
     pub(crate) surface: vk::SurfaceKHR,
@@ -570,11 +575,6 @@ impl Gpu {
             self.device.free_memory(bmem, None);
         }
         Ok(data)
-    }
-
-    /// 命令池（读回等一次性命令用）。
-    pub(crate) fn command_pool(&self) -> vk::CommandPool {
-        self.command_pool
     }
 }
 
