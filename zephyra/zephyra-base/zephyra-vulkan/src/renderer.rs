@@ -222,6 +222,17 @@ struct Rt {
     size: (u32, u32),
 }
 
+/// 一次离屏内容趟的 RT 上下文（PS 变体要采样目标时用）。
+#[derive(Debug, Clone, Copy)]
+struct RtCtx {
+    /// RT 的图像（拷贝**源**）。
+    image: vk::Image,
+    /// RT 的像素尺寸（拷贝区域）。
+    size: (u32, u32),
+    /// RT 左上角在**屏幕**坐标里的位置（拷贝**目标偏移**）。
+    origin: (i32, i32),
+}
+
 /// 一次 `draw_indexed` 的全部参数（prepare 阶段就把索引算成绝对值）。
 ///
 /// # 为什么索引在这里定死、而不是录制时按 `first_vertex` 推
@@ -1019,13 +1030,13 @@ impl Renderer {
             let segments = std::mem::take(&mut self.segments);
             for seg in &segments {
                 if let SegmentPlan::Plain { draws } = seg {
-                    // 单采样直接画进交换链图，没有 MSAA 也就没有「目标副本」，
-                    // PS 变体在此退化为默认混合（由 record_draws 内部计数）。
+                    // 单采样直接画进交换链图：没有 MSAA 可 resolve，PS 变体在此
+                    // 退化为默认混合（由 record_draws 内部计数）。
                     self.record_draws(
                         gpu,
                         cmd,
                         framebuffer,
-                        false,
+                        None,
                         draws,
                         default_blend,
                         &mut unimplemented,
@@ -1074,7 +1085,7 @@ impl Renderer {
                         gpu,
                         cmd,
                         framebuffer,
-                        true,
+                        None,
                         draws,
                         default_blend,
                         &mut unimplemented,
@@ -1255,7 +1266,6 @@ impl Renderer {
             // RT 建不出来（显存不够）：整段跳过，症状与「滤镜不可用」一致。
             return;
         };
-        let _ = rt_a_img;
         // ── 1) 把这条命令自身画进 rt_a ──
         //
         // ⚠ 不是「把整屏 resolve 进 RT」。RT 装的是**被模糊的那个东西**：这条命令
@@ -1265,11 +1275,20 @@ impl Renderer {
         // **整条消失**（Linux 少画两张深蓝卡片、Windows 画出来了，就是这么来的）。
         self.begin_rt_pass(cmd, fb_a);
         let mut rt_unimplemented = 0u32;
+        // PS 变体在 RT 通道里也要能采样目标：那张 RT 本身就是目标，所以把它的
+        // 内容按**屏幕坐标**拷进 `dst_rt`（见 `snapshot_rt` 的文档）。
+        // `pass.origin` 是 RT 左上角的屏幕坐标（浮点）—— 拷贝偏移取整，误差
+        // 最多 1px，而那正是 PS 变体「目标像素对不齐」的容差下限。
+        let rt_ctx = RtCtx {
+            image: rt_a_img,
+            size: self.rt_a.as_ref().map_or((1, 1), |r| r.size),
+            origin: (pass.origin.0 as i32, pass.origin.1 as i32),
+        };
         self.record_draws(
             gpu,
             cmd,
             fb_a,
-            false,
+            Some(rt_ctx),
             content,
             default_blend,
             &mut rt_unimplemented,
@@ -1448,18 +1467,21 @@ impl Renderer {
     /// 索引偏移在 `prepare` 阶段就算成了全帧绝对值（见 [`expand_plain`]），所以
     /// 这里不再做任何坐标换算 ——「录制时才知道索引从哪来」正是上一版把画面弄坏的
     /// 原因（见 `expand_plain` 的文档）。
-    /// 录制一批 draw。`in_main_pass` 为真时表示当前正在主通道里 ——
-    /// PS 变体要在这里结束/重开通道来腾出「目标可采样」的窗口。
+    /// 录制一批 draw。
+    ///
+    /// `rt` 为 `Some` 表示当前在**离屏 RT 通道**里（那张 RT 就是 PS 变体的目标）；
+    /// `None` 表示在主通道里。PS 变体要在这里结束/重开通道来腾出「目标可采样」
+    /// 的窗口 —— 两条通道的快照方式不同（resolve vs copy），所以分开处理。
     #[allow(
         clippy::too_many_arguments,
-        reason = "gpu/cmd/framebuffer/in_main_pass 是录制环境，draws 与混合是内容"
+        reason = "gpu/cmd/framebuffer/rt 是录制环境，draws 与混合是内容"
     )]
     fn record_draws(
         &mut self,
         gpu: &Gpu,
         cmd: vk::CommandBuffer,
         framebuffer: vk::Framebuffer,
-        in_main_pass: bool,
+        rt: Option<RtCtx>,
         draws: &[DrawCall],
         default_blend: BlendMode,
         unimplemented: &mut u32,
@@ -1495,33 +1517,40 @@ impl Renderer {
         }
         for (tex_view, pipeline, index_start, index_count) in resolved {
             let is_ps = matches!(pipeline, DrawPipeline::Ps(_));
-            // PS 变体在 RT 通道里没有「目标副本」可言（那张 RT 本身就是目标），
-            // 退回默认混合并计数 —— 与其它「不可用」的语义一致。
+            // 目标此刻是附件 —— 必须先结束通道、拷出副本、再重开。
+            // 两条通道的快照方式不同：主通道 resolve MSAA，RT 通道 copy RT 内容
+            // （按屏幕坐标摆，见 `snapshot_rt` 的文档）。
             let dst = if is_ps {
-                // RT 通道里没有「目标副本」可言（那张 RT 本身就是目标），
-                // 退回并计数 —— 与其它「不可用」的既有语义一致。
-                if !in_main_pass {
-                    *unimplemented += 1;
-                    continue;
-                }
                 self.ensure_dst_rt(gpu, self.size);
                 self.dst_rt.as_ref().map(|rt| (rt.image, rt.view, rt.size))
             } else {
                 None
             };
-            if let Some((img, _view, sz)) = dst {
-                // 目标此刻是附件 —— 必须先结束通道、resolve 出副本、再重开。
+            if is_ps {
                 unsafe {
                     self.device.cmd_end_render_pass(cmd);
                 }
-                let rt = Rt {
-                    image: img,
-                    view: vk::ImageView::null(),
-                    memory: vk::DeviceMemory::null(),
-                    size: sz,
-                };
-                self.snapshot_dst(cmd, &rt);
-                self.begin_main_pass(cmd, framebuffer, false);
+                match rt {
+                    Some(rt_ctx) => self.snapshot_rt(cmd, &rt_ctx),
+                    None => {
+                        let (img, _view, sz) = dst.unwrap();
+                        self.snapshot_dst(
+                            cmd,
+                            &Rt {
+                                image: img,
+                                view: vk::ImageView::null(),
+                                memory: vk::DeviceMemory::null(),
+                                size: sz,
+                            },
+                        );
+                    }
+                }
+                // 按所在通道重开：主通道是 MSAA+resolve，RT 通道是单采样。
+                if rt.is_some() {
+                    self.begin_rt_pass(cmd, framebuffer);
+                } else {
+                    self.begin_main_pass(cmd, framebuffer, false);
+                }
             }
             let desc_set = match self.update_descriptor(tex_view) {
                 Ok(s) => s,
@@ -1716,6 +1745,92 @@ impl Renderer {
             vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
             vk::AccessFlags::SHADER_READ,
             vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+            vk::PipelineStageFlags::FRAGMENT_SHADER,
+        );
+    }
+
+    /// 把 RT 内容按**屏幕坐标**拷进目标副本 RT。
+    ///
+    /// # 为什么是 copy 而不是 resolve
+    ///
+    /// 两者都是单采样普通图，没有 MSAA 可解析 —— 走 `cmd_copy_image`。
+    ///
+    /// # 为什么必须按屏幕坐标摆
+    ///
+    /// PS 变体的 `blend_with_dst` 用 `dst_uv(i)` 采样，而那是**屏幕坐标**映射到
+    /// 0..1。可 RT 内容存在 RT 自己的坐标系里（已按 `translate` 平移过）。不把
+    /// RT 内容挪回屏幕坐标，采样就会整体错位一整个 RT 原点 —— 症状是「混合结果
+    /// 与源图对不上位置」，而画面依然合法、不报错。
+    fn snapshot_rt(&self, cmd: vk::CommandBuffer, src: &RtCtx) {
+        let Some(dst) = self.dst_rt.as_ref() else {
+            return;
+        };
+        let (rw, rh) = (src.size.0, src.size.1);
+        let (ox, oy) = src.origin;
+        self.image_barrier(
+            cmd,
+            src.image,
+            vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+            vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+            vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
+            vk::AccessFlags::TRANSFER_READ,
+            vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+            vk::PipelineStageFlags::TRANSFER,
+        );
+        // 整块覆盖，所以 old = UNDEFINED（「旧内容不必等」），不必追踪 dst 的布局。
+        self.image_barrier(
+            cmd,
+            dst.image,
+            vk::ImageLayout::UNDEFINED,
+            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+            vk::AccessFlags::empty(),
+            vk::AccessFlags::TRANSFER_WRITE,
+            vk::PipelineStageFlags::TOP_OF_PIPE,
+            vk::PipelineStageFlags::TRANSFER,
+        );
+        let copies = [vk::ImageCopy::builder()
+            .src_subresource(
+                vk::ImageSubresourceLayers::builder()
+                    .aspect_mask(vk::ImageAspectFlags::COLOR)
+                    .mip_level(0)
+                    .base_array_layer(0)
+                    .layer_count(1)
+                    .build(),
+            )
+            .src_offset(vk::Offset3D { x: 0, y: 0, z: 0 })
+            .dst_subresource(
+                vk::ImageSubresourceLayers::builder()
+                    .aspect_mask(vk::ImageAspectFlags::COLOR)
+                    .mip_level(0)
+                    .base_array_layer(0)
+                    .layer_count(1)
+                    .build(),
+            )
+            .dst_offset(vk::Offset3D { x: ox, y: oy, z: 0 })
+            .extent(vk::Extent3D {
+                width: rw,
+                height: rh,
+                depth: 1,
+            })
+            .build()];
+        unsafe {
+            self.device.cmd_copy_image(
+                cmd,
+                src.image,
+                vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                dst.image,
+                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                &copies,
+            );
+        }
+        self.image_barrier(
+            cmd,
+            dst.image,
+            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+            vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            vk::AccessFlags::TRANSFER_WRITE,
+            vk::AccessFlags::SHADER_READ,
+            vk::PipelineStageFlags::TRANSFER,
             vk::PipelineStageFlags::FRAGMENT_SHADER,
         );
     }
