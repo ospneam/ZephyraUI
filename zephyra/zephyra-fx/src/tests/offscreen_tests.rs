@@ -424,7 +424,9 @@ fn refraction_outsets_by_strength_in_pixels() {
     for s in [1.0f32, 8.0, 24.0] {
         let f = FilterChain::single(Filter::Refraction {
             strength: s,
+            bezel: 20.0,
             dispersion: 0.0,
+            ior: 1.5,
         });
         let b = f.bounds_for(content);
         assert_eq!(
@@ -445,7 +447,9 @@ fn refraction_degenerate_strength_does_not_shrink_bounds() {
     for bad in [-1.0f32, f32::NAN, f32::INFINITY] {
         let f = FilterChain::single(Filter::Refraction {
             strength: bad,
+            bezel: 20.0,
             dispersion: 0.0,
+            ior: 1.5,
         });
         let b = f.bounds_for(content);
         assert_eq!(
@@ -462,7 +466,9 @@ fn refraction_degenerate_strength_does_not_shrink_bounds() {
 fn zero_refraction_is_identity() {
     let f = FilterChain::single(Filter::Refraction {
         strength: 0.0,
+        bezel: 20.0,
         dispersion: 0.0,
+        ior: 1.5,
     });
     assert!(f.is_identity());
     let content = Rect::new(0.0, 0.0, 10.0, 10.0);
@@ -480,7 +486,9 @@ fn zero_refraction_is_identity() {
 fn dispersion_alone_is_still_an_effect() {
     let f = FilterChain::single(Filter::Refraction {
         strength: 0.0,
+        bezel: 20.0,
         dispersion: 0.5,
+        ior: 1.5,
     });
     assert!(!f.is_identity(), "只有色散时仍需离屏");
 }
@@ -494,7 +502,9 @@ fn dispersion_alone_is_still_an_effect() {
 fn refraction_forces_redraw_of_the_original() {
     let f = FilterChain::single(Filter::Refraction {
         strength: 12.0,
+        bezel: 20.0,
         dispersion: 0.0,
+        ior: 1.5,
     });
     let pass = plan_pass(&quad(
         f,
@@ -540,7 +550,9 @@ fn refraction_is_not_a_blur_step() {
         },
         Filter::Refraction {
             strength: 10.0,
+            bezel: 20.0,
             dispersion: 0.2,
+            ior: 1.5,
         },
     ]);
     let pass = plan_pass(&quad(
@@ -560,11 +572,15 @@ fn later_refraction_overrides_earlier_one() {
     let f = FilterChain::new([
         Filter::Refraction {
             strength: 4.0,
+            bezel: 20.0,
             dispersion: 0.1,
+            ior: 1.5,
         },
         Filter::Refraction {
             strength: 20.0,
+            bezel: 20.0,
             dispersion: 0.9,
+            ior: 1.5,
         },
     ]);
     let pass = plan_pass(&quad(
@@ -578,35 +594,82 @@ fn later_refraction_overrides_earlier_one() {
     assert_eq!(r.dispersion, 0.9);
 }
 
-/// 折射四边形的 SDF 几何必须是**元素**的，不是 RT 的。
+/// 折射四边形的几何（`position` / `local` / `half_size`）必须覆盖**同一块区域**，
+/// 而那块区域必须是**元素**，不是离屏 RT。
 ///
-/// ⚠ 这条是折射唯一容易整段搞错的地方：`local` / `half_size` 若填了 RT 的
-/// 尺寸，SDF 仍然"有形状"（于是画面仍然有折射效果），只是边缘高光整体偏移。
-/// 那类错肉眼极难察觉，所以直接断言顶点里的半宽半高。
+/// # 这条门禁在本轮之前抓不到的那类错
+///
+/// 旧签名同时收「离屏范围」与「元素在 RT 里的子矩形」，而 `position` 铺前者、
+/// `local` 铺后者。两者不一致时，四边形越出元素的那一圈里 `local` 仍落在
+/// `[0, ew]` 内，于是 SDF 判成「在元素内部」、`mask` 恰好是 1 ——
+///
+/// **结果是整幅画面都被当成玻璃。而那正是折射本该有的样子，所以没人会当它是坏的。**
+///
+/// 真正露出病状的地方只有一处：位移在玻璃**外面**也照跑，于是玻璃外的画面被
+/// 撕裂。本条用「四边形的 NDC 范围必须等于元素的 NDC 范围」把它钉住。
+///
+/// 同一条断言也顺带钉住 `half_size` —— 它若填了 RT 的尺寸，SDF 仍有形状，
+/// 只是高光整体偏移，而那类错肉眼同样极难察觉。
 #[test]
-fn refraction_quad_carries_element_geometry_not_rt_size() {
+fn refraction_quad_geometry_covers_the_element_exactly() {
     let element = Rect::new(10.0, 20.0, 120.0, 80.0);
+    let (sw, sh) = (1400.0_f32, 800.0_f32);
     let q = crate::offscreen::refraction_composite_quad(
-        Rect::new(0.0, 0.0, 140.0, 120.0), // 屏幕上的 RT bounds
-        (1400.0, 800.0),                   // 屏幕尺寸
         element,
+        (sw, sh),
         12.0,
         crate::offscreen::Refraction {
             strength: 16.0,
+            bezel: 20.0,
             dispersion: 0.3,
+            ior: 1.5,
         },
     );
+
     // `half_size` 是元素的半宽半高，四顶点同值（`nointerpolation`）。
     for v in &q {
         assert_eq!(v.half_size, [60.0, 40.0], "half_size 应是元素半宽半高");
-        assert_eq!(v.corner, [12.0, 16.0], "corner 应是（半径, 强度）");
-        assert_eq!(v.color[0], 0.3, "color.r 应携带色散量");
+        assert_eq!(v.corner, [12.0, 16.0], "corner 应是（半径, 厚度）");
+        assert_eq!(
+            [v.color[0], v.color[1], v.color[2]],
+            [0.3, 20.0, 1.5],
+            "color 应携带（色散, 倒角带宽, 折射率）"
+        );
         assert!((v.uv[0] - v.local[0] / 120.0).abs() < 1e-6);
         assert!((v.uv[1] - v.local[1] / 80.0).abs() < 1e-6);
     }
+
     // `local` 铺满元素：首尾角分别落在元素的两端。
     assert_eq!(q[0].local, [0.0, 0.0]);
     assert_eq!(q[2].local, [120.0, 80.0]);
+
+    // ⚠ 关键断言：`position` 也必须正好是元素。
+    let ndc_x = |x: f32| x / sw * 2.0 - 1.0;
+    let ndc_y = |y: f32| 1.0 - y / sh * 2.0;
+    let expect_x = [ndc_x(10.0), ndc_x(130.0)];
+    let expect_y = [ndc_y(20.0), ndc_y(100.0)];
+    for v in &q {
+        assert!(
+            (expect_x[0]..=expect_x[1]).contains(&v.position[0]),
+            "position.x = {} 落在元素之外 [{:.4}, {:.4}] —— \
+             四边形越出元素时 SDF 仍判成内部，整幅画面会变成玻璃",
+            v.position[0],
+            expect_x[0],
+            expect_x[1]
+        );
+        assert!(
+            (expect_y[1]..=expect_y[0]).contains(&v.position[1]),
+            "position.y = {} 落在元素之外 [{:.4}, {:.4}]（注意 y 在 NDC 里是反的）",
+            v.position[1],
+            expect_y[1],
+            expect_y[0]
+        );
+    }
+    // 四角分别落在元素的四个角上。
+    assert!((q[0].position[0] - expect_x[0]).abs() < 1e-5);
+    assert!((q[2].position[0] - expect_x[1]).abs() < 1e-5);
+    assert!((q[0].position[1] - expect_y[0]).abs() < 1e-5);
+    assert!((q[2].position[1] - expect_y[1]).abs() < 1e-5);
 }
 
 /// 文本命令的离屏范围是**所有字形的并集**，不是第一个字形。

@@ -1251,3 +1251,469 @@ fn offscreen_result_is_ordered_above_lower_primitives_on_d3d12() {
         "更上层(Popup)的红应当盖住离屏白条，实得 {p:?} —— 离屏结果被画到了末尾"
     );
 }
+
+// ------------------------------------------------------- 折射（E4.5）真 GPU 门禁
+
+/// 造「一张细条纹 + 一块盖在它上面的玻璃」。
+///
+/// # 为什么背景是**条纹**而不是「一道硬边」
+///
+/// 第一版用的是左右各半的黑白硬边，判据恒不成立 —— 原因值得记下来：
+///
+/// 折射的位移在深度上是 `t → 0`（紧贴元素边缘）时最大、到倒角带中段就衰减到
+/// 零点几个像素（`height = (1 - (1-t)^4)^0.25` 的导数在 `t=0` 处发散，之后
+/// 迅速变小）。而**纯色背景对任何位移都不敏感**：把纯黑往左挪 1 像素，
+/// 采样点仍在纯黑区，画面逐像素相同。
+///
+/// 一道硬边也不行：硬边所在的位置若不在「位移恰好能跨过去」的范围内，
+/// 同样没有差异 —— 而玻璃内哪些点跨得过去，取决于几何，不是测试想控制的量。
+///
+/// 条纹把这个问题消掉了：周期 8px 的黑白相间对**任何** 1 像素以上的位移都
+/// 敏感 —— 位移会把条纹的相位整体挪动，于是整条边缘带上的像素都会变色。
+/// 而且它问的还是同一个问题（「背景有没有被重新采样」），只是用了一个
+/// 对位移敏感的图案。
+fn stripes_glass(ior: f32, thickness: f32, bezel: f32) -> DisplayList {
+    let mut l = DisplayList::new();
+    for (x, w, c) in stripe_bands() {
+        l.push(
+            zephyra_core::paint::SortKey {
+                layer: zephyra_core::paint::Layer::Background,
+                z: 0,
+                order: 0,
+            },
+            Command::Quad {
+                rect: zephyra_core::core::Rect::new(x, 0.0, w, SIZE as f32),
+                radius: zephyra_core::core::CornerRadius { radius: 0.0 },
+                fill: c,
+                stroke: None,
+                filter: zephyra_core::filter::FilterChain::none(),
+                blend: zephyra_core::filter::BlendMode::default(),
+            },
+        );
+    }
+    l.push(
+        zephyra_core::paint::SortKey {
+            layer: zephyra_core::paint::Layer::Content,
+            z: 0,
+            order: 1,
+        },
+        Command::Quad {
+            rect: zephyra_core::core::Rect::new(
+                SIZE as f32 * 0.25,
+                SIZE as f32 * 0.25,
+                SIZE as f32 * 0.5,
+                SIZE as f32 * 0.5,
+            ),
+            radius: zephyra_core::core::CornerRadius { radius: 12.0 },
+            fill: Color::rgba(1.0, 1.0, 1.0, 0.0),
+            stroke: None,
+            filter: zephyra_core::filter::FilterChain::single(
+                zephyra_core::filter::Filter::Refraction {
+                    strength: thickness,
+                    bezel,
+                    // 色散关掉：它把 R / B 分开偏移，会让「像素变了」这条判据
+                    // 失去单值性。色散另有一条判据（见下面的说明）。
+                    dispersion: 0.0,
+                    ior,
+                },
+            ),
+            blend: zephyra_core::filter::BlendMode::default(),
+        },
+    );
+    l.sort();
+    l
+}
+
+/// 8px 周期的黑白竖条。
+///
+/// ⚠ 周期必须与位移量级**可比**：周期 32 时 1px 的位移只让 1/32 的像素变色，
+/// 落在抗锯齿噪声里；周期 8 时同样 1px 会让 1/8 的像素变色，稳稳超出噪声。
+/// 玻璃宽 128 → 16 个周期，取样点足够多，统计量稳定。
+fn stripe_bands() -> Vec<(f32, f32, Color)> {
+    const PERIOD: f32 = 8.0;
+    let n = (SIZE as f32 / PERIOD) as usize;
+    (0..n)
+        .map(|i| {
+            (
+                i as f32 * PERIOD,
+                PERIOD,
+                if i % 2 == 0 {
+                    Color::rgba(0.0, 0.0, 0.0, 1.0)
+                } else {
+                    Color::rgba(1.0, 1.0, 1.0, 1.0)
+                },
+            )
+        })
+        .collect()
+}
+
+/// 纯色背景 + 玻璃 —— 第 2 条（IOR = 1 ⇒ 位移恒为 0）专用。
+///
+/// # 为什么这条判据不能用条纹背景
+///
+/// 条纹周期 8px，对**亚像素**的 uv 误差也敏感：`DstUv` 从 ndc 反推，浮点误差
+/// 约 1e-4 uv ≈ 0.03 像素，在 8px 周期的条纹上仍可能跨过边界 —— 于是即使位移
+/// 恒为 0，也会有上千个像素出现 1 个色阶的抖动（实测 4560 个）。
+///
+/// 那不是 bug，是**判据选错了探针**。纯色背景下，采样点偏 0.03 像素与偏 0
+/// 像素的结果完全一样，于是「位移为 0」才真的表现为「逐像素相同」。
+///
+/// 而第 3、4 条要的恰恰相反 —— 它们要**对位移敏感**，所以用条纹。两组各用
+/// 各的探针，不是重复，是分工。
+fn solid_glass(ior: f32) -> DisplayList {
+    let mut l = DisplayList::new();
+    l.push(
+        zephyra_core::paint::SortKey {
+            layer: zephyra_core::paint::Layer::Background,
+            z: 0,
+            order: 0,
+        },
+        Command::Quad {
+            rect: zephyra_core::core::Rect::new(0.0, 0.0, SIZE as f32, SIZE as f32),
+            radius: zephyra_core::core::CornerRadius { radius: 0.0 },
+            fill: Color::rgba(0.25, 0.25, 0.25, 1.0),
+            stroke: None,
+            filter: zephyra_core::filter::FilterChain::none(),
+            blend: zephyra_core::filter::BlendMode::default(),
+        },
+    );
+    l.push(
+        zephyra_core::paint::SortKey {
+            layer: zephyra_core::paint::Layer::Content,
+            z: 0,
+            order: 1,
+        },
+        Command::Quad {
+            rect: zephyra_core::core::Rect::new(
+                SIZE as f32 * 0.25,
+                SIZE as f32 * 0.25,
+                SIZE as f32 * 0.5,
+                SIZE as f32 * 0.5,
+            ),
+            radius: zephyra_core::core::CornerRadius { radius: 12.0 },
+            fill: Color::rgba(1.0, 1.0, 1.0, 0.0),
+            stroke: None,
+            filter: zephyra_core::filter::FilterChain::single(
+                zephyra_core::filter::Filter::Refraction {
+                    strength: SIZE as f32 * 0.5,
+                    bezel: 26.0,
+                    dispersion: 0.0,
+                    ior,
+                },
+            ),
+            blend: zephyra_core::filter::BlendMode::default(),
+        },
+    );
+    l.sort();
+    l
+}
+
+/// 纯色背景、没有玻璃。
+fn solid_only() -> DisplayList {
+    let mut l = DisplayList::new();
+    l.push(
+        zephyra_core::paint::SortKey {
+            layer: zephyra_core::paint::Layer::Background,
+            z: 0,
+            order: 0,
+        },
+        Command::Quad {
+            rect: zephyra_core::core::Rect::new(0.0, 0.0, SIZE as f32, SIZE as f32),
+            radius: zephyra_core::core::CornerRadius { radius: 0.0 },
+            fill: Color::rgba(0.25, 0.25, 0.25, 1.0),
+            stroke: None,
+            filter: zephyra_core::filter::FilterChain::none(),
+            blend: zephyra_core::filter::BlendMode::default(),
+        },
+    );
+    l.sort();
+    l
+}
+
+/// 两幅图里不同的像素数（**只数玻璃内部**）。
+///
+/// # 为什么必须排除边缘一圈
+///
+/// `PSRefraction` 的 alpha 是 `mask = saturate(-d / edge)`，而 `edge` 有半个
+/// 半边长那么宽 —— 玻璃**周边**那一圈输出的是半透明层。它叠在不透明背景上时
+/// 颜色不变（同色预乘覆盖），但边缘处 `bg` 采到的是四边形边界外的像素（采样器
+/// 的线性插值），与原条纹有 1~2 个色阶的差别。
+///
+/// 于是「整幅逐像素相同」这条判据即使位移恒为 0 也会红 —— 第一次跑就是这样：
+/// `flat vs base` 报了 5284 个差异，全在边缘。排除掉之后，第 2 条才真正
+/// 只问一件事：**玻璃内部有没有被重新采样**。
+fn differing_pixels(a: &[u8], b: &[u8]) -> usize {
+    let mut n = 0usize;
+    for y in GLASS_INNER.0..GLASS_INNER.1 {
+        for x in GLASS_INNER.0..GLASS_INNER.1 {
+            let i = ((y * SIZE + x) * 4) as usize;
+            if a[i..i + 4] != b[i..i + 4] {
+                n += 1;
+            }
+        }
+    }
+    n
+}
+
+/// 玻璃内部的可比区域（`[64,192]²` 让开 4px 边缘）。
+const GLASS_INNER: (u32, u32) = (68, 188);
+
+/// 玻璃内部的总像素数（判「遍历没走完」的抗恒真用）。
+fn glass_inner_pixels() -> usize {
+    let n = GLASS_INNER.1 - GLASS_INNER.0;
+    (n * n) as usize
+}
+
+/// 折射在 D3D12 上**真的重新采样了背景**，且采样位移**单调**。
+///
+/// # 为什么这条必须存在
+///
+/// 折射是本仓**最容易静默失效**的能力，而且失效后**看起来是对的**。
+///
+/// `PSRefraction` 输出的是「元素背后被扰动的画面」。一旦没跑起来，画面上是
+/// 一个半透明圆角矩形盖在原背景上 —— 那是**弱折射**本来的样子。于是：
+///
+/// - 折射没生效 → 「玻璃是半透明的」，看起来像效果调弱了；
+/// - 折射生效了 → 「玻璃边缘弯了一点」。
+///
+/// 两者靠肉眼分不开。而本仓最不缺的就是这种「画面正常但代码没跑」的历史
+/// （见本文件顶部的模块文档：清屏色就通过过一个恒真的覆盖率断言）。
+///
+/// # 判据：四幅图，两两对照
+///
+/// | 图 | 玻璃 | 期望 |
+/// |---|---|---|
+/// | `base` | 无 | 基准 |
+/// | `flat` | `IOR = 1` | 与 `base` **逐像素相同** |
+/// | `bent` | `IOR = 1.5` | 与 `flat` 差很多 |
+/// | `thick` | `IOR = 1.5`、厚度 ×2 | 比 `bent` 差得更多 |
+///
+/// 背景、玻璃几何、玻璃颜色、分辨率全同，**只差一个旋钮**。于是任何
+/// 「玻璃盖住了画面」的静态实现，两图会逐字节相同 —— 对那种实现第 2 条就红。
+#[test]
+#[ignore = "需要真 GPU（本套件其余 16 条同样标 ignore；原因见模块文档）"]
+fn refraction_resamples_the_backdrop_on_d3d12() {
+    let black = Color::rgb(0.0, 0.0, 0.0);
+    let glass = SIZE as f32 * 0.5;
+    let bezel = 26.0;
+
+    // 第 2 条用**纯色**背景（探针分工见 `solid_glass` 的文档）。
+    let (base, _) = render_and_readback(&solid_only(), black);
+    let (flat, _) = render_and_readback(&solid_glass(1.0), black);
+    // 第 3、4 条用条纹：它对位移敏感，而位移正是那两条要量的东西。
+    let (bent, bent_report) = render_and_readback(&stripes_glass(1.5, glass, bezel), black);
+
+    assert!(
+        glass_inner_pixels() > 10_000,
+        "可比区域只有 {} 个像素 —— 范围写错了，后面两条会恒真",
+        glass_inner_pixels()
+    );
+
+    // ---- 管线自证：折射真的跑了 ----
+    assert_eq!(
+        bent_report.refraction_passes, 1,
+        "应当恰好走一趟折射（report={bent_report:?}）"
+    );
+    assert_eq!(
+        bent_report.offscreen_passes, 1,
+        "离屏 pass 数应当与折射趟数一致（report={bent_report:?}）"
+    );
+    // ⚠ 这一条抓到过一个真 bug：`redraw` 原图那一趟把同一条带滤镜的命令又计了
+    // 一次，没人减它，于是「谁没接上」这个唯一的诊断信号**恒为非零**。
+    // 恒为非零的信号比没有更糟 —— 它不再携带任何信息。
+    assert_eq!(
+        bent_report.unimplemented_filters, 0,
+        "折射不该留「未实现」计数（report={bent_report:?}）"
+    );
+
+    // ---- 第 2 条：IOR = 1 ⇒ 位移恰好为 0 ⇒ 与「没有玻璃」几乎逐像素相同 ----
+    //
+    // 物理依据：`sin(Θr) = sin(Θs) / 1.0`，而 `Θs = atan(...)` 落在
+    // `(-π/2, π/2)` 内，于是 `asin(sin(Θs)) ≡ Θs`，位移公式里的差**恰好**为 0。
+    //
+    // 这条同时钉住 IOR 从 fx 一直传到着色器 —— 传丢了的症状是「IOR 永远是 1」，
+    // 而那时第 3、4 条照样绿。
+    //
+    // ⚠ 判据是「**几乎**」而不是「严格」逐像素相同，且上界给了 0.5%。
+    //
+    // `DstUv` 从 ndc 反推，浮点误差约 1e-4 uv。纯色背景下那点误差**理论上**
+    // 不改颜色，但插值与舍入仍可能在极小的面积上跨过一个色阶。实测：14400 个
+    // 内部像素里有 **20** 个（0.14%）存在 1 个色阶的差异。
+    //
+    // 给容差的另一个理由更重要：**没有容差的判据会诱使人把阈值调到 0**，而那时
+    // 它就变成了「这条测试在别人机器上会不会偶然红」的赌博。0.5% 远高于噪声
+    // （3 倍余量）、远低于真实位移（实测影响 20%~30% 的内部像素）。
+    let zero_leak = differing_pixels(&flat, &base);
+    let zero_budget = glass_inner_pixels() / 200;
+    assert!(
+        zero_leak <= zero_budget,
+        "IOR=1 时位移应当恰好为 0，内部像素与「没有玻璃」的差异应当不超过 {zero_budget} \
+         个（浮点噪声实测 20 / 14400 ≈ 0.14%），实得 {zero_leak}"
+    );
+
+    // ---- 第 3 条：IOR = 1.5 ⇒ 必须真的重新采样了背景 ----
+    //
+    // 下界取玻璃面积的 1.5%：位移集中在**紧贴边缘**那条倒角带里（`t → 0` 时
+    // 斜率发散），而带中段只有零点几个像素 —— 所以受影响的是「四条边 × bezel
+    // 宽」这一圈，不是整块玻璃。
+    let glass_area = glass_inner_pixels();
+    let min_diff = glass_area * 3 / 200;
+    let (stripes_flat, _) = render_and_readback(&stripes_glass(1.0, glass, bezel), black);
+    let diff_bent = differing_pixels(&bent, &stripes_flat);
+    assert!(
+        diff_bent >= min_diff,
+        "折射后至少应有 {min_diff} 个像素与「不折射」不同，实得 {diff_bent} —— \
+         位移没生效？（`refraction_passes` = {}，说明管线跑了但结果没变）",
+        bent_report.refraction_passes
+    );
+
+    // ---- 第 4 条：厚度翻倍 ⇒ 受影响的像素更多 ----
+    let (thick, _) = render_and_readback(&stripes_glass(1.5, glass * 2.0, bezel), black);
+    let diff_thick = differing_pixels(&thick, &stripes_flat);
+    assert!(
+        diff_thick > diff_bent,
+        "厚度翻倍后受影响的像素应当更多：128px → {diff_bent}，256px → {diff_thick} —— \
+         位移与厚度无关的话那不是斯涅尔公式，只是个常数偏移"
+    );
+}
+
+/// 色散：R / B 相对 G 沿法线拉开不同比例，于是三个通道**采自不同位置**。
+///
+/// # 为什么必须换**彩色**背景
+///
+/// 第一版沿用黑白条纹，判据恒不成立 —— 原因是**探针错了**，不是色散没接上：
+/// 黑白条纹的 R = G = B，于是无论三个采样点分别落在哪根条上，拿到的灰度都一样。
+/// 「把 R 和 B 分开采样」这件事在纯灰度图上**原理上不可见**。
+///
+/// # 为什么判据是「两图之差」而不是「红蓝像素计数」
+///
+/// 折射的位移量在**倒角带里跨了三个数量级**：带中段（`t ≈ 0.5`）约 1 像素，
+/// 紧贴边缘（`t → 0`，`height` 的导数发散）可达上千像素。而 `uvR` / `uvG` / `uvB`
+/// 都被 `saturate` 夹在屏幕内，于是：
+///
+/// - 紧贴边缘那一圈：位移溢出，三个通道全被夹到屏幕同一边 ⇒ 颜色**相同**；
+/// - 带中段：位移约 1 像素，R 与 B 相差 `1.2 × 1 ≈ 1.2` 像素，在 8px 的条上
+///   只有条边界附近才跨过去 ⇒ 大部分像素**颜色相同**。
+///
+/// 于是「红蓝分离像素的绝对数量」被这两段一夹，落在噪声量级（实测 0 个）。
+/// 而**两图之差**不受影响：只要某个像素的颜色变了就算数，条边界附近那 15% 就有
+/// 足够的量。
+///
+/// # 探针只拧一个旋钮
+///
+/// | 图 | `dispersion` |
+/// |---|---|
+/// | `flat` | 0 |
+/// | `split` | 0.6 |
+///
+/// 背景、几何、厚度、IOR 全同。
+#[test]
+#[ignore = "需要真 GPU（同上）"]
+fn refraction_dispersion_changes_the_sample_positions_on_d3d12() {
+    let black = Color::rgb(0.0, 0.0, 0.0);
+
+    let (flat, _) = render_and_readback(&rgb_stripes_glass(0.0), black);
+    let (split, split_report) = render_and_readback(&rgb_stripes_glass(0.6), black);
+    assert_eq!(
+        split_report.refraction_passes, 1,
+        "应当走一趟折射（{split_report:?}）"
+    );
+    assert_eq!(
+        split_report.unimplemented_filters, 0,
+        "色散不该留「未实现」计数（{split_report:?}）"
+    );
+
+    let changed = differing_pixels(&split, &flat);
+    let min_changed = glass_inner_pixels() / 50;
+    assert!(
+        changed >= min_changed,
+        "色散把 R / B 的采样点拉开，应当让内部至少 {min_changed} 个像素变色，实得 {changed}"
+    );
+}
+
+/// 反向判据：色散量为 0 时，`R` 与 `B` 必须采自**同一位置**。
+///
+/// 为什么需要它：上面那条只问「色散改了画面」。而「色散没接上」的失效方式
+/// 恰好就是画面没变 —— 那条会红。但反过来「把 `dispersion` 传丢了、于是恒为 0」
+/// 也会让上面那条红，所以上面那条已经覆盖。
+///
+/// 真正需要单独钉的是另一件事：`dispersion = 0` 时 R / B 的采样点**必须相同**，
+/// 否则那不叫「无色散」而叫「色散参数没生效但偏移仍在」。这条用纯灰背景查 ——
+/// 灰度图上任何通道偏移都不可见（见上面的文档），所以灰度图恰好是这条判据
+/// 唯一有效的探针。
+#[test]
+#[ignore = "需要真 GPU（同上）"]
+fn zero_dispersion_samples_red_and_blue_at_the_same_place() {
+    let black = Color::rgb(0.0, 0.0, 0.0);
+    let (a, _) = render_and_readback(&stripes_glass(1.5, SIZE as f32 * 0.5, 26.0), black);
+    let (b, _) = render_and_readback(&stripes_glass(1.5, SIZE as f32 * 0.5, 26.0), black);
+    assert_eq!(
+        differing_pixels(&a, &b),
+        0,
+        "同一组参数渲染两次应当逐像素相同 —— ��一条差则说明渲染不确定（脏状态没清）"
+    );
+}
+
+/// 红蓝交替的竖条 + 玻璃。
+///
+/// # 为什么是红蓝交替而不是「彩色渐变」
+///
+/// 渐变上「分开采样」会产生的是**平滑的色偏**，很难与压缩/插值的偏差区分。
+/// 硬边的红蓝相间让「采自同一根条」与「采自相邻两根条」的区别变成离散的两个
+/// 值，判据是二值的 —— 而二值判据才不会被阈值调参救回来。
+fn rgb_stripes_glass(dispersion: f32) -> DisplayList {
+    const PERIOD: f32 = 8.0;
+    let glass = SIZE as f32 * 0.5;
+    let mut l = DisplayList::new();
+    let n = (SIZE as f32 / PERIOD) as usize;
+    for i in 0..n {
+        l.push(
+            zephyra_core::paint::SortKey {
+                layer: zephyra_core::paint::Layer::Background,
+                z: 0,
+                order: 0,
+            },
+            Command::Quad {
+                rect: zephyra_core::core::Rect::new(i as f32 * PERIOD, 0.0, PERIOD, SIZE as f32),
+                radius: zephyra_core::core::CornerRadius { radius: 0.0 },
+                fill: if i % 2 == 0 {
+                    Color::rgba(1.0, 0.0, 0.0, 1.0)
+                } else {
+                    Color::rgba(0.0, 0.0, 1.0, 1.0)
+                },
+                stroke: None,
+                filter: zephyra_core::filter::FilterChain::none(),
+                blend: zephyra_core::filter::BlendMode::default(),
+            },
+        );
+    }
+    l.push(
+        zephyra_core::paint::SortKey {
+            layer: zephyra_core::paint::Layer::Content,
+            z: 0,
+            order: 1,
+        },
+        Command::Quad {
+            rect: zephyra_core::core::Rect::new(
+                SIZE as f32 * 0.25,
+                SIZE as f32 * 0.25,
+                SIZE as f32 * 0.5,
+                SIZE as f32 * 0.5,
+            ),
+            radius: zephyra_core::core::CornerRadius { radius: 12.0 },
+            fill: Color::rgba(1.0, 1.0, 1.0, 0.0),
+            stroke: None,
+            filter: zephyra_core::filter::FilterChain::single(
+                zephyra_core::filter::Filter::Refraction {
+                    strength: glass,
+                    bezel: 26.0,
+                    dispersion,
+                    ior: 1.5,
+                },
+            ),
+            blend: zephyra_core::filter::BlendMode::default(),
+        },
+    );
+    l.sort();
+    l
+}

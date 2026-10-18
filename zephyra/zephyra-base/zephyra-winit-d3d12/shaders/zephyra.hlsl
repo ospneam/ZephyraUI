@@ -514,10 +514,26 @@ float4 PSComposite(VSOut i) : SV_TARGET {
 // | `half_size`| **元素**的半宽半高（`nointerpolation`）|
 // | `uv`       | 元素内归一化坐标 |
 // | `corner.x` | 圆角半径 |
-// | `corner.y` | 折射强度（**像素**）|
+// | `corner.y` | 玻璃厚度（**像素**）|
 // | `color.r`  | 色散量 |
+// | `color.g`  | 倒角带宽度（像素）|
+// | `color.b`  | 折射率 IOR |
 //
 // 屏幕 uv 走 `DstUv(i)`（从 `ndc` 推），不占顶点字段。
+
+/// 玻璃的**高度剖面**：`t` = 倒角带里的归一化深度。
+///
+/// # 为什么是这个形状
+///
+/// 它是一条**圆拱的四次方根**：`t = 0` 在边缘（高度 0），`t = 1` 在带内侧（高度 1）。
+///
+/// 关键在它在 `t → 0` 处**斜率发散**—— 那正是「光在边缘斜着进出」的数学表达。
+/// 若改成线性减少，边缘就会变成一条平滑地推进去的带子——那是「模糊边」，
+/// 不是玻璃。
+float glass_surface_height(float t) {
+    float s = 1.0 - t;
+    return pow(1.0 - s * s * s * s, 0.25);
+}
 
 /// 圆角矩形 SDF 的**单位外法线**。
 ///
@@ -551,8 +567,10 @@ float2 SdNormal(float2 p, float2 half_size, float radius) {
 /// 的症状是"玻璃上的描边和文字消失了"，而不是"背景没被扰动"。
 float4 PSRefraction(VSOut i) : SV_TARGET {
     float radius   = i.corner.x;
-    float strength = i.corner.y;
-    float dispersion = i.color.r;
+    float strength = i.corner.y;   // 玻璃厚度（像素）
+    float dispersion = i.color.r;  // 色散量
+    // `bezel`（倒角带宽）与 `ior`（折射率）直接从 `i.color` 取，
+    // 不抽成局部变量：各用一次，局部变量只会多一份拷贝阅读。
 
     // 元素内坐标 → SDF（矩形内为负）。
     float2 p = i.local - i.half_size;
@@ -562,9 +580,6 @@ float4 PSRefraction(VSOut i) : SV_TARGET {
     // 位移它只会凭空撕裂画面。遮罩取 `saturate(-d / edge)`。
     float edge = max(1.0, min(i.half_size.x, i.half_size.y) * 0.5);
     float mask = saturate(-d / edge);
-
-    // 边缘处的位移最大，向内部渐弱到 0 —— 这是"厚度"感来源。
-    float falloff = mask;
 
     float2 n = SdNormal(p, i.half_size, radius);
 
@@ -577,7 +592,38 @@ float4 PSRefraction(VSOut i) : SV_TARGET {
     // 而那种不一致的��状是折射整体错位，极难归因。
     float2 uv = DstUv(i);
     float2 px2uv = float2(ddx(uv.x), ddy(uv.y));
-    float2 off_uv = n * (strength * falloff) * px2uv;
+
+    // ---- 位移：斯消尔定律 ----
+    //
+    // 三步：① 深度归一化 `t`（只在倒角带内 0..1）→ ② 由高度剖面求斜率
+    // → ③ 入射角与斯消尔角的**凲切差**。
+    //
+    // # 为什么不是「强度 × 衰减」
+    //
+    // 那个形式给出的是一条**单调**曲线：边缘与内部的弯曲量只差一个系数。
+    // 而真实玻璃的弯曲在「新的入射角减旧的入射角」时形成，所以它在深度上
+    // 是**先增后减**的：近边缘几乎不弯，倒角带中段最弯，到带内侧又回到 0。
+    //
+    // 颜色参这一点在下面的 IOR：`IOR = 1` 时 `tan(Θr) ≡ tan(Θs)`，位移恰好为 0。
+    float bezel = min(max(i.color.g, 1.0), min(radius, min(i.half_size.x, i.half_size.y)));
+    float t = saturate((-d) / bezel);
+
+    // 斜率用**有限差分**：高度剖面在 t→0 处的导数无界，解析式开方会在
+    // 那里发散成 NaN，而 NaN 会把整个像素变成不可见的黑点。
+    const float dt = 0.001;
+    float h = glass_surface_height(t);
+    float dh = (glass_surface_height(saturate(t + dt)) - h) / dt;
+
+    float slope = atan(dh * (strength / bezel));
+    float sin_r = clamp(sin(slope) / max(i.color.b, 1e-3), -1.0, 1.0);
+    float theta_r = asin(sin_r);
+    float displacement = h * strength * (tan(slope) - tan(theta_r));
+
+    // 方向 = **-**SDF 外法线：透射取的是「背后那个点的光」，所以位移与外法线相反。
+    //
+    // 写正的病状是“对称场景里看不出来”：左右两侧拉得一样长，而真实错误只在
+    // 非对称图形上才现。
+    float2 off_uv = -n * displacement * px2uv;
 
     // 色散：R / B 相对 G 沿法线拉开不同比例，于是边缘出现彩色描边 ——
     // 真实玻璃的色散。`dispersion = 0` 时三条通道偏移相同，等于无色散。

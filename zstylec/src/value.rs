@@ -170,7 +170,7 @@ fn parse_filter_chain(
                 "expected a filter function here.",
                 &[
                     "blur(4px)",
-                    "refraction(16px, 0.3)",
+                    "refraction(24px, 20px, 0.3, 1.5)",
                     "drop-shadow(0px 4px 6px #000000a0)",
                     "none",
                 ],
@@ -209,6 +209,16 @@ fn parse_filter_chain(
     Ok(PropertyValue::filter(FilterChain::new(filters)))
 }
 
+/// 折射倒角带的默认宽度（像素）。
+///
+/// 20px 的选择不是一个美术值，而是“能看见弯曲、但不超过圆角半径”的上限：
+/// 倒角带超过圆角半径时，圆角区也会被拉入算出，视觉上就变成了“整块玻璃”
+/// 而不是“倒角”。这个值的上限在着色器里又用 `min(radius, half_size)` 取了一次。
+const DEFAULT_BEZEL_PX: f32 = 20.0;
+
+/// 默认折射率（普通冠牌玻璃约 1.5）。
+const DEFAULT_IOR: f32 = 1.5;
+
 /// 按函数名解析一个滤镜的参数（`args` 已在函数体内）。
 fn filter_by_name(name: &str, args: &mut Parser) -> Option<zephyra_core::filter::Filter> {
     use zephyra_core::core::{Color, Point};
@@ -242,10 +252,18 @@ fn filter_by_name(name: &str, args: &mut Parser) -> Option<zephyra_core::filter:
             }),
             _ => None,
         },
-        // `refraction(强度, 色散?)` —— 色散缺省 0（单通道位移）。
+        // `refraction(厚度, 倒角宽?, 色散?, 折射率?)`
+        //
+        // 三个可选参数**都有默认值**，而不是只允许省略。原因是它们形成一个
+        // **完整的算法**（见 `zephyra.hlsl` 的 `PSRefraction`）：厚度与倒角宽合起来决定面凸度，
+        // 折射率决定光线偏转的角度。只给一个数就起不了算式。
+        //
+        // 默认值选的是普通皃封款直角几何形状：倒角宽 = 深度 20px、折射率 1.5。
         "refraction" => dim(0).map(|strength| Filter::Refraction {
             strength,
-            dispersion: dim(1).unwrap_or(0.0),
+            bezel: dim(1).unwrap_or(DEFAULT_BEZEL_PX),
+            dispersion: dim(2).unwrap_or(0.0),
+            ior: dim(3).unwrap_or(DEFAULT_IOR),
         }),
         // CSS 顺序是 `offset-x offset-y blur-radius color`。
         // 至少要两个数（偏移），颜色缺省给一个能看见的。

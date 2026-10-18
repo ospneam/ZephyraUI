@@ -136,7 +136,29 @@ fn main() {
 fn run_window_path(want_light: bool) {
     let event_loop = winit::event_loop::EventLoop::new().expect("EventLoop::new");
     let theme = intent_cell(!want_light);
-    let view = Gallery::with_theme_intent(theme.clone(), !want_light);
+    let mut view = Gallery::with_theme_intent(theme.clone(), !want_light);
+
+    // `--route <id>`：窗口路的起始路由。
+    //
+    // ⚠⚠ 这一段是**漏掉过**的。`--route` 原本只在 [`dump_cpu`] 里被消费，而
+    // `run_window_path` 压根不读它 —— 于是「`--route effects` 跑窗口路」与
+    // 「`--route home` 跑窗口路」画出来是**同一张图**。
+    //
+    // 它特别难自己暴露，因为窗口路没有出图产物：两次跑都得肉眼盯着同一个窗口，
+    // 而起始路由差异往往要翻导航才看得到。所以凡是「同一份输入、两种模式」，
+    // 参数就必须在**两边**都解析 —— 这条比参数本身重要。
+    let args: Vec<String> = std::env::args().collect();
+    if let Some(route) = flag_value(&args, "--route") {
+        // 解析走 `resolve_route`（应用层唯一真源），且**未知路由直接退出**。
+        //
+        // 不静默回落 home 的理由与 `dump_cpu` 同款：出图/调试工具静默给错内容，
+        // 比直接失败恶劣得多 —— 而窗口路连日志都没有，画面上「看起来能跑」。
+        let Some(resolved) = resolve_route(route) else {
+            eprintln!("[gallery] 未知路由 {route:?}；用 --list-routes 看全部合法值");
+            std::process::exit(2);
+        };
+        view.route = resolved;
+    }
     let mut app = Bootstrap {
         inner: None,
         view: Some(view),
@@ -145,6 +167,45 @@ fn run_window_path(want_light: bool) {
     if let Err(e) = event_loop.run_app(&mut app) {
         eprintln!("事件循环退出：{e}");
     }
+}
+
+/// 打印一帧的渲染报告——前 5 帧。
+///
+/// # 为什么需要它
+///
+/// 拟合是本仓最容易无声失败的能力：它的**默认外观与「没接上」几乎一样**
+/// （半透明的玻璃盖在原图上），而且**不报错、不崩、不出 warn**。
+///
+/// 所以“管线到了没到”必须由一个**正面计数**回答，而不能靠看图。
+/// `RenderReport::refraction_passes` 就是那个计数：它只在真的走了
+/// `PSRefraction` 那一支时才加，拿不到目标副本、退化成普通合成时**不加**。
+///
+/// # 为什么只打前 5 帧
+///
+/// `frame()` 只在 `dirty` 时被调用，一帧跑完 `dirty` 立刻归零 —— 静止的
+/// gallery 总共只渲染那么几帧。持续打会变成一面墙。
+#[cfg(any(
+    all(windows, feature = "d3d12"),
+    all(not(windows), feature = "linux-vk")
+))]
+fn report_frame(tag: &str, frame: &zephyra_fx::Frame) {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static N: AtomicU32 = AtomicU32::new(0);
+    let n = N.fetch_add(1, Ordering::Relaxed);
+    if n >= 5 {
+        return;
+    }
+    let r = &frame.render;
+    eprintln!(
+        "[gallery] {tag}#{n} redrawn={} quads={} offscreen={} refraction={}          unimplemented_filters={} unimplemented_blends={} skipped={}",
+        frame.redrawn,
+        r.quads,
+        r.offscreen_passes,
+        r.refraction_passes,
+        r.unimplemented_filters,
+        r.unimplemented_blends,
+        r.skipped,
+    );
 }
 
 /// 解析并合并全部样式表 —— 控件层（`zephyra_ui::STYLESHEETS`）+ 本应用自己的。
@@ -510,6 +571,36 @@ fn dump_cpu(light: bool) {
     println!("[dump] 路由：{route}");
 
     let frame = host.frame();
+    // 列出**每一条带非常身滤镜**的绘制命令。
+    //
+    // # 为什么这里要打印它们
+    //
+    // `RenderReport::unimplemented_filters` 只给一个总数——而 fx 对每一条带滤镜的
+    // 命令都 +1，后端则每真实画了一趟离屏就 -1。出现「总数比预期多 1」时，
+    // 没有任何信息告诉你是**哪一条**。
+    //
+    // 那个「1」是本仓真实遇到的：effects 页报 3 趟拟合 + 1 条未执行。
+    // 对照本列表才能判定是真遗漏还是计数口径本身有问题。
+    // ⚠⚠ 必须在 `frame()` **之后**：`CpuHost::list()` 返回的是本次帧回放完成
+    // 之后的那份 DisplayList。先取就是空表 —— 第一版把这段放在 `frame()`
+    // 之前，打出来的是「带滤镜的命令共 0 条」，而同一张树在 GPU 路上报
+    // `refraction=3`。两个数字相互矛盾时，先怀疑自己取的是哪一份。
+    {
+        let list = host.list();
+        let mut n = 0usize;
+        for (i, item) in list.iter().enumerate() {
+            let zephyra_core::paint::Command::Quad { filter, .. } = &item.command else {
+                continue;
+            };
+            if filter.is_identity() {
+                continue;
+            }
+            n += 1;
+            println!("[dump] 滤镜命令 #{i}: {:?}", filter);
+        }
+        println!("[dump] 带非常身滤镜的命令共 {n} 条");
+    }
+
     let r = frame.render;
     let batch = host.batch();
     let glyph_vertices = batch
@@ -678,7 +769,10 @@ impl winit::application::ApplicationHandler for Bootstrap {
         // 屏幕上是一个还没被写过的白色合成交换链 —— 唯一症状是「窗口全白」，
         // 极易被当成渲染问题查。（同 examples/demo.rs 的注释。）
         app.sync_input();
-        app.frame();
+        let frame = app.frame();
+        // 首帧报告打出来。不打的话，你得靠目测「是不是滤镜没接上」——
+        // 而拟合术的未接线状态与「弱拟合」在画面上几乎一样。
+        report_frame("首帧", &frame);
         app.present();
 
         self.inner = Some(app);

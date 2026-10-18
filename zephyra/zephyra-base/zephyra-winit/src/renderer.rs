@@ -1465,19 +1465,16 @@ impl Renderer {
                 // ⚠ 这是折射**唯一**的坐标系换算处；算错时折射仍"有效果"，
                 // 只是边缘高光整体偏移 —— 肉眼极难察觉，所以两侧都取自
                 // `OffscreenPass` 已算好的量，不在这里重算。
+                // 元素在**屏幕**上的内容矩形。理由见 D3D12 那份调用点的注释：
+                // 四边形必须与 `local` / `half_size` 覆盖**同一块区域**，
+                // 否则四边形越出元素的那一圈里 `local` 仍落在 `[0, ew]` 内、
+                // SDF 判成「内部」，于是整幅画面都被当成了玻璃。
                 let content =
                     zephyra_core::paint::command_content_rect(&item.command).unwrap_or(pass.bounds);
-                let element_in_rt = zephyra_core::core::Rect {
-                    x: content.x - pass.origin.0,
-                    y: content.y - pass.origin.1,
-                    width: content.width,
-                    height: content.height,
-                };
                 (
                     offscreen::refraction_composite_quad(
-                        pass.bounds,
+                        content,
                         screen,
-                        element_in_rt,
                         zephyra_core::paint::command_corner_radius(&item.command),
                         r,
                     ),
@@ -1494,6 +1491,12 @@ impl Renderer {
         // 合成输出的是**预乘**颜色（`Vertex::quad` 已经把顶点色预乘，而
         // `PSComposite` 的透传分支直接返回采样值）⇒ 混合状态是预乘空间的
         // `SrcOver`（`ONE / INV_SRC_ALPHA`），也就是 `blends[3]`。
+        //
+        // ⚠ 计数在**调用之前**取：`dst_srv` 是不是 `Some` 在上面那个 match
+        // 里已经决定了这一趟走不走 `PSRefraction`，它不会在这两行之间变。
+        if dst_srv.is_some() {
+            report.refraction_passes += 1;
+        }
         self.draw_pass_quad(
             env,
             &q,

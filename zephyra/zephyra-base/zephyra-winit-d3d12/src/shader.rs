@@ -31,8 +31,34 @@ use windows::Win32::Graphics::Dxgi::Common::{
 
 use crate::quad::Vertex;
 
-/// 顶点着色器字节码（`fxc /T vs_5_1`）。
+/// 顶点着色器字节码。
+///
+/// # profile 是 `vs_5_0`，不是 `vs_5_1`
+///
+/// 这一行**曾经**写着 `fxc /T vs_5_1`，而那是错的。判据是**可复核的**：
+/// 取已提交的 `.hlsl`（`git show HEAD:…`），用两种 profile 各编一遍，与已提交的
+/// `zephyra.vs.bin` 逐字节比 SHA256 —— 只有 `vs_5_0` 一致。
+///
+/// 而 `vs_5_1` 编出来的东西**大小完全相同**（1152 字节），所以「看大小」查不出来；
+/// 它要到 `CreateVertexShader` 才被拒绝，返回 `E_INVALIDARG`。症状是
+/// `zephyra-winit` 的整个 GPU 套件（31 条）一起红，而画面路根本还没走到。
 pub const VS_BYTECODE: &[u8] = include_bytes!("../shaders/zephyra.vs.bin");
+
+/// 全部 `.bin` 的生成命令。
+///
+/// ```text
+/// fxc /nologo /T vs_5_0 /E VSMain       /Fo shaders/zephyra.vs.bin            shaders/zephyra.hlsl
+/// fxc /nologo /T ps_5_0 /E PSMain       /Fo shaders/zephyra.PSMain.ps.bin    shaders/zephyra.hlsl
+/// fxc /nologo /T ps_5_0 /E PSRefraction /Fo shaders/zephyra.PSRefraction.ps.bin shaders/zephyra.hlsl
+/// ```
+///
+/// 改 `.hlsl` 之后**全部** 20 个 entry 都要重编：`tests/d3d11_draw.rs` 的
+/// `shader_assets_are_in_sync` 比的是每个 `.bin` 的 mtime 晚于 `.hlsl`，
+/// 只编改动的那一个会让其余 19 条变旧。
+///
+/// 只能有一对 hlsl（D3D11 / D3D12 各存一份），且必须逐字节相同 —— 那条门禁
+/// 也一起查。
+pub const BUILD_COMMAND_HINT: &str = "fxc /nologo /T {vs_5_0|ps_5_0} /E <Entry>";
 
 /// 像素着色器**变体表**，与 `zephyra-winit`（D3D11 那边）**逐项一致**。
 ///

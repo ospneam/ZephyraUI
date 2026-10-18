@@ -219,15 +219,24 @@ Container.glass-pane {
     border-width: 1px;
 }
 
-/* 三档折射强度。色散随强度一起涨 —— 真实玻璃越厚色散越明显。 */
+/* 三档。参数顺序是 `refraction(厚度, 倒角带宽, 色散, 折射率)`。
+ *
+ * 三个参数的关系（不是相互独立的三个强度）：
+ *
+ * - **厚度** 越大→ 弯曲越多。它是光学量，不是「位移多少像素」。
+ * - **倒角带宽** 越宽→ 只有越靠边的那一圈在弯，中间越直。
+ * - **折射率** 越大→ 光线偏转越少，玻璃越「硬」。1.5 = 普通冠牌玻璃。
+ *
+ * 因此三档变的不只是「弯曲强弱」，还有「弯的**区域**」和「玻璃的**材质**」。
+ * 这才是 iOS 26 那种「边缘一圈弯、中间透亮」的感觉。 */
 Container.glass-pane.weak {
-    filter: refraction(10px, 0.10);
+    filter: refraction(14px, 18px, 0.08, 1.45);
 }
 
 Container.glass-pane.medium {
-    filter: refraction(20px, 0.25);
+    filter: refraction(28px, 26px, 0.22, 1.5);
 }
 
 Container.glass-pane.strong {
-    filter: refraction(32px, 0.45);
+    filter: refraction(48px, 34px, 0.40, 1.62);
 }

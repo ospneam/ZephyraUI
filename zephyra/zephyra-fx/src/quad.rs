@@ -597,6 +597,24 @@ pub struct RenderReport {
     ///
     /// 判据：`unimplemented_filters == 0 && offscreen_passes == 用滤镜的命令数`。
     pub offscreen_passes: usize,
+    /// 本次**真的画出**了折射趟的次数（`Filter::Refraction`，E4.5）。
+    ///
+    /// # 为什么 `offscreen_passes` 不够用
+    ///
+    /// 折射与模糊**共用**离屏 pass 的计数，所以 `offscreen_passes > 0` 只说明
+    /// 「有东西走了离屏」，它无法区分那一趟是 `blur(...)` 还是
+    /// `refraction(...)`。而这两者的失效方式完全不同：
+    ///
+    /// - 模糊没接 → 画面是「没模糊」，看不出坏；
+    /// - 折射没接 → 画面是「玻璃块半透明地盖在原图上」，**更像正常的**
+    ///   「弱折射」，于是「折射没生效」被当成效果调得不够强。
+    ///
+    /// 折射的默认外观与「没接」几乎一样，这是它最危险的地方。给它一个**正面**
+    /// 计数，「管线有没有走到」这件事就不必靠看图回答。
+    ///
+    /// 判据：用了折射的页面 `refraction_passes > 0`；且它与
+    /// `offscreen_passes` 之差恰好是模糊趟数。
+    pub refraction_passes: usize,
 }
 
 impl RenderReport {
@@ -617,6 +635,7 @@ impl RenderReport {
         self.unimplemented_filters += other.unimplemented_filters;
         self.unimplemented_blends += other.unimplemented_blends;
         self.offscreen_passes += other.offscreen_passes;
+        self.refraction_passes += other.refraction_passes;
         self.reallocated |= other.reallocated;
         // `vertex_bytes` 取**最大值**而不是求和：所有段共用同一个顶点缓冲，而它
         // 记的是"这次写了多少字节"，不是"这一帧总共写了几次"。

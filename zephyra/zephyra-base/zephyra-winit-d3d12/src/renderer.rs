@@ -1691,7 +1691,19 @@ impl Renderer {
                     if range.is_empty() {
                         continue;
                     }
-                    report.absorb(self.draw_range(list, device, &env, display_list, &range)?);
+                    let pr = self.draw_range(list, device, &env, display_list, &range)?;
+                    if std::env::var_os("ZEPHYRA_FILTER_TRACE").is_some()
+                        && pr.unimplemented_filters > 0
+                    {
+                        eprintln!(
+                            "[ftrace] PLAIN {:?} unimpl={} offscreen={} refract={}",
+                            range,
+                            pr.unimplemented_filters,
+                            pr.offscreen_passes,
+                            pr.refraction_passes
+                        );
+                    }
+                    report.absorb(pr);
                 }
                 zephyra_fx::offscreen::Segment::Offscreen {
                     index,
@@ -1709,6 +1721,12 @@ impl Renderer {
                     let item = display_list.iter().nth(index).expect("下标来自同一份列表");
                     let inner = CmdEnv { key, ..env };
                     let r = self.render_offscreen(list, device, &inner, &item.command, &pass)?;
+                    if std::env::var_os("ZEPHYRA_FILTER_TRACE").is_some() {
+                        eprintln!(
+                            "[ftrace] inner #{} unimpl={} offscreen={} refract={}",
+                            index, r.unimplemented_filters, r.offscreen_passes, r.refraction_passes
+                        );
+                    }
                     report.absorb(r);
                     // 滤镜真的被执行了 —— 从 `unimplemented_filters` 里减掉这一条。
                     report.unimplemented_filters = report.unimplemented_filters.saturating_sub(1);
@@ -1718,13 +1736,39 @@ impl Renderer {
                     // 的可见效果），而元素本体不见了 —— 于是看起来像「投影把元素盖住了」，
                     // 不像「少画了一步」。
                     if redraw {
-                        report.absorb(self.draw_range(
-                            list,
-                            device,
-                            &env,
-                            display_list,
-                            &(index..index + 1),
-                        )?);
+                        let r =
+                            self.draw_range(list, device, &env, display_list, &(index..index + 1))?;
+                        // ⚠⚠ 重画原图这一趟**已经把上面的 `saturating_sub(1)`
+                        // 又抵消掉了**，所以这里必须再减一次。
+                        //
+                        // 账是这样走的（`unimplemented_filters` 的定义是「有滤镜
+                        // 但**没被执行**的命令数」）：
+                        //
+                        // | 步 | `unimplemented_filters` |
+                        // |---|---|
+                        // | `expand` 展开这条命令 | +1 |
+                        // | 离屏 pass 内部 `saturating_sub(1)` | −1（归零）|
+                        // | `absorb(inner)` | +0 |
+                        // | 上面的 `saturating_sub(1)` | −1（0 处饱和，保持 0）|
+                        // | **本行** `draw_range` 又展开同一条 | **+1 ← 元凶** |
+                        //
+                        // 症状：`unimplemented_filters` **永远比 0 大 1**，而它按
+                        // 定义是「谁没接上」的唯一诊断信号 —— 于是每次用折射都
+                        // 报「有一条滤镜没实现」，而画面其实是对的。
+                        //
+                        // 那种信号比没有更糟：它恒为非零，于是「它是不是红的」
+                        // 不再携带任何信息（本条就是在 `refraction_bends_the_backdrop_on_d3d12`
+                        // 里被抓住的 —— 那条测试的第一句断言就是这个数必须是 0）。
+                        //
+                        // 重画阶段要减一，是因为滤镜**已经在离屏 pass 里做过**，
+                        // 这一趟画的只是元素本体。
+                        //
+                        // ⚠ 减法必须在 `absorb` **之后**：反过来写就是「先减再原样
+                        // 加回来」，净效果为零 —— 而症状与没写一样（计数恒为 1），
+                        // 所以这个顺序错误不会自己暴露。
+                        report.absorb(r);
+                        report.unimplemented_filters =
+                            report.unimplemented_filters.saturating_sub(1);
                     }
                 }
             }
@@ -2123,6 +2167,9 @@ impl Renderer {
         // 离屏期间不该有「未实现的滤镜」—— 内容里那条命令的滤镜正是在做这件事。
         report.unimplemented_filters = report.unimplemented_filters.saturating_sub(1);
         report.offscreen_passes += 1;
+        // 注：`refraction_passes` 在下面那一段才加，而不在这里 ——
+        // 容易被当成作用的是「运行了离屏」，而它真正的含义是「退化成
+        // 普通合成时**不算**」。放错位置会让「拿不到副本」也报成生效。
 
         // ---- 2. 模糊：逐趟乒乓 ----
         let mut src_is_a = true;
@@ -2230,24 +2277,18 @@ impl Renderer {
         let screen = (cmd_env.size.0 as f32, cmd_env.size.1 as f32);
         let (quad, ps, dst_srv) = match (pass.refraction, refraction_srv) {
             (Some(r), Some(srv)) => {
-                // 元素在 RT 里的子矩形：RT 原点 = `pass.origin`，元素原点 = 内容
-                // 矩形原点。两者相减即元素在 RT 内的偏移。
+                // 元素在**屏幕**上的内容矩形。
                 //
-                // ⚠ 这个减法是折射**唯一**的坐标系换算处。算错时折射**仍然
-                // "有效果"**，只是边缘高光整体偏移 —— 那类错肉眼极难察觉，
-                // 所以两侧都取自 `OffscreenPass` 已算好的量，不在这里重算。
+                // ⚠ 传的是它、而不是 `pass.bounds`：折射合成的四边形必须与它的
+                // `local` / `half_size` 覆盖**同一块区域**，否则四边形越出元素
+                // 的那一圈里 `local` 仍落在 `[0, ew]` 内、SDF 判成「内部」，
+                // 于是整幅画面都被当成玻璃。那是个**看起来完全正常**的错
+                // （折射本来就该铺满元素），所以只有这里能挡。
                 let content = zephyra_core::paint::command_content_rect(cmd).unwrap_or(pass.bounds);
-                let element_in_rt = zephyra_core::core::Rect {
-                    x: content.x - pass.origin.0,
-                    y: content.y - pass.origin.1,
-                    width: content.width,
-                    height: content.height,
-                };
                 (
                     offscreen::refraction_composite_quad(
-                        pass.bounds,
+                        content,
                         screen,
-                        element_in_rt,
                         zephyra_core::paint::command_corner_radius(cmd),
                         r,
                     ),
@@ -2261,6 +2302,7 @@ impl Renderer {
                 None,
             ),
         };
+        let drew_refraction = dst_srv.is_some();
         self.draw_pass_quad(
             device,
             list,
@@ -2274,6 +2316,15 @@ impl Renderer {
             damage_scissor(cmd_env.size, cmd_env.damage),
             self.samples,
         )?;
+        // 只在实际走了 `PSRefraction` 那一支时计。
+        //
+        // `dst_srv.is_some()` 等价于“拿到了目标副本且 PS 是
+        // PSRefraction”：两者只在同一个 match 分支里同时为真。而
+        // `refresh_dst_copy` 失败时这里是 `None` —— 退化成普通合成，
+        // 那时屏幕上有玻璃但没有弯曲，**不能算已经生效**。
+        if drew_refraction {
+            report.refraction_passes += 1;
+        }
         Ok(report)
     }
 

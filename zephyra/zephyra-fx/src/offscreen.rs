@@ -257,10 +257,17 @@ pub struct OffscreenPass {
 /// 折射（液态玻璃）的执行参数。
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Refraction {
-    /// 折射强度（像素）：边缘处背景被推开的最大距离。
+    /// 玻璃**厚度**（像素）。
+    ///
+    /// 不是「位移多少像素」——位移由它与 `bezel` 一起经
+    /// 斯涅尔定律算出来（`zephyra.hlsl` 的 `PSRefraction`）。
     pub strength: f32,
+    /// 倒角带宽度（像素）：折射只发生在这条带里。
+    pub bezel: f32,
     /// 色散量。>0 时 R / B 通道相对 G 沿法线偏移不同的比例。
     pub dispersion: f32,
+    /// 折射率（IOR）：1.0 = 没有折射，普通冕牌玻璃约 1.5。
+    pub ior: f32,
 }
 
 /// 一次模糊趟。
@@ -347,13 +354,17 @@ pub fn pass_for_chain(filter: &FilterChain, content: Rect) -> OffscreenPass {
             }
             zephyra_core::filter::Filter::Refraction {
                 strength,
+                bezel,
                 dispersion,
+                ior,
             } => {
                 // 后者覆盖前者，与 `tint` 同一条语义：链是就地依次执行，
                 // 同一种效果出现两次时后者赢。
                 refraction = Some(Refraction {
                     strength: *strength,
+                    bezel: *bezel,
                     dispersion: *dispersion,
+                    ior: *ior,
                 });
                 // ⚠ 合成阶段输出的是**被扰动的背景**，不是这个元素本身 ——
                 // 所以元素自己的描边 / 文字 / 图标必须在合成**之后**再画一遍。
@@ -541,32 +552,38 @@ pub fn composite_quad(
 /// 屏幕 uv 由着色器从 `VSOut.ndc` 推出（`ndc * 0.5 + 0.5`），不占顶点字段 ——
 /// 那条已经在 `zephyra.hlsl` 的 `VSOut` 注释里写明为什么。
 ///
-/// # 元素在 RT 里的位置
+/// # 几何只铺**元素矩形**，不铺离屏范围
 ///
-/// `element_rect_in_rt` = 元素在离屏纹理里的子矩形，由调用方从
-/// `FilterChain::origin_in` 与内容矩形算出。算错时折射仍然"有效果"，
-/// 只是边缘高光的位置整体偏了 —— 那种错极难察觉，所以该值由入参显式
-/// 给出，不在内部猜。
+/// 这一节记的是一个**已经犯过、且错得极难发现**的错误。
+///
+/// 旧版把 `position` 铺的是 `pass.bounds`（含 outset 的离屏范围，而折射的
+/// outset 是 0，所以它等于命令矩形 —— 但合成趟拿到的是**整块离屏 RT 的范围**），
+/// 而 `local` 仍按元素矩形铺。两者不匹配的后果是：四边形越出元素的那一圈，
+/// `local` 仍落在 `[0, ew]` 内，SDF 于是说它「在元素内部」，`mask` 恰好是 1。
+///
+/// 于是折射合成**把整幅画面都变成了玻璃** —— 而那正是它应该有的样子，所以
+/// 没人会当它是坏的。真正的病状只在一个地方露出来：四边形本身只该覆盖元素。
+///
+/// 修法就是让 `position` 与 `local` 覆盖**同一块区域**。正常形态下两者本来
+/// 就一致（outset 为 0），所以这个错在正常路径上完全看不出来。
 pub fn refraction_composite_quad(
-    dst_screen: Rect,
+    element_screen: Rect,
     dst_size: (f32, f32),
-    element_rect_in_rt: Rect,
     corner_radius: f32,
     refraction: Refraction,
 ) -> [crate::quad::Vertex; 4] {
-    let ew = element_rect_in_rt.width.max(1e-6);
-    let eh = element_rect_in_rt.height.max(1e-6);
-    // 几何（position）铺满**屏幕矩形**，`half_size` 是**元素**的半宽半高。
-    // 两个尺寸分别处理，理由同 `composite_quad`。
+    let ew = element_screen.width.max(1e-6);
+    let eh = element_screen.height.max(1e-6);
     let sw = dst_size.0.max(1e-6);
     let sh = dst_size.1.max(1e-6);
+    // 几何铺的是**元素矩形**（而不是离屏范围），见函数文档。
     let (x0, x1) = (
-        dst_screen.x / sw * 2.0 - 1.0,
-        (dst_screen.x + dst_screen.width) / sw * 2.0 - 1.0,
+        element_screen.x / sw * 2.0 - 1.0,
+        (element_screen.x + element_screen.width) / sw * 2.0 - 1.0,
     );
     let (y0, y1) = (
-        1.0 - dst_screen.y / sh * 2.0,
-        1.0 - (dst_screen.y + dst_screen.height) / sh * 2.0,
+        1.0 - element_screen.y / sh * 2.0,
+        1.0 - (element_screen.y + element_screen.height) / sh * 2.0,
     );
     let half = [ew * 0.5, eh * 0.5];
     let v = |position: [f32; 2], local: [f32; 2]| crate::quad::Vertex {
@@ -574,9 +591,10 @@ pub fn refraction_composite_quad(
         local,
         // 元素内归一化：0..1 对应元素的左/上边到右/下边。
         uv: [local[0] / ew, local[1] / eh],
-        // `.r` = 色散量（见上面的表）。
-        color: [refraction.dispersion, 0.0, 0.0, 1.0],
-        // x = 圆角半径，y = 折射强度。
+        // 若干参数塞进同一个 `vec4` 的不同通道（见上面的表）：
+        // `.r` = 色散、`.g` = 倒角带宽、`.b` = 折射率。
+        color: [refraction.dispersion, refraction.bezel, refraction.ior, 1.0],
+        // x = 圆角半径，y = 玻璃厚度
         corner: [corner_radius, refraction.strength],
         half_size: half,
         kind: crate::quad::kind::BLUR,
