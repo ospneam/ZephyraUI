@@ -15,7 +15,7 @@ use zephyra_fx::View;
 use zephyra_style::ir::StyleSheet;
 
 use zephyra_gallery::app::pages::PAGES;
-use zephyra_gallery::app::{Gallery, BASE_COLUMNS, ROUTES, SETTINGS_ROUTE};
+use zephyra_gallery::app::{Gallery, BASE_COLUMNS, REF_FAMILIES, ROUTES, SETTINGS_ROUTE};
 use zephyra_ui::tokens::ALL as TOKENS;
 
 // ---------------------------------------------------------------- 公共帮手
@@ -58,6 +58,27 @@ fn laid_out(route: &'static str) -> Node {
     root
 }
 
+/// 造一棵「**reference 页 + 指定族**」的树。
+///
+/// # 为什么需要它
+///
+/// 九族控件不再是路由（参考层收进 `reference` 页内 segmented 切换），于是
+/// 「玻璃参数门禁」要验的那三块玻璃现在住在 `reference` 页的第 8 族里。
+/// [`laid_out`] 只能设路由，设不了族 —— 而族是 `Gallery::ref_family` 状态，
+/// 不设它就永远落在 basics（第 0 族），玻璃门禁会因「树里没有玻璃」而恒真。
+fn laid_out_ref(family: usize) -> Node {
+    let theme = Theme::builtin(ThemeVariant::Dark);
+    let ctx = Context::new(&theme);
+    let mut g = Gallery::default();
+    g.route = "reference";
+    g.ref_family = family;
+    let element = g.view(&ctx);
+    let mut root = Node::from_element(&element);
+    merged_sheet().apply_all(&mut root);
+    zephyra_core::layout::layout(&mut root, Rect::new(0.0, 0.0, 1400.0, 800.0), ctx);
+    root
+}
+
 /// 覆盖「会改外观的状态」的门禁脚本表 —— `interaction_leaves_no_stale_appearance`
 /// 与 `every_stylesheet_rule_matches_something` 共用。
 ///
@@ -76,7 +97,7 @@ type GateScripts = Vec<(&'static str, fn(&mut Gallery))>;
 /// 见 [`GateScripts`]。
 fn interaction_scripts() -> GateScripts {
     vec![
-        ("切到 basics", |g| g.route = "basics"),
+        ("切到 guide", |g| g.route = "guide"),
         ("勾上 alpha", |g| g.checked[0] = true),
         ("再勾 beta 与 gamma", |g| {
             g.checked[1] = true;
@@ -99,11 +120,51 @@ fn interaction_scripts() -> GateScripts {
         ("关掉菜单", |g| g.menu_open = None),
         ("展开下拉", |g| g.dd_open = true),
         ("收起下拉", |g| g.dd_open = false),
-        ("切到 collections", |g| g.route = "collections"),
+        ("切到 reference", |g| g.route = "reference"),
+        ("切到 styling", |g| g.route = "styling"),
+        ("切到 layout", |g| g.route = "layout"),
         ("切到 settings", |g| g.route = "settings"),
-        ("切到 toggles", |g| g.route = "toggles"),
-        ("切到 effects", |g| g.route = "effects"),
-        ("切回 home", |g| g.route = "home"),
+        ("切回 guide", |g| g.route = "guide"),
+        ("参考页切到玻璃族", |g| {
+            g.route = "reference";
+            g.ref_family = 8;
+        }),
+        ("参考页切到选择族", |g| {
+            g.route = "reference";
+            g.ref_family = 1;
+        }),
+        // ⚠ 九族**每族一个脚本**：族内容只在对应分段被选中时出现在树上，
+        // 而 `every_stylesheet_rule_matches_something` 按全部脚本扫形状 ——
+        // 少一个族的脚本，那一族的分类名（`.page-menus` 等）就会被误判成
+        // 死规则，然后有人会去删规则。第一次就踩了这个坑。
+        ("参考页切到布局族", |g| {
+            g.route = "reference";
+            g.ref_family = 2;
+        }),
+        ("参考页切到集合族", |g| {
+            g.route = "reference";
+            g.ref_family = 3;
+        }),
+        ("参考页切到菜单族", |g| {
+            g.route = "reference";
+            g.ref_family = 4;
+        }),
+        ("参考页切到导航族", |g| {
+            g.route = "reference";
+            g.ref_family = 5;
+        }),
+        ("参考页切到状态族", |g| {
+            g.route = "reference";
+            g.ref_family = 6;
+        }),
+        ("参考页切到对话框族", |g| {
+            g.route = "reference";
+            g.ref_family = 7;
+        }),
+        ("参考页切回输入族", |g| {
+            g.route = "reference";
+            g.ref_family = 0;
+        }),
         ("折射参数加一档", |g| {
             g.glass.nudge(zephyra_gallery::app::glass::Param::Ior, 1);
         }),
@@ -200,10 +261,10 @@ fn the_whole_tree_writes_no_appearance_in_source() {
             let mut g = Gallery::default();
             g.route = route;
             if hovered {
-                g.hovered = Some(zephyra_core::id::ElementKey::from("home"));
+                g.hovered = Some(zephyra_core::id::ElementKey::from("guide"));
             }
             if pressed {
-                g.pressed = Some(zephyra_core::id::ElementKey::from("home"));
+                g.pressed = Some(zephyra_core::id::ElementKey::from("guide"));
             }
             let theme = Theme::builtin(ThemeVariant::Dark);
             let ctx = Context::new(&theme);
@@ -530,7 +591,7 @@ fn root_container_writes_no_fixed_size() {
 /// 2. 基准画布下与去掉尺寸之前**无差别**（回归保护）。
 #[test]
 fn root_container_still_fills_client_area_at_baseline() {
-    let root = laid_out("home");
+    let root = laid_out("guide");
     let r = root.rect();
     let (cw, ch) = zephyra_gallery::app::BASE_VIEWPORT;
     assert_eq!(
@@ -548,7 +609,7 @@ fn root_container_still_fills_client_area_at_baseline() {
 /// core 没有 flex-grow，"铺满"靠的是固定宽高常量 —— 常量错了这里立刻红。
 #[test]
 fn shell_layout_geometry() {
-    let root = laid_out("home");
+    let root = laid_out("guide");
     assert!(count_nodes(&root) > 40, "树是空的，几何门禁恒真");
 
     let titlebar = find_by_key(&root, "titlebar").expect("titlebar");
@@ -633,7 +694,7 @@ fn only_fill_nodes_carry_local_width() {
     }
     // basic-input 有 2 个滑条、status 有 3 个进度条、settings 有 1 个 ——
     // 少于 5 说明某页的填充没造出来，这条可能恒真。
-    assert!(fills >= 5, "fill:* 只有 {fills} 个 —— 这条可能恒真");
+    assert!(fills >= 4, "fill:* 只有 {fills} 个 —— 这条可能恒真");
     assert!(
         bad.is_empty(),
         "这些节点在源码里写了 WIDTH 但 key 不是 fill:*：\n  {}",
@@ -1083,7 +1144,7 @@ fn the_app_always_asks_for_the_mica_look() {
     let mut g = Gallery::default();
     assert!(g.mica, "默认就应当请求 Mica 外观");
 
-    let mut root = laid_out("home");
+    let mut root = laid_out("guide");
     sheet.apply_all(&mut root);
 
     // 找标题栏节点：它的样式分类名里应当有 `mica`。
@@ -1291,39 +1352,89 @@ fn every_route_id_is_translated_in_every_supported_language() {
     );
 }
 
-/// 分段控件的段 id 与 [`Gallery::click`] 的分支必须一一对应。
+/// 控件参考页的**族切换**必须接线：九个 segmented key 都在树上，且真的点了
+/// 都会改 `Gallery::ref_family`。
 ///
-/// # 为什么这条必须逐条列出来
+/// # 为什么取代了旧的 `segment_keys_are_all_wired`
 ///
-/// `pages::toggles` 里写了三个段，`click()` 里写了三条 `seg:*` 分支。两处都
-/// 是普通字符串，编译器看不出「少了一条」。而漏掉的后果是：那一段**永远选不中**
-/// —— 点下去界面上什么都不变，而分段控件的其余两段完全正常。
+/// 九族控件不再是路由（参考层收进 `reference` 页内 segmented 切换），旧的
+/// `seg:grid` / `seg:list` / `seg:card` 分段随 toggles 路由一起消失。
+/// 新的分段是 `ref:basics` … `ref:effects` 九族，走 [`crate::app::REF_FAMILIES`]
+/// 查表 —— 加一族只改那张表，而这条门禁**真的点一遍**证明接线。
+///
+/// # 为什么不能只查 key 在树上
+///
+/// 「key 在树上」只证明按钮**画出来了**；分派是运行期字符串解析
+/// （剥 `ref:` 前缀 → 查表），编译器看不出「面板发的 key 与查表认识的 key
+/// 对不上」。所以这里真的点，然后回读 `ref_family`。
 #[test]
-fn segment_keys_are_all_wired() {
-    use zephyra_gallery::app::pages::toggles::RADIO_ITEMS;
+fn reference_family_keys_all_wired() {
+    let root = laid_out("reference");
+    // 九个 key 都在树上（否则是「click 里有、页面上没有」，症状相反：
+    // 点了对的事，但界面上没有那个东西）。
+    for fam in REF_FAMILIES {
+        let key = format!("ref:{fam}");
+        assert!(
+            find_by_key(&root, &key).is_some(),
+            "参考页上找不到族切换按钮 {key} —— REF_FAMILIES 与 pages::reference 对不上"
+        );
+    }
 
-    let seg_ids = ["seg:grid", "seg:list", "seg:card"];
-    // 三条都必须真的出现在选择页的树上（否则是「click 里有、页面上没有」，
-    // 症状相反：点了对的事，但界面上没有那个东西）。
-    let root = laid_out("toggles");
-    for id in seg_ids {
-        assert!(
-            find_by_key(&root, id).is_some(),
-            "选择页上找不到段 {id} —— pages::toggles 的 SEGS 与它对不上"
+    // 逐个点，回读 ref_family。
+    for (i, fam) in REF_FAMILIES.iter().enumerate() {
+        let mut g = Gallery::default();
+        g.route = "reference";
+        g.click(&format!("ref:{fam}"));
+        assert_eq!(
+            g.ref_family, i,
+            "点 `ref:{fam}` 后 ref_family 应是 {i} —— 分派漏了这个 key 或查表错位"
         );
     }
-    // 单选组同理。
-    for (id, _) in RADIO_ITEMS {
-        assert!(
-            find_by_key(&root, id).is_some(),
-            "选择页上找不到单选项 {id}"
-        );
-    }
+}
+
+/// 参考页必须**九族齐全**：每一族的树里都有该族的特征控件。
+///
+/// # 恒真防御
+///
+/// 每族先断言树上确实有内容（节点数下界），否则某族 `page()` 改名后
+/// 这条会因为「全部回落到 basics」而绿 —— 那是**布局回退**，不是九族齐全。
+#[test]
+fn reference_page_has_all_nine_families() {
+    use zephyra_gallery::app::pages::reference;
+
     assert_eq!(
-        RADIO_ITEMS.len(),
-        3,
-        "RADIO_ITEMS 的长度应与 click() 里的三条分支一致"
+        REF_FAMILIES.len(),
+        9,
+        "参考页应有九族 —— 加族时同步改这张表"
     );
+    for (i, fam) in REF_FAMILIES.iter().enumerate() {
+        let mut g = Gallery::default();
+        g.route = "reference";
+        g.ref_family = i;
+        let theme = Theme::builtin(ThemeVariant::Dark);
+        let ctx = Context::new(&theme);
+        let element = g.view(&ctx);
+        let root = Node::from_element(&element);
+        // 每族树里必须有该族的特征 key —— 特征 key 是各族 page() 里
+        // 第一个可辨识控件的 key，改控件时同步改这里。
+        let probe = match *fam {
+            "basics" => "combo-material",
+            "toggles" => "check:alpha",
+            "layout" => "card-a",
+            "collections" => "list",
+            "menus" => "menubar",
+            "navigation" => "subdemo:a",
+            "status" => "progress",
+            "dialogs" => "dp",
+            "effects" => "glass:a",
+            _ => panic!("未知族 {fam}"),
+        };
+        assert!(
+            find_by_key(&root, probe).is_some(),
+            "参考页第 {i} 族（{fam}）的树里找不到特征控件 {probe} —— 该族内容没接进 reference"
+        );
+        let _ = reference::page(&g);
+    }
 }
 // ------------------------------------------- 门禁 21：响应式（官方断点 + 列数）
 
@@ -1563,7 +1674,8 @@ fn glass_params_are_not_hard_coded() {
 
     // ---- 基准树 ----
     let mut base = Gallery::default();
-    base.route = "effects";
+    base.route = "reference";
+    base.ref_family = 8;
     let warm = filters_at(&base);
     assert!(
         warm.len() >= 3,
@@ -1575,7 +1687,8 @@ fn glass_params_are_not_hard_coded() {
     // ---- 逐个参数各挪一档 ----
     for param in Param::ALL {
         let mut g = Gallery::default();
-        g.route = "effects";
+        g.route = "reference";
+        g.ref_family = 8; // effects 是 REF_FAMILIES 的第 8 项
         assert!(
             g.glass.nudge(param, 1),
             "默认档位下 `{param:?}` 加一档被 clamp 掉了 —— 表的下界取得不对"
@@ -1622,7 +1735,8 @@ fn glass_params_are_not_hard_coded() {
     // 减起时成立，而这里真正的风险是 `nudge` 把加减**同一个方向**实现成两次
     // 加（那种形状下每条单参数门禁都绿，而画面上 `[−]` 与 `[+]` 效果一样）。
     let mut round = Gallery::default();
-    round.route = "effects";
+    round.route = "reference";
+    round.ref_family = 8;
     for param in Param::ALL {
         assert!(round.glass.nudge(param, 1), "`{param:?}` 加一档被 clamp 了");
     }
@@ -1759,7 +1873,7 @@ fn glass_param_tables_line_up() {
 /// 断言 8 个按钮全在树上；按钮少画了就会在这里报，而不是静默通过。
 #[test]
 fn glass_param_keys_all_wired() {
-    let root = laid_out("effects");
+    let root = laid_out_ref(8);
     let mut keys = Vec::new();
     for param in Param::ALL {
         keys.push(format!("glass-{}:dec", param.slug()));
@@ -1775,7 +1889,8 @@ fn glass_param_keys_all_wired() {
 
     // 逐个点「加」，每次都要求参数真的动了。
     let mut g = Gallery::default();
-    g.route = "effects";
+    g.route = "reference";
+    g.ref_family = 8; // effects 是 REF_FAMILIES 的第 8 项
     for param in Param::ALL {
         let before = g.glass;
         g.click(&format!("glass-{}:inc", param.slug()));

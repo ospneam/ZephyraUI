@@ -113,7 +113,10 @@ Container.nav-pane {
 }
 
 Container.nav-spacer {
-    height: 226px;
+    /* ⚠ 与 `shell::NAV_SPACER` 常量必须一致（8 项 = 364，7 项之间只有 6 个
+     * 间距）。差一项（46）时 `shell_metrics_match_stylesheet` 立刻红，而画面
+     * 上的症状只是「置底项浮在半空」。改导航项数量时两处一起改。 */
+    height: 364px;
 }
 
 /* ---- 内容卡 ---- */

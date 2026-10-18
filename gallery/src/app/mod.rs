@@ -49,16 +49,39 @@ pub mod shell;
 /// 拼错时 `ICON_NAME` 解析不到、图标**静默**消失 —— 门禁
 /// `every_icon_name_the_tree_emits_is_registered` 盯着这条。
 pub const ROUTES: &[(&str, &str, &str)] = &[
-    ("home", "Overview", "home"),
-    ("basics", "Basic Input", "pen"),
-    ("toggles", "Selection", "check"),
+    ("guide", "Quick start", "home"),
+    ("state", "State", "check"),
+    ("styling", "Styling", "pen"),
     ("layout", "Layout", "grid"),
-    ("collections", "Collections", "doc"),
-    ("menus", "Menus", "settings"),
-    ("navigation", "Navigation", "menu"),
-    ("status", "Status", "bell"),
-    ("dialogs", "Dialogs", "calendar"),
-    ("effects", "Liquid Glass", "star"),
+    ("theme", "Theme & i18n", "settings"),
+    ("testing", "Testing", "bell"),
+    ("reference", "Controls", "doc"),
+];
+
+/// 控件参考页的**族**（顺序即 segmented 的段顺序）。
+///
+/// # 为什么用下标而不是 `&'static str`
+///
+/// `view()` 每帧重建整棵树，`selected` 要喂给 segmented。存下标是 Copy 的、
+/// 能直接比较，与 `combo` / `spin` 同一手法；存字符串则每帧要比较一次内容，
+/// 而「选中的是哪一项」在画面上就是那个高亮的段。
+///
+/// # 与旧 `pages::PAGES` 的分工
+///
+/// 参考层不再是**路由**（9 条路由平铺进导航栏装不下 —— 二级导航
+/// `nav_sub_item` 不折叠，9 个子项常驻会把 756 高的导航栏撑爆），而是
+/// `reference` **页内**的 segmented 切换。九族内容复用现有页面模块的
+/// `content()`，每族独立一屏，一屏装得下。
+pub const REF_FAMILIES: &[&str] = &[
+    "basics",
+    "toggles",
+    "layout",
+    "collections",
+    "menus",
+    "navigation",
+    "status",
+    "dialogs",
+    "effects",
 ];
 
 /// 基准画布尺寸（物理像素）= 宿主建窗口时的初值。
@@ -124,16 +147,13 @@ pub const LANG_SELFS: &[&str] = &["English", "中文", "日本語"];
 const CATALOG: &[(&str, &str, &str)] = &[
     // ---- en（默认语言）----
     ("en", "app.title", "ZephyraUI Gallery"),
-    ("en", "route.home", "Overview"),
-    ("en", "route.basics", "Basic Input"),
-    ("en", "route.toggles", "Selection"),
+    ("en", "route.guide", "Quick start"),
+    ("en", "route.state", "State"),
+    ("en", "route.styling", "Styling"),
     ("en", "route.layout", "Layout"),
-    ("en", "route.collections", "Collections"),
-    ("en", "route.menus", "Menus"),
-    ("en", "route.navigation", "Navigation"),
-    ("en", "route.status", "Status"),
-    ("en", "route.dialogs", "Dialogs"),
-    ("en", "route.effects", "Liquid Glass"),
+    ("en", "route.theme", "Theme & i18n"),
+    ("en", "route.testing", "Testing"),
+    ("en", "route.reference", "Controls"),
     ("en", "route.settings", "Settings"),
     ("en", "action.feedback", "Feedback"),
     ("en", "action.language", "Language"),
@@ -157,16 +177,13 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ("en", "set.adv.shortcuts", "Shortcuts"),
     // ---- zh-Hans ----
     ("zh-Hans", "app.title", "ZephyraUI 示例库"),
-    ("zh-Hans", "route.home", "概览"),
-    ("zh-Hans", "route.basics", "基础输入"),
-    ("zh-Hans", "route.toggles", "选择"),
+    ("zh-Hans", "route.guide", "快速开始"),
+    ("zh-Hans", "route.state", "状态"),
+    ("zh-Hans", "route.styling", "样式"),
     ("zh-Hans", "route.layout", "布局"),
-    ("zh-Hans", "route.collections", "集合"),
-    ("zh-Hans", "route.menus", "菜单"),
-    ("zh-Hans", "route.navigation", "导航"),
-    ("zh-Hans", "route.status", "状态"),
-    ("zh-Hans", "route.dialogs", "对话框"),
-    ("zh-Hans", "route.effects", "液态玻璃"),
+    ("zh-Hans", "route.theme", "主题与多语言"),
+    ("zh-Hans", "route.testing", "测试"),
+    ("zh-Hans", "route.reference", "控件参考"),
     ("zh-Hans", "route.settings", "设置"),
     ("zh-Hans", "action.feedback", "反馈"),
     ("zh-Hans", "action.language", "语言"),
@@ -182,16 +199,13 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ("zh-Hans", "set.adv.shortcuts", "快捷键"),
     // ---- ja ----
     ("ja", "app.title", "ZephyraUI ギャラリー"),
-    ("ja", "route.home", "概要"),
-    ("ja", "route.basics", "基本入力"),
-    ("ja", "route.toggles", "選択"),
+    ("ja", "route.guide", "クイックスタート"),
+    ("ja", "route.state", "状態"),
+    ("ja", "route.styling", "スタイリング"),
     ("ja", "route.layout", "レイアウト"),
-    ("ja", "route.collections", "コレクション"),
-    ("ja", "route.menus", "メニュー"),
-    ("ja", "route.navigation", "ナビゲーション"),
-    ("ja", "route.status", "ステータス"),
-    ("ja", "route.dialogs", "ダイアローグ"),
-    ("ja", "route.effects", "リキッドグラス"),
+    ("ja", "route.theme", "テーマと多言語"),
+    ("ja", "route.testing", "テスト"),
+    ("ja", "route.reference", "コントロール"),
     ("ja", "route.settings", "設定"),
     ("ja", "action.feedback", "フィードバック"),
     ("ja", "action.language", "言語"),
@@ -394,6 +408,23 @@ pub struct Gallery {
     /// 视口缩放比。它与 [`Self::viewport`] 一起才能算出有效像素（断点口径）。
     /// 初始 1.0 = 「dump 路当作未缩放处理」，与上面同源。
     pub scale: f32,
+    /// 控件参考页当前选中的**族下标**（落在 [`REF_FAMILIES`] 里）。
+    ///
+    /// # 为什么单独一个字段而不是复用 `seg`
+    ///
+    /// `seg` 是 toggles 页的分段，`ref_family` 是参考页的分段 —— 两者
+    /// 各管一页。共用一个字段会让「在参考页选了 Layout」污染「toggles 页
+    /// 的分段选中项」，而画面上两页各自的高亮是对的、只有切回去才发现不对。
+    pub ref_family: usize,
+    /// 快速开始章的按钮计数。
+    ///
+    /// # 为什么单独一个字段而不是复用 `spin`
+    ///
+    /// `spin` 是 Basic Input 页 SpinBox 的值，语义是「0..100 的整数输入」。
+    /// 复用它会让「点快速开始章的按钮」去改 SpinBox 的显示 —— 而那个
+    /// SpinBox 在另一页。开发者会看到「点这个按钮，那个页面的某个东西变了」，
+    /// 而画面上没有任何线索把两者连起来。
+    pub guide_count: u32,
     /// 当前语言在 [SUPPORTED] 里的**下标**。
     ///
     /// 存下标而不是 Tag：Tag 每帧都要重新构造，而下标是 Copy 且能直接当
@@ -610,13 +641,15 @@ impl Gallery {
 impl Default for Gallery {
     fn default() -> Self {
         Self {
-            route: "home",
+            route: "guide",
             hovered: None,
             pressed: None,
             last_pressed: None,
             wants_dark: true,
             theme_intent: None,
             seg: "seg:grid",
+            ref_family: 0,
+            guide_count: 0,
             checked: [true, false, false],
             radio: 0,
             glass: crate::app::glass::Glass::default(),
@@ -784,6 +817,22 @@ impl Gallery {
             // 那不是漏接，是 core 还没有把它们做成输入设备 —— 已记账在
             // `docs/dev-log/README.md`。别在这里给它们编造一个假动作。
             //
+            // ---- 快速开始章的计数 ----
+            //
+            // 开发者点这个按钮时，他想看的是「状态变了 → 界面变了」。
+            // 所以这里只做一件事：加一。渲染由 `view()` 每帧读状态重建。
+            "guide-inc" => self.guide_count = self.guide_count.saturating_add(1),
+            // ---- 控件参考页的族切换 ----
+            //
+            // key 形如 `ref:basics`。走 `REF_FAMILIES` 查表而不是九段 `match`：
+            // 加一族只改那张表。解析方式与玻璃参数同构（剥前缀 → 查表），
+            // 而门禁 `reference_family_keys_all_wired` 钉住「表里有、树上也有」。
+            _ if key.starts_with("ref:") => {
+                let fam = &key[4..];
+                if let Some(i) = REF_FAMILIES.iter().position(|f| *f == fam) {
+                    self.ref_family = i;
+                }
+            }
             // ---- 玻璃参数步进 ----
             //
             // key 形如 `glass-thickness:dec`。解析方式是「剥前缀 → 找后缀」，

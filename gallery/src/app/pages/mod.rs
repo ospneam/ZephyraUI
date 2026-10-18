@@ -25,10 +25,11 @@ pub mod basics;
 pub mod collections;
 pub mod dialogs;
 pub mod effects;
-pub mod home;
+pub mod guide;
 pub mod layout;
 pub mod menus;
 pub mod navigation;
+pub mod reference;
 pub mod settings;
 pub mod status;
 pub mod toggles;
@@ -85,65 +86,52 @@ pub struct Page {
 /// 导航栏那份需要的字段更少，而让两条路径各自只依赖自己要的东西更不容易漂移。
 /// 门禁 `route_table_and_page_table_agree` 钉住两份表的 id 集合相同。
 pub const PAGES: &[Page] = &[
+    // ---- 指南层（学习顺序）----
     Page {
-        id: "home",
-        title: "Overview",
+        id: "guide",
+        title: "Quick start",
         icon: "home",
-        build: home::page,
+        build: guide::hello::page,
     },
     Page {
-        id: "basics",
-        title: "Basic Input",
-        icon: "pen",
-        build: basics::page,
-    },
-    Page {
-        id: "toggles",
-        title: "Selection",
+        id: "state",
+        title: "State",
         icon: "check",
-        build: toggles::page,
+        build: guide::state::page,
+    },
+    Page {
+        id: "styling",
+        title: "Styling",
+        icon: "pen",
+        build: guide::styling::page,
     },
     Page {
         id: "layout",
         title: "Layout",
         icon: "grid",
-        build: layout::page,
+        build: guide::layout::page,
     },
     Page {
-        id: "collections",
-        title: "Collections",
-        icon: "doc",
-        build: collections::page,
-    },
-    Page {
-        id: "menus",
-        title: "Menus",
+        id: "theme",
+        title: "Theme & i18n",
         icon: "settings",
-        build: menus::page,
+        build: guide::theme::page,
     },
     Page {
-        id: "navigation",
-        title: "Navigation",
-        icon: "menu",
-        build: navigation::page,
-    },
-    Page {
-        id: "status",
-        title: "Status",
+        id: "testing",
+        title: "Testing",
         icon: "bell",
-        build: status::page,
+        build: guide::testing::page,
     },
+    // ---- 附录：控件参考 ----
+    //
+    // 不作为一级导航项平铺（九族装不下），而是页内 segmented 切换。
+    // 内容复用 basics/toggles/... 各模块的 `page()`。
     Page {
-        id: "dialogs",
-        title: "Dialogs",
-        icon: "calendar",
-        build: dialogs::page,
-    },
-    Page {
-        id: "effects",
-        title: "Liquid Glass",
-        icon: "star",
-        build: effects::page,
+        id: "reference",
+        title: "Controls",
+        icon: "doc",
+        build: reference::page,
     },
     // Settings 排在最后，但**不是** `ROUTES` 的一员（它由 shell 置底）。
     Page {
@@ -159,7 +147,7 @@ pub const PAGES: &[Page] = &[
 pub fn page(g: &Gallery) -> Element {
     match PAGES.iter().find(|p| p.id == g.route) {
         Some(p) => (p.build)(g),
-        None => home::page(g),
+        None => guide::hello::page(g),
     }
 }
 

@@ -53,21 +53,19 @@ pub const CONTENT_W: f32 = CANVAS_W - NAV_W - 1.0;
 /// NAV_H - 2*padding - (NAV_ITEMS*item_h + NAV_ITEMS*spacing) - item_h - 底部留白
 /// ```
 ///
-/// 当前 10 个导航项、项高 40、间距 6、上下 padding 各 12：
-/// `756 - 24 - 10*40 - 10*6 - 40 - 46 = 226`。
-/// 底边 = 44 + 24 + (10*40 + 10*6) + 226 + 40 = 744，离目标 788 差 44 ——
-/// 那 44 就是留白，别把它算进去。
+/// 当前 8 个导航项（7 路由 + Settings 置底）、项高 40、间距 6、上下 padding 各 12：
+/// `756 - 24 - 7*40 - 6*6 - 40 - 44 = 364`（7 项之间只有 6 个间距）。
 ///
 /// ⚠ 改路由数量时**必须**重算这里：差一项（46）时 `shell_layout_geometry`
 /// 会立刻红，而症状在画面上只是「置底项浮在半空」，不看几何门禁很容易归咎
 /// 成「间距不对」而去改样式表。
-pub const NAV_SPACER: f32 = 226.0;
+pub const NAV_SPACER: f32 = 364.0;
 
-/// 导航项数（= `ROUTES` 的长度）。
+/// 导航项数（= `ROUTES` 的长度 + Settings 置底项）。
 ///
 /// 显式写成一个常量而不是 `ROUTES.len()`：几何门禁要比对**算出来的数**与
 /// **样式表里的数**，用 `.len()` 会让两边永远相等，于是改路由数量时门禁失去作用。
-pub const NAV_ITEMS: usize = 10;
+pub const NAV_ITEMS: usize = 8;
 
 /// 整窗。
 pub fn window(g: &Gallery) -> Element {
@@ -272,7 +270,7 @@ fn current_route(g: &Gallery) -> (&'static str, &'static str) {
         .chain(std::iter::once(&SETTINGS_ROUTE))
         .find(|(id, _, _)| *id == g.route)
         .map(|(id, _, i)| (route_key(id), *i))
-        .unwrap_or((route_key("home"), "home"))
+        .unwrap_or((route_key("guide"), "home"))
 }
 
 /// 页体：按路由分发。

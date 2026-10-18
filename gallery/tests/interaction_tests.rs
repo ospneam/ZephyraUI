@@ -77,7 +77,10 @@ impl Harness {
         let theme = Theme::builtin(ThemeVariant::Dark);
         let ctx = Context::new(&theme);
         let mut gallery = Gallery::default();
-        gallery.route = "basics";
+        // basics 页不再是路由（参考层收进 reference 页内 segmented 切换）。
+        // btn-standard 等 key 现在住在 reference 页的第 0 族里。
+        gallery.route = "reference";
+        gallery.ref_family = 0;
         let mut node = Node::from_element(&gallery.view(&ctx));
         sheet().apply_all(&mut node);
         layout(&mut node, Rect::new(0.0, 0.0, W, H), ctx);

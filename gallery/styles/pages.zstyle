@@ -30,12 +30,12 @@ Container.section-body {
     spacing: 12px;
 }
 
+/* 控件样例行：左标签固定 132px，右控件靠左排开。 */
 Container.stack {
     direction: vertical;
     spacing: 8px;
 }
 
-/* 控件样例行：左标签固定 132px，右控件靠左排开。 */
 Container.demo-row {
     direction: horizontal;
     cross-align: center;
@@ -57,7 +57,14 @@ Text.demo-label {
 
 /* ---- 每页根容器 ---- */
 
-Container.page-home     { direction: vertical; spacing: 24px; cross-align: stretch; }
+Container.page-guide    { direction: vertical; spacing: 24px; cross-align: stretch; }
+Container.page-state    { direction: vertical; spacing: 24px; cross-align: stretch; }
+Container.page-styling  { direction: vertical; spacing: 24px; cross-align: stretch; }
+Container.page-theme    { direction: vertical; spacing: 24px; cross-align: stretch; }
+Container.page-testing  { direction: vertical; spacing: 24px; cross-align: stretch; }
+Container.page-reference { direction: vertical; spacing: 24px; cross-align: stretch; }
+/* 参考层九族：不再是路由，但各族的 page() 仍发这些分类名（嵌在
+ * reference 页里）。少一条就是「那一族嵌进来没有间距」。 */
 Container.page-basics   { direction: vertical; spacing: 24px; cross-align: stretch; }
 Container.page-toggles  { direction: vertical; spacing: 24px; cross-align: stretch; }
 Container.page-layout   { direction: vertical; spacing: 24px; cross-align: stretch; }
@@ -69,54 +76,14 @@ Container.page-dialogs  { direction: vertical; spacing: 24px; cross-align: stret
 Container.page-effects  { direction: vertical; spacing: 24px; cross-align: stretch; }
 Container.page-settings { direction: vertical; spacing: 20px; cross-align: stretch; }
 
-/* ---- 首页 ---- */
-
-/* 横幅：刻意压到 180。旧版 320 占掉一屏的三分之一，而那三分之一里只有三行字。 */
-Container.hero {
-    direction: vertical;
-    spacing: 8px;
-    padding: 28px;
-    height: 180px;
-    corner-radius: 12px;
-    background: #16305c;
-}
-
-Text.hero-title {
-    text-size: 34px;
-    text-color: #ffffff;
-}
-
-Text.hero-sub {
-    text-size: 14px;
-    text-color: #ffffff;
-}
-
-/* 分类入口：小按钮，不是大卡片。
+/* ⚠ 这里**没有**旧 `home` 页的样式（`Container.hero` / `Text.hero-*` /
+ * `Control.button.category` / `Container.category-row`）。home 页随
+ * 「示例项目」重写一起删除——它被指南层的 `guide` 章取代，那些规则成了
+ * 死规则，由 `every_stylesheet_rule_matches_something` 抓出来整块删除。
  *
- * 它们只是**入口**，不该和上面那些「能真的用」的控件抢视觉重量。
- * 大卡片会让首页变成一张目录页 —— 而目录页正是用户打开应用想躲开的东西。
+ * 旧注释里「横幅压到 180」「分类入口不要大卡片」的取舍仍有参考价值：
+ * 那两条讲的是**信息密度**（一屏里视觉重量怎么分），与 home 页是否存在无关。
  */
-/* ⚠ zstylec 的 `padding` **只吃单值**（`padding: 10px 16px` 会解析失败），
- *     且属性表里没有 `margin-*` 与 `min-height`。所以横向内边距只能靠控件
- *     自己的 `width`，上下靠这里的单值 `padding`。 */
-Control.button.category {
-    height: 34px;
-    padding: 6px;
-    width: 180px;
-    background: @card;
-    border-color: @card_border;
-}
-
-Control.button.category.hovered {
-    background: @control_secondary;
-}
-
-/* 分类入口的行。core 没有折行，所以行数是**排出来的**（见 pages::home
- * 的 `category_links`），这里只给行本身的间距。 */
-Container.category-row {
-    direction: horizontal;
-    spacing: 10px;
-}
 
 /* ---- 布局页：卡片网格 ---- */
 
@@ -259,6 +226,18 @@ Text.glass-param-value {
     text-size: 14px;
     text-color: @content;
     width: 44px;
+}
+
+/* 指南层 styling 章：令牌着色的示例文字。
+ *
+ * # 它的存在理由
+ *
+ * 那一章要教「颜色走令牌」—— 而最好的教法是**现场给一条**：
+ * `@content_secondary` 的值由当前主题给，换主题时这行字自己变色，
+ * 源码一个字不用改。删掉这条规则，示例就变成「说了但不做」。 */
+Text.styling-note {
+    text-size: 15px;
+    text-color: @content_secondary;
 }
 
 /* ⚠ 这里**没有**步进按钮的尺寸覆写，走控件层 `.round` 的默认 44px 见方。
