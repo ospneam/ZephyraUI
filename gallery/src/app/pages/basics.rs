@@ -23,6 +23,9 @@ pub fn page(g: &Gallery) -> Element {
         "basics",
         "page-basics",
         vec![
+            // 触发类按钮（`act:*`）的反馈**不**在这里画：那份状态唯一的视图
+            // 在外壳页头（`shell.rs` 的 `last-action`），全路由可见。放这里
+            // 会变成第二个真相 —— 而且「点了没反应」的判断不该因页面而异。
             pages::section(
                 "sec-btns",
                 "Button",
@@ -31,55 +34,55 @@ pub fn page(g: &Gallery) -> Element {
                         "Variants",
                         vec![
                             controls::button(
-                                "btn-standard",
+                                "act:standard",
                                 "Standard",
                                 None,
                                 "standard",
-                                g.hovers("btn-standard"),
-                                g.holds("btn-standard"),
+                                g.hovers("act:standard"),
+                                g.holds("act:standard"),
                             ),
                             controls::button(
-                                "btn-accent",
+                                "act:accent",
                                 "Accent",
                                 None,
                                 "accent",
-                                g.hovers("btn-accent"),
-                                g.holds("btn-accent"),
+                                g.hovers("act:accent"),
+                                g.holds("act:accent"),
                             ),
                             controls::button(
-                                "btn-subtle",
+                                "act:subtle",
                                 "Subtle",
                                 None,
                                 "subtle",
-                                g.hovers("btn-subtle"),
-                                g.holds("btn-subtle"),
+                                g.hovers("act:subtle"),
+                                g.holds("act:subtle"),
                             ),
                         ],
                     ),
                     pages::demo_many(
-                        "With icon",
+                        "With icon / round",
                         vec![
                             controls::button(
-                                "btn-icon",
+                                "act:send",
                                 "Send",
                                 Some("pen"),
                                 "accent",
-                                g.hovers("btn-icon"),
-                                g.holds("btn-icon"),
+                                g.hovers("act:send"),
+                                g.holds("act:send"),
                             ),
                             controls::pill_button(
                                 "pill-a",
                                 "Pill",
                                 Some("star"),
-                                g.checked[1],
+                                g.pill_on,
                                 g.hovers("pill-a"),
                                 g.holds("pill-a"),
                             ),
-                        ],
-                    ),
-                    pages::demo_many(
-                        "Round",
-                        vec![
+                            // round-a / round-b 并排展示「普通 / checked」两种外观
+                            // （不是开关，见门禁白名单）。与上两个按钮同一行：
+                            // 参考页高度固定（core 无滚动），多一行会把最下面的
+                            // 色板推出客户区 —— `hit_test_agrees_with_the_painted_rects`
+                            // 会因「画面上被吃掉、点不到」红。
                             controls::round_button(
                                 "round-a",
                                 "",
@@ -103,9 +106,15 @@ pub fn page(g: &Gallery) -> Element {
             pages::section(
                 "sec-text",
                 "Text input",
-                vec![
-                    pages::demo(
-                        "TextField",
+                // ⚠ 两个都是**展示型**：core 没有文本输入（无键盘事件路由、
+                // 无光标），画的是静态内容。门禁白名单里有它们；
+                // state 章把这条边界教给开发者。
+                //
+                // 同一行而不是两行：参考页高度固定（无滚动），字段与多行框各占
+                // 一行会把这一族的色板推出客户区（真实字体下实测）。
+                vec![pages::demo_many(
+                    "Text input (display)",
+                    vec![
                         controls::text_field(
                             "field-name",
                             None,
@@ -114,47 +123,49 @@ pub fn page(g: &Gallery) -> Element {
                             g.hovers("field-name"),
                             g.holds("field-name"),
                         ),
-                    ),
-                    pages::demo(
-                        "TextArea",
                         controls::text_area(
                             "area-notes",
                             &["Multi-line notes", "second line", "third line"],
                         ),
-                    ),
-                ],
+                    ],
+                )],
             ),
             pages::section(
                 "sec-choice",
                 "Value pickers",
                 vec![
-                    pages::demo(
-                        "ComboBox",
-                        controls::combo_box(
-                            "combo-material",
-                            // 这里取的正是 `Gallery::click` 推进下标时跳的那张表
-                            // —— 页面自己定义一份就会被点的时候绕回自己，
-                            // 而画面上完全正常。
-                            combo_text(g.combo),
-                            g.hovers("combo-material"),
-                            g.holds("combo-material"),
-                        ),
+                    // ComboBox 与 SpinBox 同一行：两者都是「选一个值」，
+                    // 而参考页高度固定（无滚动）—— 各占一行会把下面推出客户区。
+                    pages::demo_many(
+                        "Value",
+                        vec![
+                            controls::combo_box(
+                                // 这里取的正是 `Gallery::click` 推进下标时跳的那张表
+                                // —— 页面自己定义一份就会被点的时候绕回自己，
+                                // 而画面上完全正常。
+                                "combo-material",
+                                combo_text(g.combo),
+                                g.hovers("combo-material"),
+                                g.holds("combo-material"),
+                            ),
+                            controls::spin_box(
+                                "spin-count",
+                                spin_text(g.spin),
+                                g.hovers("spin-count"),
+                                g.holds("spin-count"),
+                                g.hovers("spin:up"),
+                                g.holds("spin:up"),
+                                g.hovers("spin:down"),
+                                g.holds("spin:down"),
+                            ),
+                        ],
                     ),
                     pages::demo(
-                        "SpinBox",
-                        controls::spin_box(
-                            "spin-count",
-                            spin_text(g.spin),
-                            g.hovers("spin-count"),
-                            g.holds("spin-count"),
-                            g.hovers("spin:up"),
-                            g.holds("spin:up"),
-                            g.hovers("spin:down"),
-                            g.holds("spin:down"),
-                        ),
-                    ),
-                    pages::demo(
-                        "Slider",
+                        // ⚠ 展示型。core 的 InputState 没有连续指针位置，
+                        // 拖动无法表达 —— 点了不滑是**正确的**。门禁
+                        // `every_interactive_key_is_wired_or_whitelisted`
+                        // 的白名单里有它；state 章把这条边界教给开发者。
+                        "Slider (display)",
                         controls::slider(
                             "slider-volume",
                             g.volume,
@@ -163,7 +174,10 @@ pub fn page(g: &Gallery) -> Element {
                             g.holds("slider-volume"),
                         ),
                     ),
-                    pages::demo("ColorPicker", controls::color_picker("picker-color", 4)),
+                    pages::demo(
+                        "ColorPicker",
+                        controls::color_picker("picker-color", g.color_idx),
+                    ),
                 ],
             ),
         ],
@@ -187,7 +201,17 @@ fn combo_text(i: usize) -> &'static str {
 ///
 /// `view()` 每帧重建整棵树，任何运行期拼出来的字符串都会变成泄漏
 /// （`Box::leak` 每帧一次，见 `element.rs` 的记录）。所以这里是一张
-/// 小表 + 越界回落，而不是 `format!("{}", n)`。
+/// 小表，而不是 `format!("{}", n)`。
+///
+/// # 为什么值域是 0..=20 而不是 0..=100
+///
+/// 表的长度由**值域**决定：零分配要求每个可能的值都有静态文本，100 项
+/// 的表里 90 项永远不会被点到。而「点 ＋ 显示不变」正是本轮要消灭的
+/// 失效类别——`spin_text` 曾只映射 0..=10、其余回落 `"42"`，默认值
+/// 42 上点 ＋/− 文本纹丝不动，看起来就像按钮没接线。
+/// 值域与表**同源**：`click` 的 `spin:up/down` 边界、默认值、这张表，
+/// 三处必须同步（门禁 `every_interactive_key_is_wired_or_whitelisted`
+/// 通过「点击后树指纹变化」钉住这条）。
 fn spin_text(n: i32) -> &'static str {
     match n {
         0 => "0",
@@ -201,7 +225,16 @@ fn spin_text(n: i32) -> &'static str {
         8 => "8",
         9 => "9",
         10 => "10",
-        _ => "42",
+        11 => "11",
+        12 => "12",
+        13 => "13",
+        14 => "14",
+        15 => "15",
+        16 => "16",
+        17 => "17",
+        18 => "18",
+        19 => "19",
+        _ => "20",
     }
 }
 

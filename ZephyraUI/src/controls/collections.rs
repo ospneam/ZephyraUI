@@ -82,6 +82,10 @@ pub fn table_view(
             .map(|(c, cell)| {
                 Element::new(NodeTag::Text)
                     .with_key(cell_key(r, c))
+                    // 数据格可点：选中哪一格是**应用**的状态（控件只发 key），
+                    // 与 `list_view` 的行同一模式。tag 仍是 `Text`（样式表按
+                    // 类型选择 `Text.table-cell`），INTERACTIVE 与 tag 无关。
+                    .with(&props::INTERACTIVE, PropertyValue::bool(true))
                     .with(&props::TEXT, PropertyValue::static_str(cell))
                     .style("table-cell")
             })
@@ -108,19 +112,20 @@ pub fn swipe_view(
     pages: &'static [(&'static str, &'static str)],
     index: usize,
 ) -> Element {
-    // ⚠ 元组形状必须是 `(id, label)`，与 `list_view` / `selector_bar` 同形。
+    // 元组形状是 `(title, desc)`：标题 + 一行说明。**不存在** id 字段 ——
+    // 翻页靠 `<key>` 上的 `sw:<i>` 指示点，卡片内容里不该出现内部键名。
     //
-    // 它曾经写成 `(title, desc)`，于是 gallery 照着兄弟控件的形状传
-    // `[("swipe:0", "First card")]` 时，**第一项被当成标题画了出来** ——
-    // 画面上是「swipe:0」这串内部键名，而第二项掉到副标题行。
-    //
-    // 这类错误不崩、不报错：元组两项都是 `&'static str`，编译器分不出谁是
-    // 标题。判据只能是「同一族控件的元组形状一致」这条约定，所以它写在注释里。
-    let (id, label) = pages.get(index).copied().unwrap_or(("swipe:-", "—"));
+    // ⚠ 这一处曾经烧过一次：形状写反时**不崩、不报错**（两项都是
+    // `&'static str`），画面上只是把 `swipe:0` 这串内部键名当正文画出来。
+    // 判据只能是「内容里不出现 `xxx:` 形态的 key」这条肉眼约定。
+    let (title, desc) = pages.get(index).copied().unwrap_or(("—", "—"));
     let pips: Vec<Element> = (0..pages.len())
         .map(|i| {
             let mut d = Element::new(NodeTag::Container)
                 .with_key(swipe_pip_key(i))
+                // 指示点同时是**翻页按钮**：core 没有拖拽手势，翻页只能
+                // 由点击表达。当前页仍由 `index` 决定（应用的状态）。
+                .with(&props::INTERACTIVE, PropertyValue::bool(true))
                 .style("swipe-pip");
             if i == index {
                 d = d.style("selected");
@@ -138,11 +143,11 @@ pub fn swipe_view(
                 .with_children([
                     Element::new(NodeTag::Text)
                         .with_key("title")
-                        .with(&props::TEXT, PropertyValue::static_str(label))
+                        .with(&props::TEXT, PropertyValue::static_str(title))
                         .style("swipe-title"),
                     Element::new(NodeTag::Text)
                         .with_key("desc")
-                        .with(&props::TEXT, PropertyValue::static_str(id))
+                        .with(&props::TEXT, PropertyValue::static_str(desc))
                         .style("swipe-desc"),
                 ]),
             Element::new(NodeTag::Container)
@@ -223,8 +228,10 @@ pub fn setting_expander(
         .with_key(key)
         .style("setting-expander")
         .with_children([
+            // 可点区域的 key 就是控件自己的 key（理由见 `card::expander`
+            // 同一处的注释：内部名 `header` 会让多个展开器撞名）。
             Element::new(NodeTag::Container)
-                .with_key("header")
+                .with_key(key)
                 .with(&props::INTERACTIVE, PropertyValue::bool(true))
                 .style("setting-header")
                 .with_children([

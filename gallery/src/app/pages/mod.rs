@@ -29,6 +29,7 @@ pub mod guide;
 pub mod layout;
 pub mod menus;
 pub mod navigation;
+pub mod paging;
 pub mod reference;
 pub mod settings;
 pub mod status;
@@ -125,7 +126,7 @@ pub const PAGES: &[Page] = &[
     },
     // ---- 附录：控件参考 ----
     //
-    // 不作为一级导航项平铺（九族装不下），而是页内 segmented 切换。
+    // 不作为一级导航项平铺（十族装不下），而是页内 segmented 切换。
     // 内容复用 basics/toggles/... 各模块的 `page()`。
     Page {
         id: "reference",

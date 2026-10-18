@@ -259,18 +259,24 @@ pub fn spin_box(
 /// 格子的**颜色**在样式表的 `sw-0..15` 里（见 [`PALETTE`]）—— 换色板改写
 /// 那 16 个类即可，源码零颜色字面量。
 pub fn color_picker(key: &'static str, selected: usize) -> Element {
-    // 4×4 网格：core 没有 Grid，按行手排（与 gallery 的 clip_grid 同手法）。
+    // 8×2 网格：core 没有 Grid，按行手排（与 gallery 的 clip_grid 同手法）。
+    //
+    // ⚠ 每行 8 个而不是 4 个：参考页的高度是固定的（无滚动），4×4 的色板在
+    // 真实字体下会把最后两行推出客户区 —— 8×2 把高度从 4 行压到 2 行。
+    // 16 个色值不变，只是排得更扁。
     let rows: Vec<Element> = PALETTE
-        .chunks(4)
+        .chunks(8)
         .enumerate()
         .map(|(r, chunk)| {
             let cells: Vec<Element> = chunk
                 .iter()
                 .enumerate()
                 .map(|(c, sw)| {
-                    let index = r * 4 + c;
+                    let index = r * 8 + c;
                     let mut cell = Element::new(NodeTag::Container)
                         .with_key(gen_swatch_key(index))
+                        // 色格可点：选中哪个颜色是应用的状态（控件只发 key）。
+                        .with(&props::INTERACTIVE, PropertyValue::bool(true))
                         .style("swatch")
                         .style(sw);
                     if index == selected {
@@ -291,13 +297,11 @@ pub fn color_picker(key: &'static str, selected: usize) -> Element {
         .with_children(rows)
 }
 
-/// 色板行的 key（纯身份，不参与路由）。
+/// 色板行的 key（纯身份，不参与路由）。8×2 网格 ⇒ 两行。
 fn row_key(r: usize) -> &'static str {
     match r {
         0 => "sw-row:0",
-        1 => "sw-row:1",
-        2 => "sw-row:2",
-        _ => "sw-row:3",
+        _ => "sw-row:1",
     }
 }
 

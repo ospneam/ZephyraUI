@@ -114,6 +114,17 @@ pub fn page(g: &Gallery) -> Element {
                             "text-caption",
                         ),
                     ),
+                    pages::demo(
+                        // 参考层的一族一屏：`--route reference` 只出第 0 族，
+                        // 另外几族要靠 `--family` 才看得见（无滚动的页面里，
+                        // 「装不下被裁掉」只在逐族出图时暴露）。
+                        "Dump one reference family",
+                        controls::text_label(
+                            "testing-dump-family",
+                            "  --family 3   # --list-families 列合法值",
+                            "text-caption",
+                        ),
+                    ),
                 ],
             ),
             // ---- 第三层：树级门禁 ----

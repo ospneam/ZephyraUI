@@ -27,7 +27,11 @@ const MINUTES: &[(&str, &str)] = &[("tpm:00", "00"), ("tpm:05", "05"), ("tpm:10"
 const WEEK_HEADS: &[&str] = &["S", "M", "T", "W", "T", "F", "S"];
 
 /// DatePicker 的格子（`None` = 空位）。7 列 × 3 周够看形态。
-const CALENDAR: &[Option<u8>] = &[
+/// # 为什么是 `pub`
+///
+/// `Gallery::click` 的 `dpc:` 分支要把格子序号换算成**日期值**——
+/// 查这张表是唯一真相（页面与分派共享一份日历）。
+pub const CALENDAR: &[Option<u8>] = &[
     Some(1),
     Some(2),
     Some(3),
@@ -51,7 +55,7 @@ const CALENDAR: &[Option<u8>] = &[
     Some(21),
 ];
 
-pub fn page(_g: &Gallery) -> Element {
+pub fn page(g: &Gallery) -> Element {
     pages::page_root(
         "dialogs",
         "page-dialogs",
@@ -69,12 +73,19 @@ pub fn page(_g: &Gallery) -> Element {
                 "Pickers",
                 vec![
                     pages::demo(
+                        // 选中日走 `Gallery::date_sel`：格子（`dpc:RC`）可点，
+                        // `click` 的 `dpc:` 分支把格子序号换算成 CALENDAR 里的
+                        // 日期值回写。选不存在的格（None）不响应——那与
+                        // 「日历上空白格本来就不是日期」一致。
                         "Date",
-                        controls::date_picker("dp", WEEK_HEADS, CALENDAR, 15),
+                        controls::date_picker("dp", WEEK_HEADS, CALENDAR, g.date_sel),
                     ),
                     pages::demo(
+                        // 小时/分钟各走一个字段：两个列是**独立**的选择器，
+                        // 共用一个下标会出现「选了 15 点，分钟跳到 05」的
+                        // 幽灵联动。
                         "Time",
-                        controls::time_picker("tp", HOURS, "14", MINUTES, "05"),
+                        controls::time_picker("tp", HOURS, g.time_hour, MINUTES, g.time_minute),
                     ),
                 ],
             ),

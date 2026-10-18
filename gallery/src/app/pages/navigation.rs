@@ -1,11 +1,17 @@
-//! 导航件：NavItem / NavSubItem / SelectorBar / Breadcrumb。
+//! 导航件：NavItem / NavSubItem / SelectorBar。
 //!
-//! # 这一页的控件**用静态选中态**，不接真实路由
+//! # 三种控件的交互语义**各不相同**，这不是不一致
 //!
-//! 左侧那根真正的导航栏已经在 [`crate::app::shell`] 里了，它接的是应用
-//! 路由。这里再摆一套可点的 NavItem 会让人以为「导航有两处」—— 而它们
-//! 行为不同（一个跳页、一个只是选中）。所以这一页的 NavItem 用固定
-//! `selected`，点它不会有任何变化，**这是有意的**：它展示的是外观。
+//! - **NavItem**（`navdemo:*`）：左侧真正的导航栏在 [`crate::app::shell`]
+//!   里，它接的是应用路由。这里再摆一套可跳页的 NavItem 会让人以为
+//!   「导航有两处」。所以这一页的 NavItem 用固定 `selected`，点了不变
+//!   —— **这是有意的**，它展示的是外观（白名单在门禁里注明）。
+//! - **NavSubItem**（`subdemo:*`）：子项没有「跳页」语义，它的完整交互
+//!   就是**选中**。接 [`Gallery::subsel`]，点谁谁亮。
+//! - **SelectorBar**（`seldemo:*`）：本质是一组互斥的过滤器，接
+//!   [`Gallery::selbar_sel`]。
+//!
+//! 把三种语义写在页首，比让开发者逐个去点猜测要诚实。
 
 use zephyra_core::element::Element;
 
@@ -20,7 +26,8 @@ const NAV_DEMO: &[(&str, &str, &str)] = &[
     ("navdemo:archive", "Archive", "doc"),
 ];
 
-/// SelectorBar 的项。
+/// SelectorBar 的项。id 与 [`crate::app::SELDEMO_IDS`] 对齐 ——
+/// 那张表是 `click` 查表还原 `'static` 的依据，两处必须同步。
 const SELECTOR: &[(&str, &str)] = &[
     ("seldemo:day", "Day"),
     ("seldemo:week", "Week"),
@@ -65,7 +72,7 @@ pub fn page(g: &Gallery) -> Element {
                             "subdemo:a",
                             "Sub A",
                             Some("menu"),
-                            true,
+                            g.subsel == "subdemo:a",
                             g.hovers("subdemo:a"),
                             g.holds("subdemo:a"),
                         ),
@@ -73,7 +80,7 @@ pub fn page(g: &Gallery) -> Element {
                             "subdemo:b",
                             "Sub B",
                             None,
-                            false,
+                            g.subsel == "subdemo:b",
                             g.hovers("subdemo:b"),
                             g.holds("subdemo:b"),
                         ),
@@ -88,7 +95,7 @@ pub fn page(g: &Gallery) -> Element {
                     controls::selector_bar(
                         "selbar",
                         SELECTOR,
-                        Some("seldemo:week"),
+                        Some(g.selbar_sel),
                         g.hovered_name(),
                         g.pressed_name(),
                     ),
@@ -97,6 +104,3 @@ pub fn page(g: &Gallery) -> Element {
         ],
     )
 }
-
-/// 让 `NAV_SUB` 被用上（否则 clippy 报未读常量）。
-const _: () = {};

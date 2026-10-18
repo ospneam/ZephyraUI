@@ -41,10 +41,14 @@ const MENU_ENTRIES: &[&[(&str, &str)]] = &[
 ];
 
 /// 工具栏图标按钮（图标名取自 core 内置图标集）。
+///
+/// key 用 `act:` 前缀：这三个按钮的语义是「触发一个动作」，动作名经
+/// [`Gallery::click`] 写进 `last_action`，外壳页头那行回显它 ——
+/// 工具栏不再是点了没反应的装饰。
 const TOOLS: &[(&str, &str)] = &[
-    ("tool:save", "doc"),
-    ("tool:search", "search"),
-    ("tool:gear", "settings"),
+    ("act:tool-save", "doc"),
+    ("act:tool-search", "search"),
+    ("act:tool-gear", "settings"),
 ];
 
 pub fn page(g: &Gallery) -> Element {

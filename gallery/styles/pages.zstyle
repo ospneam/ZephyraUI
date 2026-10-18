@@ -74,6 +74,7 @@ Container.page-navigation { direction: vertical; spacing: 24px; cross-align: str
 Container.page-status   { direction: vertical; spacing: 24px; cross-align: stretch; }
 Container.page-dialogs  { direction: vertical; spacing: 24px; cross-align: stretch; }
 Container.page-effects  { direction: vertical; spacing: 24px; cross-align: stretch; }
+Container.page-paging   { direction: vertical; spacing: 24px; cross-align: stretch; }
 Container.page-settings { direction: vertical; spacing: 20px; cross-align: stretch; }
 
 /* ⚠ 这里**没有**旧 `home` 页的样式（`Container.hero` / `Text.hero-*` /

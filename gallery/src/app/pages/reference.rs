@@ -1,4 +1,4 @@
-//! 控件参考：一页内分九族，segmented 切换。
+//! 控件参考：一页内分十族，segmented 切换。
 //!
 //! # 为什么是一页而不是九条路由
 //!
@@ -22,7 +22,7 @@ use crate::app::pages;
 use crate::app::{Gallery, REF_FAMILIES};
 
 pub fn page(g: &Gallery) -> Element {
-    // segmented 段：九族。段 id 带 `ref:` 前缀 —— `Gallery::click` 的查表按
+    // segmented 段：十族。段 id 带 `ref:` 前缀 —— `Gallery::click` 的查表按
     // `strip_prefix("ref:")` 解析，所以发裸名 `basics` 会**静默**分派不出去
     // （画面上段画出来了、点了没反应）。显示名走 [`family_label`] 查表。
     let items: Vec<(&str, &str)> = REF_FAMILIES
@@ -73,6 +73,7 @@ fn family_content(g: &Gallery) -> Element {
         Some("status") => crate::app::pages::status::page(g),
         Some("dialogs") => crate::app::pages::dialogs::page(g),
         Some("effects") => crate::app::pages::effects::page(g),
+        Some("paging") => crate::app::pages::paging::page(g),
         _ => crate::app::pages::basics::page(g),
     }
 }
@@ -89,6 +90,7 @@ fn family_label(id: &str) -> &'static str {
         "status" => "Status",
         "dialogs" => "Dialogs",
         "effects" => "Liquid Glass",
+        "paging" => "Paging",
         // ⚠ 不能写 `_ => id`：`id: &str` 的生命周期不是 `'static`，而函数
         // 返回 `&'static str`。未知 id 显示占位符 —— 与 [`family_content`]
         // 的兜底行为一致（回落到 basics），画面上看得见。
@@ -114,6 +116,7 @@ fn seg_key(fam: &str) -> &'static str {
         "status" => "ref:status",
         "dialogs" => "ref:dialogs",
         "effects" => "ref:effects",
+        "paging" => "ref:paging",
         _ => "ref:unknown",
     }
 }

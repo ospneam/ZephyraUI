@@ -25,6 +25,7 @@
 
 | 日期 | 条目 | 状态 |
 |---|---|---|
+| 2026-10-18 | [空壳控件（只有样式、点了没反应）](2026-10-hollow-controls.md) | 已通；审计出 30 个 key（4 类）；门禁按「扰动世界 + 树指纹」判定；顺带发现无字体布局的门禁看不见裁切 |
 | 2026-10-18 | [离屏 pass + 14 档 PS 变体混合](2026-10-linux-vulkan-offscreen.md) | 已通；`未实现混合` 归零；四个 usage/loadOp/initial_layout 坑 + 「RT 装的是命令自己」；对照 Windows 95.79% 逐字节一致 |
 | 2026-10-18 | [1:1 像素级达成（sRGB 取舍实测）](2026-10-linux-vulkan-parity.md) | 前 6 大颜色与 Windows 逐字节一致；UNORM 直通是正解 |
 | 2026-10 | [Linux 裸 Vulkan 后端（wgpu → ash）](2026-10-linux-vulkan-raw.md) | demo/gallery 跑通；Entry 生命周期是 segfault 根因；14 档 PS 变体未接线（已记账） |
@@ -58,13 +59,18 @@
 
 - **`docs/win/03-*.md` 缺号。** 原 `win/` 目录本来就是这个状态，没有漏搬。
 
-- **`cargo doc --no-deps --workspace` 在 `zephyra-style` 上红。** `anim.rs` 里两处
-  `[`curve`]` 链接解析不到（该类型在 `anim` 模块内部，路径写法不对），于是整个
-  crate 文档生成失败。**HEAD 上已存在**（用 `git stash` 对照验证过），本轮未碰
-  该 crate。修法是给那两条链接换成正确路径 —— 属于独立的一轮，不塞进别的工作里。
+- **触控/字体的几何判据依赖系统字体。** `gallery/tests/gates.rs` 的 `laid_out`
+  用 `zephyra_fx::from_system_font()`（与 `--dump-cpu` 同源）排版，所以「内容一屏
+  装得下」这条判据跟**本机字体度量**绑定：换一个行高更大的字体，某族就可能重新
+  贴边。取不到系统字体时 `from_system_font` 内部有兜底（退化成旧的无字体度量），
+  于是同一份门禁在无字体机器上会**变松**。当前各族的余量：`--dump-cpu` 逐族量
+  可见（basics 726/800、status 743/800 最紧）。要摆脱这一点得让 core 支持
+  「按字体度量留白」或者给参考页加滚动 —— 都还没做。
 
-- **`cargo clippy --workspace` 在 `zephyra-vulkan` 上红。** 12 处：未用导入、
-  未用变量、不可达分支，分布在 `host.rs` / `renderer.rs` / `surface.rs`。
-  **HEAD 上已存在**（同法验证），本轮未碰该 crate。这与上面一条一起构成
-  「`--workspace` 的两条门禁目前都不干净」，所以在修掉之前，验收时按
-  **逐 crate** 判而不是按 `--workspace` 判。
+- **`cargo clippy --workspace` 现在干净。** 曾记过「`zephyra-vulkan` 12 处警告」，
+  本轮实测 `-D warnings` 退出 0（那 12 处已在别轮修掉），本条改为记录现状。
+
+- **`cargo doc --no-deps --workspace` 现在干净。** 曾有两处 broken intra-doc link：
+  `zephyra-style/src/anim.rs` 的 `[`curve`]` 与 `zephyra-core/src/filter.rs` 的
+  `[`Self::bezel`]`（都指向方法/字段而不是可链接项）。本轮各改一处（`Self::curve` /
+  `` `bezel` ``），整个 workspace 文档生成退出 0，剩余 42 条是既有的链接解析警告。

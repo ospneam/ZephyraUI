@@ -46,11 +46,29 @@ fn merged_sheet() -> StyleSheet {
 }
 
 /// 造一棵**应用了样式表并布局过**的树。
+///
+/// # 文本引擎是真的（与 `--dump-cpu` 同口径）
+///
+/// 曾经用 `Context::new(&theme)`（`engine: None`）—— 文本按**兜底度量**排版，
+/// 行高比真实字体小得多。于是「一屏装不下、最下面几行被裁掉」这类问题在
+/// 门禁里**完全看不见**，而 `--dump-cpu` 的图上它就在那里：一次实测中
+/// basics 族的色板在真实字体下掉出客户区 ~110px，测试里的几何却说它稳稳在框内。
+///
+/// 判据必须与出图同源，所以这里用 [`zephyra_fx::from_system_font`]（就是
+/// `CpuHost` 用的那个）。取不到系统字体时它内部有兜底，不会 panic。
 fn laid_out(route: &'static str) -> Node {
+    laid_out_from(route, 0)
+}
+
+/// [`laid_out`] 的**带族**版本：路由 + 参考族（非 reference 路由时族无影响）。
+fn laid_out_from(route: &'static str, family: usize) -> Node {
     let theme = Theme::builtin(ThemeVariant::Dark);
-    let ctx = Context::new(&theme);
+    let (engine, _note) = zephyra_fx::from_system_font();
+    let engine = std::cell::RefCell::new(engine);
+    let ctx = Context::with_engine(&theme, &engine);
     let mut g = Gallery::default();
     g.route = route;
+    g.ref_family = family;
     let element = g.view(&ctx);
     let mut root = Node::from_element(&element);
     merged_sheet().apply_all(&mut root);
@@ -62,21 +80,12 @@ fn laid_out(route: &'static str) -> Node {
 ///
 /// # 为什么需要它
 ///
-/// 九族控件不再是路由（参考层收进 `reference` 页内 segmented 切换），于是
+/// 十族控件不再是路由（参考层收进 `reference` 页内 segmented 切换），于是
 /// 「玻璃参数门禁」要验的那三块玻璃现在住在 `reference` 页的第 8 族里。
 /// [`laid_out`] 只能设路由，设不了族 —— 而族是 `Gallery::ref_family` 状态，
 /// 不设它就永远落在 basics（第 0 族），玻璃门禁会因「树里没有玻璃」而恒真。
 fn laid_out_ref(family: usize) -> Node {
-    let theme = Theme::builtin(ThemeVariant::Dark);
-    let ctx = Context::new(&theme);
-    let mut g = Gallery::default();
-    g.route = "reference";
-    g.ref_family = family;
-    let element = g.view(&ctx);
-    let mut root = Node::from_element(&element);
-    merged_sheet().apply_all(&mut root);
-    zephyra_core::layout::layout(&mut root, Rect::new(0.0, 0.0, 1400.0, 800.0), ctx);
-    root
+    laid_out_from("reference", family)
 }
 
 /// 覆盖「会改外观的状态」的门禁脚本表 —— `interaction_leaves_no_stale_appearance`
@@ -133,7 +142,7 @@ fn interaction_scripts() -> GateScripts {
             g.route = "reference";
             g.ref_family = 1;
         }),
-        // ⚠ 九族**每族一个脚本**：族内容只在对应分段被选中时出现在树上，
+        // ⚠ 十族**每族一个脚本**：族内容只在对应分段被选中时出现在树上，
         // 而 `every_stylesheet_rule_matches_something` 按全部脚本扫形状 ——
         // 少一个族的脚本，那一族的分类名（`.page-menus` 等）就会被误判成
         // 死规则，然后有人会去删规则。第一次就踩了这个坑。
@@ -164,6 +173,14 @@ fn interaction_scripts() -> GateScripts {
         ("参考页切回输入族", |g| {
             g.route = "reference";
             g.ref_family = 0;
+        }),
+        // ⚠ **每一族一个脚本**（含新增的 `paging`）：族内容只在对应分段被选中
+        // 时出现在树上，而 `every_stylesheet_rule_matches_something` 按全部脚本
+        // 扫形状 —— 少一个族的脚本，那一族的分类名（`.page-paging` 等）就会被
+        // 误判成死规则，然后有人会去删规则。
+        ("参考页切到分页族", |g| {
+            g.route = "reference";
+            g.ref_family = REF_FAMILIES.len() - 1;
         }),
         ("折射参数加一档", |g| {
             g.glass.nudge(zephyra_gallery::app::glass::Param::Ior, 1);
@@ -806,12 +823,21 @@ fn hit_test_agrees_with_the_painted_rects() {
     let mut wrong: Vec<String> = Vec::new();
     let mut checked = 0usize;
 
-    for route in zephyra_gallery::app::list_routes() {
-        let root = laid_out(route);
+    // 参考层的十族各有各的排版，`--route reference` 只出第 0 族 ——
+    // 要逐族量，否则另外八族的掉出完全看不见。
+    let mut pages: Vec<(String, Node)> = zephyra_gallery::app::list_routes()
+        .into_iter()
+        .map(|route| (route.to_string(), laid_out(route)))
+        .collect();
+    for (i, name) in REF_FAMILIES.iter().enumerate() {
+        pages.push((format!("reference/{name}"), laid_out_from("reference", i)));
+    }
+
+    for (label, root) in &pages {
         let client = root.rect();
 
         let mut targets: Vec<(String, zephyra_core::core::Rect)> = Vec::new();
-        walk(&root, &mut |n: &Node| {
+        walk(root, &mut |n: &Node| {
             if n.props()
                 .lookup(&zephyra_core::props::INTERACTIVE)
                 .map(|(v, _)| matches!(v, zephyra_core::property::PropertyValue::Bool(true)))
@@ -833,7 +859,7 @@ fn hit_test_agrees_with_the_painted_rects() {
                 || rect.x + rect.width > client.width + 0.5
             {
                 wrong.push(format!(
-                    "{route} / {key}：矩形 {:?} 掉出客户区 {:?} —— 画面上被吃掉，点不到",
+                    "{label} / {key}：矩形 {:?} 掉出客户区 {:?} —— 画面上被吃掉，点不到",
                     rect, client
                 ));
                 continue;
@@ -846,7 +872,7 @@ fn hit_test_agrees_with_the_painted_rects() {
             let mut hit = zephyra_core::hit::HitResult::default();
             checked += 1;
             if !zephyra_core::hit::hit_test(
-                &root,
+                root,
                 zephyra_core::hit::HitTestRequest {
                     point,
                     ignore_above: None,
@@ -854,12 +880,12 @@ fn hit_test_agrees_with_the_painted_rects() {
                 ctx,
                 &mut hit,
             ) {
-                wrong.push(format!("{route} / {key}：它的中心 {point:?} 谁都没命中"));
+                wrong.push(format!("{label} / {key}：它的中心 {point:?} 谁都没命中"));
                 continue;
             }
             let Some(target) = hit.target() else {
                 wrong.push(format!(
-                    "{route} / {key}：中心 {point:?} 命中了某个**不可交互**的节点 —— \\
+                    "{label} / {key}：中心 {point:?} 命中了某个**不可交互**的节点 —— \\
                      说明它被压在别人下面（谁盖住了它？）"
                 ));
                 continue;
@@ -884,7 +910,7 @@ fn hit_test_agrees_with_the_painted_rects() {
             // 属于它自己子树的可交互节点？** 没有，就说明它被子树外的东西盖住了
             // （盖住它的不是祖先，因为它在自己子树里没有命中）—— 那才是真的错。
             let mut covered_by_own_subtree = false;
-            walk(&root, &mut |n: &Node| {
+            walk(root, &mut |n: &Node| {
                 if !covered_by_own_subtree
                     && n.key().and_then(|k| k.as_name()) == Some(key.as_str())
                 {
@@ -893,7 +919,7 @@ fn hit_test_agrees_with_the_painted_rects() {
             });
             if !covered_by_own_subtree {
                 wrong.push(format!(
-                    "{route} / {key}：中心 {point:?} 的处理目标是 {}（矩形 {:?}）—— \
+                    "{label} / {key}：中心 {point:?} 的处理目标是 {}（矩形 {:?}）—— \
                      而它自己子树里没有任何可交互节点在那个点上",
                     target.id, target.rect
                 ));
@@ -1357,9 +1383,9 @@ fn every_route_id_is_translated_in_every_supported_language() {
 ///
 /// # 为什么取代了旧的 `segment_keys_are_all_wired`
 ///
-/// 九族控件不再是路由（参考层收进 `reference` 页内 segmented 切换），旧的
+/// 十族控件不再是路由（参考层收进 `reference` 页内 segmented 切换），旧的
 /// `seg:grid` / `seg:list` / `seg:card` 分段随 toggles 路由一起消失。
-/// 新的分段是 `ref:basics` … `ref:effects` 九族，走 [`crate::app::REF_FAMILIES`]
+/// 新的分段是 `ref:basics` … `ref:effects` 十族，走 [`crate::app::REF_FAMILIES`]
 /// 查表 —— 加一族只改那张表，而这条门禁**真的点一遍**证明接线。
 ///
 /// # 为什么不能只查 key 在树上
@@ -1370,7 +1396,7 @@ fn every_route_id_is_translated_in_every_supported_language() {
 #[test]
 fn reference_family_keys_all_wired() {
     let root = laid_out("reference");
-    // 九个 key 都在树上（否则是「click 里有、页面上没有」，症状相反：
+    // 每个 key 都在树上（否则是「click 里有、页面上没有」，症状相反：
     // 点了对的事，但界面上没有那个东西）。
     for fam in REF_FAMILIES {
         let key = format!("ref:{fam}");
@@ -1392,20 +1418,24 @@ fn reference_family_keys_all_wired() {
     }
 }
 
-/// 参考页必须**九族齐全**：每一族的树里都有该族的特征控件。
+/// 参考页必须**族齐全**：每一族的树里都有该族的特征控件。
 ///
 /// # 恒真防御
 ///
 /// 每族先断言树上确实有内容（节点数下界），否则某族 `page()` 改名后
-/// 这条会因为「全部回落到 basics」而绿 —— 那是**布局回退**，不是九族齐全。
+/// 这条会因为「全部回落到 basics」而绿 —— 那是**布局回退**，不是族齐全。
 #[test]
-fn reference_page_has_all_nine_families() {
+fn reference_page_has_all_families() {
     use zephyra_gallery::app::pages::reference;
 
+    // ⚠ 这个数字是**有意写死**的：族数变化时它必须红一次，逼人回来确认
+    // 「新族的内容真的塞进了一屏」（参考页无滚动，装不下就是裁切）。
+    // 改成 `REF_FAMILIES.len()` 会让门禁失去作用 —— 它要防的正是「表改了、
+    // 内容没跟上」。
     assert_eq!(
         REF_FAMILIES.len(),
-        9,
-        "参考页应有九族 —— 加族时同步改这张表"
+        10,
+        "参考页当前是十族 —— 加族时同步改这里的数字，并确认新族一屏装得下"
     );
     for (i, fam) in REF_FAMILIES.iter().enumerate() {
         let mut g = Gallery::default();
@@ -1427,6 +1457,7 @@ fn reference_page_has_all_nine_families() {
             "status" => "progress",
             "dialogs" => "dp",
             "effects" => "glass:a",
+            "paging" => "swipe",
             _ => panic!("未知族 {fam}"),
         };
         assert!(
@@ -2202,4 +2233,312 @@ fn every_stylesheet_rule_matches_something() {
         "样式表里这些规则一个元素都选不中（写了等于没写，而树→表那两条门禁不会报）：\n  {}",
         dead.join("\n  ")
     );
+}
+
+// ------------------------------------------- 门禁 28：交互控件必须接线
+
+/// 树的**形状指纹**：类型 + key + 分类名 + 文本值，深度优先后拼成一个串。
+///
+/// # 为什么不用 `compare_trees`
+///
+/// 点击可能导致**结构**变化（关掉 InfoBar 少一个子树），而 `compare_trees`
+/// 的路径配对假设两棵树同构。指纹串对结构差异天然鲁棒：多一个节点就多一段，
+/// 两串不等。
+///
+/// # 为什么包含 TEXT 值
+///
+/// `act:` 按钮的反馈是改一个 text_label 的文本——分类名、类型、结构全都不变，
+/// 只有 TEXT 变。不含它的话「点了状态变了」会被误判成「没接」。
+fn shape_fingerprint(node: &Node, out: &mut String) {
+    use std::fmt::Write as _;
+    let text = node
+        .props()
+        .iter_local()
+        .find(|(k, _)| std::ptr::eq(*k, &zephyra_core::props::TEXT))
+        .map(|(_, v)| format!("{v:?}"))
+        .unwrap_or_default();
+    let _ = write!(
+        out,
+        "{:?}|{:?}|{:?}|{};",
+        node.tag(),
+        node.key(),
+        node.style_names(),
+        text
+    );
+    for c in node.children() {
+        shape_fingerprint(c, out);
+    }
+}
+
+/// 展示型控件白名单 —— 点击**不**改变状态是**正确的**行为。
+///
+/// # 为什么白名单必须短、且每类有出处
+///
+/// 这份名单是「这个应用里哪些可交互元素点了没反应」的**完整清单**。多进一项，
+/// 就多一个骗过门禁的空壳；少进一项，门禁红（安全方向的失败）。每一项都
+/// 必须能回答「为什么不接」：
+///
+/// | 类别 | 成员 | 为什么不接 |
+/// |---|---|---|
+/// | 窗口能力 | `win:min` / `win:max` / `win:close` | 最小化/关闭是宿主能力，View 拿不到 |
+/// | 无拖动输入 | `slider-volume`、`state-slider` | core 的 `InputState` 没有连续指针位置，拖动无法表达 |
+/// | 无文本输入 | `field-name`、`area-notes` | core 无键盘事件路由与光标 |
+/// | 指示器 | `progress`、`fx-soft`、`fx-hard` | 「进行到哪」的显示件；进度值是应用传的参数，不是可点状态 |
+/// | 外观展示 | `navdemo:*` | 导航件展示的是**外观**（真正的导航在 `shell`）——本页文档明说，见 `pages/navigation.rs` 页首 |
+/// | 外观展示 | `round-a`、`round-b` | round_button 的「普通 / checked」两种外观并排，不是两个可切换开关 |
+/// | 不可关闭 | `infobar`、`infobar-err` | `info_bar` 根节点的可点区域就是关闭钮所在行；关掉的那条由 `bar:close` 负责，根自身无动作 |
+/// | 主题意图 | `theme-toggle` | 它改的是**主题**（颜色），树形状不变——`theme_switch_changes_colors_without_touching_the_tree` 专门钉住这一点 |
+///
+/// ⚠ 往这里加条目之前先问：**能不能接？** `slider` 类是 core 真没有拖动
+/// 输入；`progress` 类本来就不是按钮。二者之外的「点了没反应」几乎都是
+/// 漏接线——先接线，进不来白名单。
+const DISPLAY_ONLY: &[&str] = &[
+    "win:min",
+    "win:max",
+    "win:close",
+    "slider-volume",
+    "state-slider",
+    "field-name",
+    "area-notes",
+    // SpinBox 的**根节点**是聚焦区（输入框本体）。core 没有文本输入与焦点，
+    // 点它正确行为就是什么都不发生；能点的只有两枚 `spin:up/down`。
+    "spin-count",
+    "progress",
+    "state-progress",
+    "progress-p",
+    "progress-e",
+    "fx-soft",
+    "fx-hard",
+    "navdemo:home",
+    "navdemo:star",
+    "navdemo:archive",
+    "round-a",
+    "round-b",
+    "infobar",
+    "infobar-err",
+    "theme-toggle",
+];
+
+/// **每个可交互 key 必须真的改变状态，或在本文件的展示型白名单里。**
+///
+/// # 这是本轮最要紧的一条门禁
+///
+/// 「按钮只有样式、点了没反应」正是开发者对示例项目最致命的差评——它教的
+/// 是「这个框架的控件是假的」。而这类失效**编译过、画面正常、其余门禁全绿**：
+/// key 在树上（`every_class_name_*` 过）、元素可达（`every_element_is_*` 过）、
+/// 命中测试通过（`hit_test_*` 过），唯一缺的是 `click()` 里没有对应分支。
+/// 首次运行就抓出 30 个 key：`state-switch` / `lang:*` / `combo-material`
+/// 是真漏接，`spin:up` 的显示表越界是真 bug，而 `feedback` / `tool:*` /
+/// `round-*` 属于三种不同的「看起来能点」。
+///
+/// # 判据
+///
+/// 对全部路由 × 参考页十族构造树，收集每个 `INTERACTIVE` 节点的 key；然后
+/// 对每个 key **真的点一遍**，比较点击前后树的形状指纹（类型/key/分类名/文本）。
+/// 有差异 = 接线了；无差异则必须在 [`DISPLAY_ONLY`] 里。
+///
+/// # 为什么要「扰动」
+///
+/// 选中型控件（radio / segmented / list 行 / 导航项）点击**当前选中项**时
+/// 状态本来就不变 —— 这是正确行为，不是空壳。而默认 Gallery 恰好停在各控件
+/// 的默认项上，直接点会得到假阴性。所以每个 key 都在三个人为扰动的世界里试
+/// （见 [`perturb`]）：只要有一个世界里指纹不同，就证明分派存在。
+///
+/// # 恒真防御
+///
+/// 先断言收集到的可交互 key 数量有下界（50+），否则路由表写错时收集是空的，
+/// 这条会因「没有可检查的 key」而恒真地绿。
+#[test]
+fn every_interactive_key_is_wired_or_whitelisted() {
+    use std::collections::BTreeMap;
+
+    // 1) 全路由 × 全族扫树，收集每个 INTERACTIVE key 与它所在的（路由, 族）。
+    let theme = Theme::builtin(ThemeVariant::Dark);
+    let ctx = Context::new(&theme);
+    let mut found: BTreeMap<&'static str, (&'static str, usize)> = BTreeMap::new();
+    let mut interactives = 0usize;
+
+    let mut collect = |g: &Gallery, found: &mut BTreeMap<&'static str, (&'static str, usize)>| {
+        let element = g.view(&ctx);
+        let root = Node::from_element(&element);
+        walk(&root, &mut |n: &Node| {
+            let interactive = n
+                .props()
+                .iter_local()
+                .any(|(k, _)| std::ptr::eq(k, &zephyra_core::props::INTERACTIVE));
+            if !interactive {
+                return;
+            }
+            interactives += 1;
+            if let Some(key) = n.key().and_then(|k| k.as_name()) {
+                // 同一个 key 可能出现在多个路由（语言切换按钮在 theme/testing
+                // 两页）——任一处接线即算接线，取第一次出现的位置即可。
+                found.entry(key).or_insert((g.route, g.ref_family));
+            }
+        });
+    };
+
+    for route in ROUTES
+        .iter()
+        .map(|(id, _, _)| *id)
+        .chain([SETTINGS_ROUTE.0])
+    {
+        let mut g = Gallery::default();
+        g.route = route;
+        collect(&g, &mut found);
+    }
+    for fam in 0..REF_FAMILIES.len() {
+        let mut g = Gallery::default();
+        g.route = "reference";
+        g.ref_family = fam;
+        collect(&g, &mut found);
+    }
+    assert!(
+        interactives >= 50,
+        "只收集到 {interactives} 个可交互节点 —— 树遍历没走完，这条门禁可能恒真"
+    );
+    assert!(
+        found.len() >= 40,
+        "只有 {} 个不同的交互 key —— 判据可能没取到",
+        found.len()
+    );
+
+    // 2) 逐 key 在扰动世界里真点一遍，比较点击前后的树指纹。
+    let mut hollow: Vec<String> = Vec::new();
+    for (key, (route, family)) in &found {
+        let mut wired = false;
+        let mut seen_anywhere = false;
+        // 世界 1/2：原路由 + 两个相位；世界 3：换一条路由（外壳/导航键在
+        // 任何路由上都存在，用来覆盖「点当前路由的导航项」这种天然 no-op）；
+        // 世界 4/5：额外扰动参考页的族（`ref:*` 段键只在 reference 路由上，
+        // 但族切换器本身常驻，所以它必须在 reference 路由上判）。
+        let worlds = [
+            (*route, 0usize, false),
+            (*route, 1, false),
+            (other_route(route), 0, false),
+            (*route, 0, true),
+            (*route, 1, true),
+        ];
+        for (world_route, phase, perturb_family) in worlds {
+            let build = |k: Option<&str>| {
+                let mut g = Gallery::default();
+                g.route = world_route;
+                g.ref_family = *family;
+                perturb(&mut g, phase, perturb_family);
+                if let Some(k) = k {
+                    g.click(k);
+                }
+                let element = g.view(&ctx);
+                Node::from_element(&element)
+            };
+            let before = build(None);
+            if !tree_has_key(&before, key) {
+                continue; // 这个 key 不在这个世界的树里（页面级 key + 换了路由）
+            }
+            seen_anywhere = true;
+            let after = build(Some(key));
+            let mut fp_before = String::new();
+            let mut fp_after = String::new();
+            shape_fingerprint(&before, &mut fp_before);
+            shape_fingerprint(&after, &mut fp_after);
+            if fp_before != fp_after {
+                wired = true;
+                break;
+            }
+        }
+
+        if wired || DISPLAY_ONLY.contains(key) {
+            continue;
+        }
+        if !seen_anywhere {
+            hollow.push(format!(
+                "{key}（route {route}）—— 扰动后的树里找不到它，判据失效"
+            ));
+            continue;
+        }
+        hollow.push(format!(
+            "{key}（route {route}）—— 三个扰动世界里点击前后树完全相同"
+        ));
+    }
+
+    assert!(
+        hollow.is_empty(),
+        "这些可交互控件点了没有任何状态变化（空壳按钮——要么接线，要么\
+         在 DISPLAY_ONLY 里注明为什么不接）：\n  {}",
+        hollow.join("\n  ")
+    );
+}
+
+/// 换一条路由（用于「点当前导航项」这类天然 no-op 的判定）。
+fn other_route(route: &str) -> &'static str {
+    ROUTES
+        .iter()
+        .map(|(id, _, _)| *id)
+        .find(|id| *id != route)
+        .unwrap_or("guide")
+}
+
+/// 把**选中型**状态挪离默认值，让「点击某一项」产生可见变化。
+///
+/// # 两个相位为什么够
+///
+/// 每个选择器只有两个候选值（相位 0 / 相位 1），而任意一个 key 至多等于
+/// 其中一个候选——于是它在另一个相位里一定不是当前选中项。toggle 型字段
+/// （`switch_on` 等）两个相位直接取 true/false，点击必翻转。
+///
+/// # 新增选中型字段时
+///
+/// 同步加进这里，否则该字段的默认选中项会让门禁假阴性（门禁本身仍绿——
+/// 它只会漏判，不会误报，所以这条注释是唯一的提醒）。
+fn perturb(g: &mut Gallery, phase: usize, perturb_family: bool) {
+    let p = phase % 2;
+    g.seg = if p == 0 { "seg:list" } else { "seg:card" };
+    g.demo_seg = if p == 0 { "stseg:a" } else { "stseg:c" };
+    g.subsel = if p == 0 { "subdemo:b" } else { "subdemo:a" };
+    g.selbar_sel = if p == 0 {
+        "seldemo:day"
+    } else {
+        "seldemo:month"
+    };
+    g.list_sel = if p == 0 { 0 } else { 2 };
+    g.radio = if p == 0 { 1 } else { 2 };
+    g.lang = if p == 0 { 1 } else { 2 };
+    g.table_cell = if p == 0 { 0 } else { 8 };
+    g.swipe_page = if p == 0 { 0 } else { 2 };
+    g.date_sel = if p == 0 { 1 } else { 21 };
+    g.time_hour = if p == 0 { "13" } else { "15" };
+    g.time_minute = if p == 0 { "00" } else { "10" };
+    g.combo = if p == 0 { 1 } else { 2 };
+    g.demo_combo = if p == 0 { 1 } else { 2 };
+    g.color_idx = if p == 0 { 0 } else { 15 };
+    g.spin = if p == 0 { 5 } else { 15 };
+    g.demo_check = p == 1;
+    g.switch_on = p == 1;
+    g.pill_on = p == 1;
+    g.notify_on = p == 1;
+    g.expanded = p == 1;
+    g.adv_expanded = p == 1;
+    g.ref_exp = p == 1;
+    g.mica = p == 1;
+    g.wants_dark = p == 1;
+    g.menu_open = if p == 0 { None } else { Some(0) };
+    g.dd_open = p == 1;
+    g.infobar_open = p == 0;
+    if perturb_family {
+        // 族切换器（`ref:*`）常驻 reference 页，所以扰动族不会让它的 key
+        // 消失；同时它让「点当前族」有可见变化。其它页的 key 依赖原族
+        // 才存在，故由调用方传 `false` 的那几个世界先判。
+        g.ref_family = (g.ref_family + 1 + p) % REF_FAMILIES.len();
+    }
+}
+
+/// 树里是否还有这个 key 的可交互节点。
+fn tree_has_key(root: &Node, key: &str) -> bool {
+    let mut hit = false;
+    walk(root, &mut |n: &Node| {
+        if n.key().and_then(|k| k.as_name()) == Some(key) {
+            hit = true;
+        }
+    });
+    hit
 }

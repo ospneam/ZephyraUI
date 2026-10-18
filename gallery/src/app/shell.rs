@@ -245,6 +245,18 @@ fn page_header(g: &Gallery) -> Element {
                 .with_key("header-tools")
                 .style("header-tools")
                 .with_children([
+                    // **全应用**的动作回显：任何 `act:` 按钮点了都把 key 写进
+                    // `Gallery::last_action`，这一行是那份状态唯一的视图。
+                    //
+                    // # 为什么放在外壳而不是各页页首
+                    //
+                    // 反馈必须**在当前页可见**。放在 basics 页首的话，layout /
+                    // styling / menus 章的按钮点了会改状态、但开发者眼前的树
+                    // 纹丝不动 —— 与「按钮没接线」无法区分。外壳里的这一行
+                    // 与路由无关，于是「点击 → 状态 → 视图」在每一页都能当场
+                    // 验证。（门禁 `every_interactive_key_is_wired_or_whitelisted`
+                    // 正是按「本页树指纹变没变」判的，它先一步抓出了这个坑。）
+                    text_label("last-action", g.last_action, "text-caption"),
                     tool_button(
                         "theme-toggle",
                         "light",
@@ -252,12 +264,12 @@ fn page_header(g: &Gallery) -> Element {
                         g.holds("theme-toggle"),
                     ),
                     button(
-                        "feedback",
+                        "act:feedback",
                         g.tr("action.feedback"),
                         Some("bell"),
                         "subtle",
-                        g.hovers("feedback"),
-                        g.holds("feedback"),
+                        g.hovers("act:feedback"),
+                        g.holds("act:feedback"),
                     ),
                 ]),
         ])

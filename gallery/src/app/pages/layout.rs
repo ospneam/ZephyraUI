@@ -70,7 +70,10 @@ pub fn page(g: &Gallery) -> Element {
                         "set-exp",
                         "Advanced",
                         "Collapsible group",
-                        g.expanded,
+                        // 展开态走独立的 `ref_exp`：`exp:details` 是另一页的
+                        // 展开器，共用会出现「在这页收起，那页也跟着收起」
+                        // 的幽灵联动——两件事各有一个状态。
+                        g.ref_exp,
                         vec![controls::setting_item(
                             "set-item-b",
                             "settings",

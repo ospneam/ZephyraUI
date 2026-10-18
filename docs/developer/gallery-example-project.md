@@ -32,15 +32,21 @@
   ├─ theme      主题与国际化  暗/亮、Mica、三语切换
   └─ testing    门禁与出图    --dump-cpu 出图、--list-routes、树级门禁怎么接
 附录（Reference）
-  └─ reference  控件参考      一页内分 9 节，每节一族控件（复用现有页面内容）
+  └─ reference  控件参考      一页内分 10 族，每族一组控件（复用现有页面内容）
 系统
   └─ settings   主题 / 通知 / 音量 / 语言   （置底，现状保留）
 ```
 
-「控件参考」页**内部分节**：Basic Input / Selection / Layout / Collections /
-Menus / Navigation / Status / Dialogs / Liquid Glass。每节直接复用现有
+「控件参考」页**内部分族**：Basic Input / Selection / Layout / Collections /
+Menus / Navigation / Status / Dialogs / Liquid Glass / Paging。每族直接复用现有
 `pages/*.rs` 的控件罗列，但**不各自占一条路由**——它们由 `reference` 一节
-承载，节标题即族名。
+承载，族名就是分段控件上的标签。
+
+> ⚠ **族的内容必须一屏装得下**：参考页无滚动（core 既无滚动也不裁剪溢出），
+> 装不下就是被吃掉、点不到。`hit_test_agrees_with_the_painted_rects` 用
+> **真实系统字体**逐族量（`laid_out` 走 `zephyra_fx::from_system_font`），
+> 所以这条不是纸面约束。分族时优先让每族留出余量，而不是塞满。
+> 出图核对：`--route reference --family <n>`（`--list-families` 列合法值）。
 
 这样指南层的 6 章是**学习顺序**（首次打开落在 `guide`），参考层是
 **查阅入口**（需要时点进去）。
@@ -106,6 +112,7 @@ Menus / Navigation / Status / Dialogs / Liquid Glass。每节直接复用现有
 
 - `--dump-cpu` 出 BMP，不开窗不碰 GPU
 - `--list-routes` / `--route` 逐页出图（未知路由直接退出，不静默回首页）
+- `--list-families` / `--family` 逐**族**出图（参考页无滚动，逐族量裁切）
 - 树级门禁：整棵树 × 全部页面 × 全部交互态，不是逐函数
 - `cargo clippy -p zstylec -- check <file.zstyle>` 也能验样式表
 
@@ -165,7 +172,8 @@ Menus / Navigation / Status / Dialogs / Liquid Glass。每节直接复用现有
 |---|---|
 | `guide_chapters_are_in_learning_order` | 6 章按学习顺序排列（快速开始必须第一） |
 | `guide_pages_carry_interactive_examples` | 每章至少一个**可交互**控件（只有说明文字的章是失败的） |
-| `reference_page_has_one_section_per_control_family` | 参考页 9 节齐全，一节一族 |
+| `reference_page_has_all_families` | 参考页每族齐全（特征控件在树上）且族数变化时红一次 |
+| `every_interactive_key_is_wired_or_whitelisted` | 每个可交互 key 真的改变状态，或在展示型白名单里 |
 | `every_documented_command_is_real` | testing 页列的每条 CLI 命令都能真跑（防「文档与实现漂移」） |
 
 ## 五、分阶段
@@ -173,7 +181,7 @@ Menus / Navigation / Status / Dialogs / Liquid Glass。每节直接复用现有
 1. **骨架**：路由表 8 项、`guide` 六章模块建好（先空壳）、`reference` 页聚合、
    导航改 8 项。项目能编译能跑，`--list-routes` 列出 8 条。
 2. **指南层逐章填充**：每章内容 + 门禁。每填一章跑一次门禁。
-3. **参考层**：现有 9 个页面内容搬进 `reference` 的分节，删掉各自的路由。
+3. **参考层**：现有页面内容搬进 `reference` 的分族，删掉各自的路由。
 4. **门禁重写**：按映射表改，跑全量。
 5. **README 重写**：从「控件展柜」改成「示例项目」的口吻。
 6. **dev-log**：四段式记录。

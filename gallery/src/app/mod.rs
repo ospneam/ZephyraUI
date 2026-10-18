@@ -70,7 +70,7 @@ pub const ROUTES: &[(&str, &str, &str)] = &[
 ///
 /// 参考层不再是**路由**（9 条路由平铺进导航栏装不下 —— 二级导航
 /// `nav_sub_item` 不折叠，9 个子项常驻会把 756 高的导航栏撑爆），而是
-/// `reference` **页内**的 segmented 切换。九族内容复用现有页面模块的
+/// `reference` **页内**的 segmented 切换。十族内容复用现有页面模块的
 /// `content()`，每族独立一屏，一屏装得下。
 pub const REF_FAMILIES: &[&str] = &[
     "basics",
@@ -82,6 +82,10 @@ pub const REF_FAMILIES: &[&str] = &[
     "status",
     "dialogs",
     "effects",
+    // ⚠ 新族一律**追加在末尾**，不要插在中间：`ref_family` 是下标，
+    // 门禁与 `--family` 都用下标引用（插中间会静默改掉已有序号的含义，
+    // 而画面上只是「点了这一族出现那族」）。
+    "paging",
 ];
 
 /// 基准画布尺寸（物理像素）= 宿主建窗口时的初值。
@@ -335,6 +339,69 @@ pub fn list_routes() -> Vec<&'static str> {
 /// Settings 路由（置底那一项）。
 pub const SETTINGS_ROUTE: (&str, &str, &str) = ("settings", "Settings", "settings");
 
+// ---- 参考层与指南章的**交互 key 常量表** ----
+//
+// # 为什么这批 key 住在 mod.rs 而不是各页面
+//
+// `Gallery::click` 收到的 key 是运行期 `&str`（`on_input` 里 `to_string()`
+// 转交），而选中态字段是 `&'static str` —— 直接赋值存不下来。把 key 表
+// 定义在这里，页面发的是表里那几项、click 按表还原，**同一份常量**服务
+// 两处：key 表就是「哪些 key 会改状态」的清单，与门禁
+// `every_interactive_key_is_wired_or_whitelisted` 的白名单共用。
+
+/// state 章 segmented 的三段。
+pub const DEMO_SEGS: [&str; 3] = ["stseg:a", "stseg:b", "stseg:c"];
+/// navigation 族 nav_sub_item 的两个子项。
+pub const SUBDEMO_IDS: [&str; 2] = ["subdemo:a", "subdemo:b"];
+/// navigation 族 selector_bar 的三段。
+pub const SELDEMO_IDS: [&str; 3] = ["seldemo:day", "seldemo:week", "seldemo:month"];
+/// 触发类按钮（basics / layout / styling / menus / 外壳页头共用 `last_action`）。
+///
+/// ⚠ 新增触发按钮时把 key 加进这张表——漏加的症状是「点了没反应」，
+/// 而门禁 `every_interactive_key_is_wired_or_whitelisted` 会先一步红。
+pub const ACT_IDS: [&str; 13] = [
+    "act:standard",
+    "act:accent",
+    "act:subtle",
+    "act:send",
+    "act:touch-ok",
+    "act:touch-bad",
+    "act:style-primary",
+    "act:style-subtle",
+    "act:style-standard",
+    "act:feedback",
+    "act:tool-save",
+    "act:tool-search",
+    "act:tool-gear",
+];
+
+/// 把运行期 key 解析回编译期常量原身。
+///
+/// # 为什么需要它
+///
+/// 见上面这批常量表的说明。`Option` 而不是直接下标：收到表外的 key 时
+/// **不动状态** —— 那比 panic 好（一个 key 拼错不该崩掉整个应用），也比
+/// 「静默写进一个错误的值」好（字段内容仍是合法项，画面不出现怪态）。
+fn static_key<'a>(candidates: &[&'a str], key: &str) -> Option<&'a str> {
+    candidates.iter().copied().find(|c| *c == key)
+}
+
+/// time_picker 的 item key（`tph:13` / `tpm:05`）→ 显示值（`"13"` / `"05"`）。
+///
+/// 与 dialogs.rs 的 `HOURS` / `MINUTES` 常量对齐：改那边必须改这里 ——
+/// 门禁 `reference_page_has_all_families` 与交互回归会踩到不一致。
+fn time_part(key: &str) -> &'static str {
+    match key {
+        "tph:13" => "13",
+        "tph:14" => "14",
+        "tph:15" => "15",
+        "tpm:00" => "00",
+        "tpm:05" => "05",
+        "tpm:10" => "10",
+        _ => "",
+    }
+}
+
 /// 演示开关的三个 id（Basic Input 页）。
 pub const CHECKS: [&str; 3] = ["check:alpha", "check:beta", "check:gamma"];
 
@@ -390,8 +457,6 @@ pub struct Gallery {
     pub combo: usize,
     /// Basic Input 页：SpinBox 的数值。
     pub spin: i32,
-    /// Basic Input 页：RoundButton 的选中态。
-    pub round_on: bool,
     /// Basic Input 页：DropDownButton 的展开态。
     pub dd_open: bool,
     /// 是否请求 Mica 材质外观（标题栏半透明）。true = 应用想要；false = 实色。
@@ -425,6 +490,47 @@ pub struct Gallery {
     /// SpinBox 在另一页。开发者会看到「点这个按钮，那个页面的某个东西变了」，
     /// 而画面上没有任何线索把两者连起来。
     pub guide_count: u32,
+    /// 最近一次**触发类按钮**的动作名（basics / layout / styling 章共用）。
+    ///
+    /// # 为什么按钮需要它
+    ///
+    /// 按钮的语义是「触发动作」。示例项目里的按钮如果没有可见反馈，
+    /// 教给开发者的就是「这个框架的按钮是假的」。所以每个触发类按钮点了
+    /// 都把动作名写进来，basics 页顶部的状态行显示它 —— 「点击 → 状态 →
+    /// 视图」这条链当场可验。
+    pub last_action: &'static str,
+    /// basics 页 pill_button 的选中态（pill = 可保持按下的按钮）。
+    pub pill_on: bool,
+    /// basics 页 color_picker 选中色格下标。
+    pub color_idx: usize,
+    /// state 章 checkbox（独立于 toggles 页的 `checked`：教学页要自证）。
+    pub demo_check: bool,
+    /// state 章 segmented 选中段（`stseg:a` / `stseg:b` / `stseg:c`）。
+    pub demo_seg: &'static str,
+    /// state 章 combo 循环下标。
+    pub demo_combo: usize,
+    /// navigation 族 nav_sub_item 选中项（`subdemo:a` / `subdemo:b`）。
+    pub subsel: &'static str,
+    /// navigation 族 selector_bar 选中段（`seldemo:day/week/month`）。
+    pub selbar_sel: &'static str,
+    /// collections 族 list 选中行下标（落在 LIST_ITEMS 里）。
+    pub list_sel: usize,
+    /// collections 族 table 选中格下标（行 ×4 + 列）。
+    pub table_cell: usize,
+    /// collections 族 swipe 当前页下标。
+    pub swipe_page: usize,
+    /// dialogs 族 date_picker 选中日（`dpc:RC` 的格子序号）。
+    pub date_sel: u8,
+    /// dialogs 族 time_picker 小时（`tph:XX`）。
+    pub time_hour: &'static str,
+    /// dialogs 族 time_picker 分钟（`tpm:XX`）。
+    pub time_minute: &'static str,
+    /// status 族 info bar 是否展开（`bar:close` 关闭后 = false）。
+    pub infobar_open: bool,
+    /// layout 族 setting_expander 展开态。
+    pub ref_exp: bool,
+    /// settings 页「高级」区 expander 展开态。
+    pub adv_expanded: bool,
     /// 当前语言在 [SUPPORTED] 里的**下标**。
     ///
     /// 存下标而不是 Tag：Tag 每帧都要重新构造，而下标是 Copy 且能直接当
@@ -650,6 +756,23 @@ impl Default for Gallery {
             seg: "seg:grid",
             ref_family: 0,
             guide_count: 0,
+            last_action: "",
+            pill_on: false,
+            color_idx: 0,
+            demo_check: true,
+            demo_seg: "stseg:b",
+            demo_combo: 0,
+            subsel: "subdemo:a",
+            selbar_sel: "seldemo:week",
+            list_sel: 1,
+            table_cell: 0,
+            swipe_page: 1,
+            date_sel: 15,
+            time_hour: "14",
+            time_minute: "05",
+            infobar_open: true,
+            ref_exp: false,
+            adv_expanded: false,
             checked: [true, false, false],
             radio: 0,
             glass: crate::app::glass::Glass::default(),
@@ -658,8 +781,7 @@ impl Default for Gallery {
             volume: 0.62,
             expanded: false,
             combo: 0,
-            spin: 42,
-            round_on: false,
+            spin: 7,
             dd_open: false,
             mica: true,
             menu_open: None,
@@ -747,13 +869,23 @@ impl Gallery {
         // `zh-Hans` 这种形状，不带 `lang:` 前缀，所以这里按 `SUPPORTED`
         // 查表而不是切前缀 —— 切前缀要 `strip_prefix` 再 `concat!`，后者
         // 在每帧重建的视图里就是一次泄漏。
-        if let Some(i) = SUPPORTED.iter().position(|s| *s == key) {
+        //
+        // 两种形态都要认：设置页发裸标签（`en`），主题章发 `lang:en`
+        // （与其它页的 `前缀:名` 一致）。只认一种的话，另一种就是
+        // 「key 在树上、点击没反应」——主题章的语言按钮曾因此全成空壳。
+        let lang_key = key.strip_prefix("lang:").unwrap_or(key);
+        if let Some(i) = SUPPORTED.iter().position(|s| *s == lang_key) {
             self.lang = i;
             return;
         }
         // ---- 3) 其余按 key 分派 ----
         match key {
-            "theme-toggle" => {
+            // 主题意图有两个入口：页头的 tool_button（`theme-toggle`）与设置页
+            // 的总开关（`switch:master`）。两者必须改**同一个**字段 ——
+            // 设置页的开关绑的是 `wants_dark`，这里若改别的字段，开关点了
+            // 视觉不动（门禁 `every_interactive_key_is_wired_or_whitelisted`
+            // 正是抓到这一处的）。
+            "theme-toggle" | "switch:master" => {
                 self.wants_dark = !self.wants_dark;
                 // 窗口路：把意图写进共享格，Bootstrap 每帧对账后执行。
                 if let Some(cell) = &self.theme_intent {
@@ -768,9 +900,8 @@ impl Gallery {
             "seg:grid" => self.seg = "seg:grid",
             "seg:list" => self.seg = "seg:list",
             "seg:card" => self.seg = "seg:card",
-            // 复选框。首页那个 `live-check` 也走第 0 位 —— 首页的样例不是装饰，
-            // 它真的在改同一个状态。
-            "check:alpha" | "live-check" => self.checked[0] = !self.checked[0],
+            // 复选框。
+            "check:alpha" => self.checked[0] = !self.checked[0],
             "check:beta" => self.checked[1] = !self.checked[1],
             "check:gamma" => self.checked[2] = !self.checked[2],
             // 单选：点哪个就选哪个。
@@ -781,16 +912,23 @@ impl Gallery {
             "radio:a" => self.radio = 0,
             "radio:b" => self.radio = 1,
             "radio:c" => self.radio = 2,
-            // 首页的样例开关与设置页总开关共用一个状态。
-            "switch:master" | "live-switch" => self.switch_on = !self.switch_on,
+            // toggles 页的演示开关（首页旧 `live-switch` 已随首页删除）。
             "switch:notify" => self.notify_on = !self.notify_on,
             "exp:details" => self.expanded = !self.expanded,
             // ---- 值输入类演示 ----
-            "combo:material" => self.combo = (self.combo + 1) % COMBO_OPTIONS.len(),
-            "spin:up" => self.spin = (self.spin + 1).min(100),
+            // ⚠ key 是 `combo-material`（连字符），不是 `combo:material`——
+            // 页面发的就是连字符版。两者差一个冒号时点击**静默**不切换，
+            // 而画面上 ComboBox 完全正常（它一直显示第一项看起来像默认值）。
+            // 这正是 `every_interactive_key_is_wired_or_whitelisted` 要消灭的
+            // 失效类别：key 在树上、分派不认识。
+            "combo-material" => self.combo = (self.combo + 1) % COMBO_OPTIONS.len(),
+            // 值域与 `pages::basics::spin_text` 的查表同步：表的末项就是
+            // 上限，越界回落会让「点 ＋」显示不变。（默认值也在这段值域内。）
+            "spin:up" => self.spin = (self.spin + 1).min(20),
             "spin:down" => self.spin = (self.spin - 1).max(0),
-            "round-a" => self.round_on = !self.round_on,
-            "round-b" => self.round_on = !self.round_on,
+            // round-a / round-b 是 round_button 的**两种外观**（普通 / checked），
+            // 演示的是「同一个按钮的长相」，不是可切换状态 —— 没有分派分支，
+            // 门禁白名单里注明。
             "dd:demo" => self.dd_open = !self.dd_open,
             // ---- 菜单栏 ----
             "bar:0" | "bar:1" | "bar:2" => {
@@ -813,15 +951,111 @@ impl Gallery {
             // 窗口按钮（win:*）在这个构建里只做悬停/按下视觉：宿主没有把
             // 最小化/最大化/关闭暴露给 View（那是窗口能力，不是样式能力）。
             //
-            // 同理：滑条、表格、Tooltip 都是**展示型**控件，点了不改状态。
-            // 那不是漏接，是 core 还没有把它们做成输入设备 —— 已记账在
-            // `docs/dev-log/README.md`。别在这里给它们编造一个假动作。
+            // 展示型控件（滑条、文本输入、Tooltip、进度/徽章类指示器）同样
+            // 没有分支：core 没有连续指针位置、没有文本输入，指示器本来
+            // 就不是按钮。别在这里给它们编造一个假动作 —— 完整清单与每一项
+            // 的理由在 `tests/gates.rs` 的 `DISPLAY_ONLY`。
             //
             // ---- 快速开始章的计数 ----
             //
             // 开发者点这个按钮时，他想看的是「状态变了 → 界面变了」。
             // 所以这里只做一件事：加一。渲染由 `view()` 每帧读状态重建。
             "guide-inc" => self.guide_count = self.guide_count.saturating_add(1),
+            // ---- 触发类按钮的可见反馈 ----
+            //
+            // 按钮的语义是「触发动作」。示例里的按钮若点了没有任何可见变化，
+            // 教给开发者的就是「按钮是假的」。所以触发类按钮统一发 `act:<名>`，
+            // 点了把动作名写进 `last_action`，由**外壳页头**那行显示 ——
+            // 放各页页首的话，其它路由上的按钮改的是看不见的树。
+            //
+            // ⚠ 分派走**前缀分支 + ACT_IDS 查表**：新增一个触发按钮时
+            // 只要在页面上发 `act:` key、并把 key 加进 [`ACT_IDS`]。
+            // 漏加表的症状是「点了没反应」，而这正是本门禁要消灭的失效类别。
+            _ if key.starts_with("act:") => {
+                if let Some(s) = static_key(&ACT_IDS, key) {
+                    self.last_action = s;
+                }
+            }
+            // basics 页的 pill（可保持按下）与色格（color_picker 的格子）。
+            "pill-a" => self.pill_on = !self.pill_on,
+            _ if key.starts_with("swatch:") => {
+                // `swatch:0..15` 是常量表（`gen_swatch_key`），冒号后就是下标。
+                self.color_idx = key[7..].parse().unwrap_or(0);
+            }
+            // ---- state 章：教学页必须自证 ----
+            //
+            // 这一章的职责是教「哪些控件真的接了状态」。若「Wired to state」
+            // 区里的控件自己点了没反应，这一页就在说谎——比别页的空壳更糟。
+            "state-check" => self.demo_check = !self.demo_check,
+            // state 章演示的是「switch 接了什么」：与 settings 页共用
+            // `switch_on`（旧首页 `live-switch` 的先例）——共享本身是教学
+            // 内容：「同一个状态可以驱动两处视图」。
+            "state-switch" => self.switch_on = !self.switch_on,
+            _ if key.starts_with("stseg:") => {
+                if let Some(s) = static_key(&DEMO_SEGS, key) {
+                    self.demo_seg = s;
+                }
+            }
+            "state-combo" => {
+                self.demo_combo = (self.demo_combo + 1) % 3;
+            }
+            // ---- 主题 ----
+            "theme-mica" => self.mica = !self.mica,
+            // ---- 参考层：navigation / collections / dialogs 族的选中态 ----
+            //
+            // ⚠ 这些字段都是 `&'static str`，而 `click` 收到的 key 是 `&str`
+            // （`on_input` 里 `to_string()` 转交）。直接 `self.x = key` 存不下来，
+            // 必须经 [`static_key`] 查回常量原身——查表是「运行期 key →
+            // 编译期常量」的唯一不泄漏通道。
+            _ if key.starts_with("subdemo:") => {
+                if let Some(s) = static_key(&SUBDEMO_IDS, key) {
+                    self.subsel = s;
+                }
+            }
+            _ if key.starts_with("seldemo:") => {
+                if let Some(s) = static_key(&SELDEMO_IDS, key) {
+                    self.selbar_sel = s;
+                }
+            }
+            _ if key.starts_with("list:") => {
+                if let Some(i) = crate::app::pages::collections::LIST_ITEMS
+                    .iter()
+                    .position(|(id, _)| *id == key)
+                {
+                    self.list_sel = i;
+                }
+            }
+            _ if key.starts_with("td:") => {
+                // `td:RC`（常量表 `cell_key`）：行 ×4 + 列 = 线性下标。
+                // 下标位置：`t`0 `d`1 `:`2 `R`3 `C`4。
+                let r = key[3..4].parse::<usize>().unwrap_or(0);
+                let c = key[4..5].parse::<usize>().unwrap_or(0);
+                self.table_cell = r * 4 + c;
+            }
+            _ if key.starts_with("sw:") => {
+                self.swipe_page = key[3..].parse().unwrap_or(0);
+            }
+            _ if key.starts_with("dpc:") => {
+                // `dpc:RC`（`dp_cell_key`）：格子序号 = 行 ×7 + 列。selected
+                // 的语义是**日期值**，所以查 `CALENDAR[序号]` 的 `Some(n)` ——
+                // 空白格（None）不响应：日历上空白格本来就不是日期。
+                // 下标位置：`d`0 `p`1 `c`2 `:`3 `R`4 `C`5。
+                let r = key[4..5].parse::<usize>().unwrap_or(0);
+                let c = key[5..6].parse::<usize>().unwrap_or(0);
+                if let Some(Some(day)) = crate::app::pages::dialogs::CALENDAR.get(r * 7 + c) {
+                    self.date_sel = *day;
+                }
+            }
+            _ if key.starts_with("tph:") => self.time_hour = time_part(key),
+            _ if key.starts_with("tpm:") => self.time_minute = time_part(key), // ---- 信息条关闭 ----
+            //
+            // ⚠ `bar:close` 与菜单栏的 `bar:0/1/2` 只差后缀，必须放在菜单栏
+            // 分支**之后**（或精确匹配），否则 `bar:close` 会被当成菜单索引。
+            "bar:close" => self.infobar_open = false,
+            "infobar-restore" => self.infobar_open = true,
+            // ---- expander 类 ----
+            "set-exp" => self.ref_exp = !self.ref_exp,
+            "set-adv" => self.adv_expanded = !self.adv_expanded,
             // ---- 控件参考页的族切换 ----
             //
             // key 形如 `ref:basics`。走 `REF_FAMILIES` 查表而不是九段 `match`：

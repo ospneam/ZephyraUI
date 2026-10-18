@@ -42,8 +42,8 @@ const W: f32 = 1400.0;
 const H: f32 = 800.0;
 
 /// gallery Basic Input 页里的两个可点按钮。
-const BTN_A: &str = "btn-standard";
-const BTN_B: &str = "btn-accent";
+const BTN_A: &str = "act:standard";
+const BTN_B: &str = "act:accent";
 
 /// 样式表（与 gallery 窗口路**同一份**）。
 ///
@@ -78,7 +78,7 @@ impl Harness {
         let ctx = Context::new(&theme);
         let mut gallery = Gallery::default();
         // basics 页不再是路由（参考层收进 reference 页内 segmented 切换）。
-        // btn-standard 等 key 现在住在 reference 页的第 0 族里。
+        // act:standard 等 key 现在住在 reference 页的第 0 族里。
         gallery.route = "reference";
         gallery.ref_family = 0;
         let mut node = Node::from_element(&gallery.view(&ctx));

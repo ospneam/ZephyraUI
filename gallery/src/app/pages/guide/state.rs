@@ -18,6 +18,16 @@ use zephyra_ui::controls;
 use crate::app::pages;
 use crate::app::Gallery;
 
+/// state 章 ComboBox 的当前值（查表，越界回落第一项——理由同 basics 的
+/// `combo_text`：`demo_combo` 是公开字段，最坏情况是「显示不对」不是「崩」）。
+fn combo_text(i: usize) -> &'static str {
+    match i {
+        0 => "One",
+        1 => "Two",
+        _ => "Three",
+    }
+}
+
 pub fn page(g: &Gallery) -> Element {
     pages::page_root(
         "state",
@@ -39,7 +49,7 @@ pub fn page(g: &Gallery) -> Element {
                     pages::demo("CheckBox", controls::check_box(
                         "state-check",
                         "Toggle me",
-                        g.checked[0],
+                        g.demo_check,
                         g.hovers("state-check"),
                         g.holds("state-check"),
                     )),
@@ -52,17 +62,17 @@ pub fn page(g: &Gallery) -> Element {
                     pages::demo("Segmented", controls::segmented(
                         "state-seg",
                         &[
-                            ("seg:a", "A"),
-                            ("seg:b", "B"),
-                            ("seg:c", "C"),
+                            (crate::app::DEMO_SEGS[0], "A"),
+                            (crate::app::DEMO_SEGS[1], "B"),
+                            (crate::app::DEMO_SEGS[2], "C"),
                         ],
-                        Some("seg:b"),
+                        Some(g.demo_seg),
                         g.hovered_name(),
                         g.pressed_name(),
                     )),
                     pages::demo("ComboBox", controls::combo_box(
                         "state-combo",
-                        "One",
+                        combo_text(g.demo_combo),
                         g.hovers("state-combo"),
                         g.holds("state-combo"),
                     )),

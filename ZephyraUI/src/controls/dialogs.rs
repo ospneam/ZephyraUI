@@ -133,6 +133,9 @@ pub fn date_picker(
                     .with_key(dp_cell_key(r, c))
                     .style("dp-cell");
                 if let Some(d) = day {
+                    // 有日期的格子才可点：空白格不是日期，点了不该发生任何事
+                    // （与日历的常规行为一致）。
+                    cell = cell.with(&props::INTERACTIVE, PropertyValue::bool(true));
                     let mut filled = Element::new(NodeTag::Container)
                         .with_key("day")
                         .style("dp-day");
@@ -198,6 +201,8 @@ pub fn time_picker(
 fn tp_item(item_key: &'static str, text: &'static str, selected: bool) -> Element {
     let mut el = Element::new(NodeTag::Container)
         .with_key(item_key)
+        // 每个时刻项是可点的：选中哪个时刻是应用的状态（控件只发 key）。
+        .with(&props::INTERACTIVE, PropertyValue::bool(true))
         .style("tp-item");
     let mut label = Element::new(NodeTag::Text)
         .with_key("label")

@@ -97,8 +97,14 @@ pub fn expander(
         .with_key(key)
         .style("expander")
         .with_children([
+            // ⚠ 可点区域的 key 就是控件自己的 key，不是内部名 `header`。
+            //
+            // 曾经写成 `"header"`：树里每个 expander 的可点节点都叫 `header`
+            // （同一页有两个就撞名），输入回调只会报 `header` —— 应用无法
+            // 分辨是哪一个被点了，而画廊的 `set-exp` / `set-adv` 分支永远
+            // 收不到点击。症状正是「展开器点了没反应」，且不崩不报错。
             Element::new(NodeTag::Container)
-                .with_key("header")
+                .with_key(key)
                 .with(&props::INTERACTIVE, PropertyValue::bool(true))
                 .style("expander-header")
                 .with_children([

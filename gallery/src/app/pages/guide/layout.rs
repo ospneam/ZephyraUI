@@ -79,25 +79,26 @@ pub fn page(g: &Gallery) -> Element {
             // 官方触控目标是 44 epx。小于这个尺寸的按钮在触控设备上点不准 ——
             // 而鼠标路径不受影响。`Gallery::touch_target` 给出官方换算，
             // 门禁 `touch_target_converts_to_official_ephemeral_px` 钉住它。
+            // 两个按钮都发 `act:` key —— 触发反馈与尺寸演示互不干扰。
             pages::section(
                 "layout-touch",
                 "Touch targets need 44 epx",
                 vec![
                     pages::demo("44 epx (correct)", controls::button(
-                        "layout-touch-ok",
+                        "act:touch-ok",
                         "Big enough",
                         None,
                         "standard",
-                        g.hovers("layout-touch-ok"),
-                        g.holds("layout-touch-ok"),
+                        g.hovers("act:touch-ok"),
+                        g.holds("act:touch-ok"),
                     )),
                     pages::demo("28 epx (too small)", controls::round_button(
-                        "layout-touch-bad",
+                        "act:touch-bad",
                         "Tiny",
                         None,
                         false,
-                        g.hovers("layout-touch-bad"),
-                        g.holds("layout-touch-bad"),
+                        g.hovers("act:touch-bad"),
+                        g.holds("act:touch-bad"),
                     )),
                 ],
             ),

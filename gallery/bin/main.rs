@@ -6,6 +6,11 @@
 //!    `DisplayList → quad::expand` 链）。
 //! 3. **`--theme dark|light`**：起始主题意图。
 //!
+//! 自验开关（`--dump-cpu` 路）：`--route <id>` 选页、`--family <n>` 选参考族
+//! （`--list-routes` / `--list-families` 列出合法值）、`--lang <tag>` 强制语言、
+//! `--enter-ms <n>` 拨入场动画时钟。它们是同一件事的工具面：**没有宿主时，
+//! 让任意一屏都能被静态地画出来核对**。
+//!
 //! # 主题意图怎么到宿主
 //!
 //! View 住在 `HostWindow` 里面，拿不到直接引用。所以意图走一个
@@ -28,7 +33,7 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
 
 use zephyra_core::theme::ThemeVariant;
-use zephyra_gallery::app::{resolve_route, Gallery, SUPPORTED};
+use zephyra_gallery::app::{resolve_route, Gallery, REF_FAMILIES, SUPPORTED};
 
 // `Styler` 只给 `HostWindow::set_styler` 用，与宿主是哪个后端无关 ——
 // 所以它的 gate 是「有没有窗口路」，而不是「哪个后端」。
@@ -77,6 +82,16 @@ fn main() {
         eprintln!("[gallery] {} 条路由：", routes.len());
         for r in &routes {
             eprintln!("  {r}");
+        }
+        return;
+    }
+
+    if args.iter().any(|a| a == "--list-families") {
+        // 参考层九族的**下标 → 名字**。`--family` 收下标（名字不是稳定契约），
+        // 所以必须有一条命令把两者对上。
+        eprintln!("[gallery] {} 个参考族：", REF_FAMILIES.len());
+        for (i, f) in REF_FAMILIES.iter().enumerate() {
+            eprintln!("  {i}  {f}");
         }
         return;
     }
@@ -556,6 +571,25 @@ fn dump_cpu(light: bool) {
             Ok(v) if v.is_finite() => view.enter_ms = v,
             _ => {
                 eprintln!("[gallery] --enter-ms 要一个有限毫秒数，收到 {ms:?}");
+                std::process::exit(2);
+            }
+        }
+    }
+    // `--family <n>`：选参考页的族（0..9）。**只有 dump 路需要** ——
+    // 参考层九族收在 reference 页的 segmented 里，窗口路点一下就能切，
+    // 而静态出图必须能从命令行指定，否则九族里只有第 0 族被看见。
+    //
+    // ⚠ 这个开关是补回来的：族化之后 `--route reference` 永远只出 Basic Input，
+    // 另外八族的排版（尤其「内容超出固定页高被裁」）在静态自验里**看不见** ——
+    // 而本仓的页高固定、无滚动，裁切是唯一的表现形式。
+    if let Some(fam) = flag_value(&args, "--family") {
+        match fam.parse::<usize>() {
+            Ok(n) if n < REF_FAMILIES.len() => view.ref_family = n,
+            _ => {
+                eprintln!(
+                    "[gallery] --family 要 0..{} 的整数；族名见 --list-families",
+                    REF_FAMILIES.len().saturating_sub(1)
+                );
                 std::process::exit(2);
             }
         }

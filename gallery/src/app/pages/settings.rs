@@ -56,7 +56,9 @@ pub fn page(g: &Gallery) -> Element {
                         "set-adv",
                         g.tr("set.adv.title"),
                         g.tr("set.adv.hwaccel"),
-                        g.expanded,
+                        // 独立的展开态：settings 页的「高级」与 layout 族的
+                        // `set-exp`、`exp:details` 是三个互不相干的折叠组。
+                        g.adv_expanded,
                         vec![
                             controls::setting_item(
                                 "set-adv-log",
@@ -84,7 +86,10 @@ pub fn page(g: &Gallery) -> Element {
                 "sec-audio",
                 "Volume",
                 vec![pages::demo(
-                    "Level",
+                    // ⚠ 展示型（理由同 basics 页的 Slider）。数值文本仍是
+                    // `volume` 的投影——改 `Gallery::volume` 会动它，但指针
+                    // 拖动进不来（core 无连续位置输入）。
+                    "Level (display)",
                     controls::slider(
                         "slider-volume",
                         g.volume,

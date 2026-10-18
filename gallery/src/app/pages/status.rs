@@ -1,15 +1,18 @@
-//! 状态与信息：Badge / InfoBar / Toast / Progress / Busy / PageIndicator。
+//! 状态与信息：Badge / InfoBar / Toast / Progress / Busy。
 //!
-//! # 四类语义，一页看完
+//! # 三类语义，一页看完
 //!
 //! | 控件 | 回答的问题 |
 //! |---|---|
 //! | Badge / InfoBar / Toast | 「发生了什么」 |
 //! | ProgressBar / ProgressRing / Busy | 「进行到哪了」 |
-//! | PageIndicator | 「一共有多少页」 |
 //!
-//! 分三节而不是平铺：这三类的**时长**完全不同 —— 瞬时 / 持续 / 分页。
+//! 分节而不是平铺：这几类的**时长**完全不同 —— 瞬时 / 持续。
 //! 混在一列里扫的时候会把"常驻的进度条"误当成"提示消息"。
+//!
+//! ⚠ `PageIndicator` 搬去了 [`crate::app::pages::paging`]（与 SwipeView 同族）：
+//! 它回答的「一共有多少页」只在分页语境下成立，而参考页无滚动，一屏装不下
+//! 就得靠分族腾地方。
 
 use zephyra_core::element::Element;
 
@@ -45,22 +48,44 @@ pub fn page(g: &Gallery) -> Element {
             pages::section(
                 "sec-bar",
                 "Info bar",
+                // 关闭钮（`bar:close`）真的可点：`click` 把 `infobar_open`
+                // 置 false，条件渲染把可关的那条收掉（CLOSED：不占位）。
+                // 下面那个 pill 是**恢复**入口——没有它，关掉之后这一节
+                // 就变成「永远少一条」而无法复现。
                 vec![
-                    controls::info_bar(
-                        "infobar",
-                        "Update available",
-                        "Version 0.2 is ready to install.",
-                        "info",
-                        true,
-                    ),
-                    controls::info_bar(
+                    if g.infobar_open {
+                        Some(controls::info_bar(
+                            "infobar",
+                            "Update available",
+                            "Version 0.2 is ready to install.",
+                            "info",
+                            true,
+                        ))
+                    } else {
+                        None
+                    },
+                    Some(controls::info_bar(
                         "infobar-err",
                         "Disk almost full",
                         "Less than 100 MB remaining.",
                         "error",
                         false,
-                    ),
-                ],
+                    )),
+                    Some(pages::demo(
+                        "Restore",
+                        controls::pill_button(
+                            "infobar-restore",
+                            "Show info bar",
+                            None,
+                            false,
+                            g.hovers("infobar-restore"),
+                            g.holds("infobar-restore"),
+                        ),
+                    )),
+                ]
+                .into_iter()
+                .flatten()
+                .collect(),
             ),
             pages::section(
                 "sec-toast",
@@ -98,14 +123,6 @@ pub fn page(g: &Gallery) -> Element {
                     ),
                     pages::demo("Busy", controls::busy_indicator("busy", 1)),
                 ],
-            ),
-            pages::section(
-                "sec-pips",
-                "Page indicator",
-                vec![pages::demo(
-                    "Pages",
-                    controls::page_indicator("pages", 5, 2),
-                )],
             ),
         ],
     )
